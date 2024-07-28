@@ -1,11 +1,11 @@
 use crate::domain::models::weather::WeatherInformation;
-
-pub mod weather;
+use serde::Serialize;
 pub mod location;
+pub mod weather;
 
-#[derive(derive_new::new)]
+#[derive(Serialize, derive_new::new)]
 pub struct GlanceData {
-    weather_information: WeatherInformation
+    weather_information: WeatherInformation,
 }
 
 impl GlanceData {

@@ -8,12 +8,12 @@ pub struct Application<WS: WeatherService> {
 }
 
 impl<WS: WeatherService> Application<WS> {
-    pub fn run(&self) -> anyhow::Result<GlanceData> {
+    pub async fn run(&self) -> anyhow::Result<GlanceData> {
         let weather_information = self
             .weather_service
-            .get_weather_for_location(Location::new());
+            .get_weather_for_location(Location::new(20.0, 10.0));
 
-        let glance_data = GlanceData::new(weather_information);
+        let glance_data = GlanceData::new(weather_information.await);
 
         Ok(glance_data)
     }

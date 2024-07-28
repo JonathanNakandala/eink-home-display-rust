@@ -1,3 +1,4 @@
+#[derive(serde::Serialize)]
 pub struct WeatherInformation {
     temperature: i8
 }
