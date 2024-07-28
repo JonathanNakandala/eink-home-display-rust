@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@300;600&display=swap" rel="stylesheet">
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 3fr 1fr;
+            grid-template-rows: auto auto 1fr;
+            grid-template-areas: 'time-date time-date' 'northbound weather' 'southbound weather';
+            width: 100vw;
+            height: 100vh;
+            font-family: 'Overpass', sans-serif;
+            box-sizing: border-box;
+            padding: 10px;
+        }
+
+        .container .time-date {
+            grid-area: time-date;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .container .time-date .time {
+            font-size: 6vw;
+            font-weight: 300;
+            text-align: left;
+        }
+
+        .container .time-date .date {
+            display: flex;
+            align-items: baseline;
+        }
+
+        .container .time-date .date .day {
+            font-size: 6vw;
+            font-weight: 600;
+            margin-right: 5px;
+        }
+
+        .container .time-date .date .date-num {
+            font-size: 6vw;
+            font-weight: 300;
+        }
+
+        .container .table, .container .northbound, .container .southbound {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 2vw;
+        }
+
+        .container .table th,
+        .container .table td,
+        .container .northbound th,
+        .container .northbound td,
+        .container .southbound th,
+        .container .southbound td {
+            text-align: left;
+            padding: 2px;
+            font-weight: 300;
+        }
+
+        .container .table th, .container .northbound th, .container .southbound th {
+            font-weight: 600;
+            font-size: 2.5vw;
+        }
+
+        .container .northbound {
+            grid-area: northbound;
+        }
+
+        .container .southbound {
+            grid-area: southbound;
+        }
+
+        .container .weather {
+            grid-area: weather;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            align-items: center;
+        }
+
+        .container .weather .temperatures {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .container .weather .temperatures .current {
+            font-size: 5vw;
+            font-weight: 300;
+        }
+
+        .container .weather .temperatures .min-max {
+            display: flex;
+            flex-direction: column;
+            font-size: 2.5vw;
+            font-weight: 300;
+        }
+
+        @media (max-width: 800px) {
+            .container .time-date .time,
+            .container .time-date .date .day,
+            .container .time-date .date .date-num {
+                font-size: 8vw;
+            }
+            .container .table, .container .northbound, .container .southbound {
+                font-size: 2.5vw;
+            }
+            .container .table th, .container .northbound th, .container .southbound th {
+                font-size: 3vw;
+            }
+            .container .weather .temperatures .current {
+                font-size: 6vw;
+            }
+            .container .weather .temperatures .min-max {
+                font-size: 3vw;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="time-date">
+        <div class="time">{{date.currentTime}}</div>
+        <div class="date">
+            <div class="day">{{date.currentDay}}</div>
+            <div class="date-num">{{date.currentDate}}</div>
+        </div>
+    </div>
+
+    <table class="northbound">
+        <thead>
+        <tr>
+            <th colspan="4">NORTHBOUND</th>
+        </tr>
+        </thead>
+        <tbody>
+        {{#each nationalRail.northboundTrains}}
+        <tr>
+            <td>{{this.time}}</td>
+            <td>{{this.destination}}</td>
+            <td>{{this.status}}</td>
+            <td>{{this.delay}}</td>
+        </tr>
+        {{else}}
+        <tr>
+            <td colspan="4">No scheduled trains</td>
+        </tr>
+        {{/each}}
+        </tbody>
+    </table>
+
+    <table class="southbound">
+        <thead>
+        <tr>
+            <th colspan="4">SOUTHBOUND</th>
+        </tr>
+        </thead>
+        <tbody>
+        {{#each nationalRail.southboundTrains}}
+        <tr>
+            <td>{{this.time}}</td>
+            <td>{{this.destination}}</td>
+            <td>{{this.status}}</td>
+            <td>{{this.delay}}</td>
+        </tr>
+        {{else}}
+        <tr>
+            <td colspan="4">No scheduled trains</td>
+        </tr>
+        {{/each}}
+        </tbody>
+    </table>
+
+    <div class="weather">
+        <div class="temperatures">
+            <div class="current">{{weather_information.temperature}}°C</div>
+            <div class="min-max">
+                <div>{{weather_information.temperature}}°C</div>
+                <div>{{weather_information.temperature}}°C</div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
