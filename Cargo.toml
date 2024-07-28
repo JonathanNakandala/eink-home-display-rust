@@ -1,0 +1,8 @@
+[package]
+name = "eink-home-display-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+headless_chrome = { version = "1.0.12", features = ["fetch"] }
+anyhow = "1.0.86"
