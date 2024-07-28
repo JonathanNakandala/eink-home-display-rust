@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 headless_chrome = { version = "1.0.12", features = ["fetch"] }
 anyhow = "1.0.86"
+derive-new = "0.6.0"
