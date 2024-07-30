@@ -1,6 +1,7 @@
 use anyhow::{Context, Error, Result};
-use image::{GenericImageView, DynamicImage, ImageBuffer,  Luma};
-pub fn convert_to_1bit(img: &DynamicImage) -> Vec<u8> {
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
+
+fn convert_to_1bit(img: &DynamicImage) -> Vec<u8> {
     let (width, height) = img.dimensions();
     let mut one_bit_array = Vec::new();
 
@@ -10,7 +11,8 @@ pub fn convert_to_1bit(img: &DynamicImage) -> Vec<u8> {
 
         for x in 0..width {
             let pixel = img.get_pixel(x, y);
-            let brightness = 0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
+            let brightness =
+                0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
             let bit = if brightness > 128.0 { 0 } else { 1 };
 
             byte |= bit << (7 - bit_count);
@@ -31,8 +33,12 @@ pub fn convert_to_1bit(img: &DynamicImage) -> Vec<u8> {
     one_bit_array
 }
 
-
-pub fn save_1bit_array_as_png(one_bit_array: &[u8], width: u32, height: u32, output_path: &str) -> Result<(), Error> {
+pub(super) fn save_1bit_array_as_png(
+    one_bit_array: &[u8],
+    width: u32,
+    height: u32,
+    output_path: &str,
+) -> Result<(), Error> {
     let mut img = ImageBuffer::new(width, height);
 
     for (i, &byte) in one_bit_array.iter().enumerate() {
@@ -55,10 +61,9 @@ pub fn save_1bit_array_as_png(one_bit_array: &[u8], width: u32, height: u32, out
     Ok(())
 }
 
-
-pub fn generate_1bit_image(screenshot_data: Vec<u8>) -> Result<Vec<u8>> {
-    let img = image::load_from_memory(&screenshot_data)
-        .context("Failed to load image from memory")?;
+pub(super) fn generate_1bit_image(screenshot_data: Vec<u8>) -> Result<Vec<u8>> {
+    let img =
+        image::load_from_memory(&screenshot_data).context("Failed to load image from memory")?;
     let one_bit_array = convert_to_1bit(&img);
     Ok(one_bit_array)
 }

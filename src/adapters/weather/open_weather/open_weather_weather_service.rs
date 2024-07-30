@@ -47,7 +47,7 @@ impl OpenWeatherWeatherServiceAdapter {
         Self { config, client }
     }
 
-    async fn fetch_weather_data(&self, location: &Location) -> Result<String, reqwest::Error> {
+    async fn fetch_weather_data(&self, _location: &Location) -> Result<String, reqwest::Error> {
         let url = format!(
             "https://api.openweathermap.org/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
             self.config.latitude, self.config.longitude, self.config.api_key
