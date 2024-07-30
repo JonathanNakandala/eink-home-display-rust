@@ -3,7 +3,7 @@ use serde::Serialize;
 pub mod location;
 pub mod weather;
 
-#[derive(Serialize, derive_new::new)]
+#[derive(Debug, derive_new::new, Serialize)]
 pub struct GlanceData {
     weather_information: WeatherInformation,
 }
