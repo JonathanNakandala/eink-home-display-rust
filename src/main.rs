@@ -5,8 +5,9 @@ use eink_home_display_rust::adapters::weather::open_weather::open_weather_weathe
     OpenWeatherConfig, OpenWeatherWeatherServiceAdapter,
 };
 use eink_home_display_rust::application::Application;
+use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
-use eink_home_display_rust::domain::services::weather_service::WeatherService;
+use eink_home_display_rust::domain::services::weather_service::LocalWeatherService;
 use eink_home_display_rust::settings::{Settings, WeatherProvider};
 use std::path::PathBuf;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -20,7 +21,11 @@ async fn main() -> Result<()> {
 
     let application = create_application(&settings);
 
-    let result = application.run().await;
+    let location = Location::new(
+        settings.weather.open_weather.latitude,
+        settings.weather.open_weather.longitude,
+    );
+    let result = application.run(location).await;
     log::info!("Image saved to {}", result?.to_string_lossy());
 
     Ok(())
@@ -37,20 +42,18 @@ fn initialize_logging() {
 
 fn create_application(
     settings: &Settings,
-) -> Application<impl WeatherService, impl DisplayImageGenerator> {
+) -> Application<impl LocalWeatherService, impl DisplayImageGenerator> {
     Application::new(
         setup_weather_service(settings),
         ChromeRenderDisplayImageGenerator::new(PathBuf::from("./"), 800, 480),
     )
 }
 
-fn setup_weather_service(settings: &Settings) -> impl WeatherService {
+fn setup_weather_service(settings: &Settings) -> impl LocalWeatherService {
     match settings.weather.provider {
         WeatherProvider::OpenWeather => {
             let open_weather_config = OpenWeatherConfig {
                 api_key: settings.weather.open_weather.api_key.clone(),
-                latitude: settings.weather.open_weather.latitude.clone(),
-                longitude: settings.weather.open_weather.longitude.clone(),
             };
             OpenWeatherWeatherServiceAdapter::new(open_weather_config)
         }

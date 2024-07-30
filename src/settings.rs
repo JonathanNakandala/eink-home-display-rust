@@ -23,8 +23,8 @@ where
 pub struct OpenWeatherSettings {
     #[serde(deserialize_with = "validate_api_key")]
     pub api_key: String,
-    pub latitude: String,
-    pub longitude: String
+    pub latitude: f64,
+    pub longitude: f64
 }
 #[derive(Debug, Deserialize)]
 pub enum WeatherProvider {
