@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use serde_valid::Validate;
@@ -18,10 +20,9 @@ pub struct LocationConfig {
 }
 
 impl ApplicationConfig {
-    pub fn new() -> Result<Self, ConfigError> {
+    pub fn new(file_path: &Path) -> Result<Self, ConfigError> {
         let s = Config::builder()
-            // Default Config File
-            .add_source(File::with_name("config/default"))
+            .add_source(File::from(file_path))
             .add_source(Environment::with_prefix("ink"))
             .build()?;
         s.try_deserialize()

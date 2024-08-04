@@ -2,12 +2,14 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use clap::Parser;
 use serde_valid::Validate;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
 use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use eink_home_display_rust::application::Application;
+use eink_home_display_rust::cli;
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::open_weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
@@ -18,7 +20,10 @@ use eink_home_display_rust::domain::services::weather_service::LocalWeatherServi
 async fn main() -> Result<()> {
     initialize_logging();
 
-    let config = ApplicationConfig::new().context("Failed to load settings")?;
+    let args = cli::Args::try_parse()?;
+
+    let config =
+        ApplicationConfig::new(args.config_file.as_path()).context("Failed to load settings")?;
     config.validate()?;
     log::info!("Settings loaded successfully: {:?}", config);
 
