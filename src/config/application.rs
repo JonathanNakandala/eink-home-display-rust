@@ -12,6 +12,7 @@ pub struct ApplicationConfig {
     pub weather: WeatherConfig,
     pub location: LocationConfig,
     pub output: OutputConfig,
+    pub image: ImageConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,12 @@ pub struct LocationConfig {
 #[derive(Debug, Deserialize)]
 pub struct OutputConfig {
     pub save_directory: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImageConfig {
+    pub height: u32,
+    pub width: u32,
 }
 
 impl ApplicationConfig {

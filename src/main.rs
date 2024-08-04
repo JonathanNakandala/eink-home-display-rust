@@ -48,7 +48,11 @@ fn create_application(
 ) -> Application<impl LocalWeatherService, impl DisplayImageGenerator> {
     Application::new(
         setup_weather_service(&config.weather),
-        ChromeRenderDisplayImageGenerator::new(config.output.save_directory.clone(), 800, 480),
+        ChromeRenderDisplayImageGenerator::new(
+            config.output.save_directory.clone(),
+            config.image.width,
+            config.image.height,
+        ),
     )
 }
 

@@ -10,3 +10,7 @@ api_key = ""
 
 [output]
 save_directory = ""
+
+[image]
+height = ""
+width = ""
