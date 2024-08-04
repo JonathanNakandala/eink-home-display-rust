@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
@@ -46,11 +44,11 @@ fn initialize_logging() {
 }
 
 fn create_application(
-    settings: &ApplicationConfig,
+    config: &ApplicationConfig,
 ) -> Application<impl LocalWeatherService, impl DisplayImageGenerator> {
     Application::new(
-        setup_weather_service(&settings.weather),
-        ChromeRenderDisplayImageGenerator::new(PathBuf::from("./"), 800, 480),
+        setup_weather_service(&config.weather),
+        ChromeRenderDisplayImageGenerator::new(config.output.save_directory.clone(), 800, 480),
     )
 }
 

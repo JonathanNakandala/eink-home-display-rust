@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
@@ -11,12 +11,18 @@ pub struct ApplicationConfig {
     #[validate]
     pub weather: WeatherConfig,
     pub location: LocationConfig,
+    pub output: OutputConfig,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LocationConfig {
     pub latitude: f64,
     pub longitude: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OutputConfig {
+    pub save_directory: PathBuf,
 }
 
 impl ApplicationConfig {
