@@ -1,11 +1,11 @@
-use crate::domain::models::location::Location;
-use crate::domain::models::weather::WeatherInformation;
-use crate::domain::services::weather_service::LocalWeatherService;
 use anyhow::Context;
+use reqwest::Client;
 use serde::Deserialize;
 
 use crate::adapters::weather::open_weather::response::OpenWeatherResponse;
-use reqwest::Client;
+use crate::domain::models::location::Location;
+use crate::domain::models::weather::WeatherInformation;
+use crate::domain::services::weather_service::LocalWeatherService;
 
 #[derive(Debug, Deserialize)]
 pub struct OpenWeatherConfig {
