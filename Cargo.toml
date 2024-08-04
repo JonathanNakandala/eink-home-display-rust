@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+clap = { version = "4.5", features = ["derive"] }
 config = { version = "0.14.0", features = ["toml"] }
 derive-new = "0.6.0"
 handlebars = "6.0.0"
