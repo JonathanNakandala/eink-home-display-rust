@@ -1,30 +1,30 @@
+use std::path::PathBuf;
+
 use anyhow::Context;
 use anyhow::Result;
+use serde_valid::Validate;
+use tracing_subscriber::{EnvFilter, fmt};
+
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
-use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::{
-    OpenWeatherConfig, OpenWeatherWeatherServiceAdapter,
-};
+use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use eink_home_display_rust::application::Application;
+use eink_home_display_rust::config::application::ApplicationConfig;
+use eink_home_display_rust::config::open_weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::weather_service::LocalWeatherService;
-use eink_home_display_rust::settings::{Settings, WeatherProvider};
-use std::path::PathBuf;
-use tracing_subscriber::{fmt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     initialize_logging();
 
-    let settings = Settings::new().context("Failed to load settings")?;
-    log::info!("Settings loaded successfully: {:?}", settings);
+    let config = ApplicationConfig::new().context("Failed to load settings")?;
+    config.validate()?;
+    log::info!("Settings loaded successfully: {:?}", config);
 
-    let application = create_application(&settings);
+    let application = create_application(&config);
 
-    let location = Location::new(
-        settings.weather.open_weather.latitude,
-        settings.weather.open_weather.longitude,
-    );
+    let location = Location::new(config.location.latitude, config.location.longitude);
     let result = application.run(location).await;
     log::info!("Image saved to {}", result?.to_string_lossy());
 
@@ -41,21 +41,19 @@ fn initialize_logging() {
 }
 
 fn create_application(
-    settings: &Settings,
+    settings: &ApplicationConfig,
 ) -> Application<impl LocalWeatherService, impl DisplayImageGenerator> {
     Application::new(
-        setup_weather_service(settings),
+        setup_weather_service(&settings.weather),
         ChromeRenderDisplayImageGenerator::new(PathBuf::from("./"), 800, 480),
     )
 }
 
-fn setup_weather_service(settings: &Settings) -> impl LocalWeatherService {
-    match settings.weather.provider {
-        WeatherProvider::OpenWeather => {
-            let open_weather_config = OpenWeatherConfig {
-                api_key: settings.weather.open_weather.api_key.clone(),
-            };
-            OpenWeatherWeatherServiceAdapter::new(open_weather_config)
-        }
+fn setup_weather_service(config: &WeatherConfig) -> impl LocalWeatherService {
+    match config.provider {
+        WeatherProvider::OpenWeather => OpenWeatherWeatherServiceAdapter::new(
+            config.open_weather.api_key.clone(),
+            reqwest::Client::new(),
+        ),
     }
 }
