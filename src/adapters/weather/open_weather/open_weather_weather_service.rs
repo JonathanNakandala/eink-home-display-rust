@@ -1,27 +1,15 @@
 use anyhow::Context;
 use reqwest::Client;
-use serde::Deserialize;
 
 use crate::adapters::weather::open_weather::response::OpenWeatherResponse;
 use crate::domain::models::location::Location;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::services::weather_service::LocalWeatherService;
 
-#[derive(Debug, Deserialize)]
-pub struct OpenWeatherConfig {
-    pub api_key: String,
-}
-
+#[derive(derive_new::new)]
 pub struct OpenWeatherWeatherServiceAdapter {
-    config: OpenWeatherConfig,
+    api_key: String,
     client: Client,
-}
-
-impl OpenWeatherWeatherServiceAdapter {
-    pub fn new(config: OpenWeatherConfig) -> Self {
-        let client = Client::new();
-        Self { config, client }
-    }
 }
 
 impl LocalWeatherService for OpenWeatherWeatherServiceAdapter {
@@ -31,7 +19,7 @@ impl LocalWeatherService for OpenWeatherWeatherServiceAdapter {
     ) -> anyhow::Result<WeatherInformation> {
         let url = format!(
             "https://api.openweathermap.org/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
-            location.latitude, location.longitude, self.config.api_key
+            location.latitude, location.longitude, self.api_key
         );
 
         let response = self.client.get(&url).send().await?;
