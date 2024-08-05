@@ -1,18 +1,19 @@
-use crate::domain::models::location::Location;
-use crate::domain::models::GlanceData;
-use crate::domain::services::display_image_generator::DisplayImageGenerator;
-use crate::domain::services::weather_service::LocalWeatherService;
 use std::path::PathBuf;
 
+use crate::domain::models::GlanceData;
+use crate::domain::models::location::Location;
+use crate::domain::services::display_image_generator::DisplayImageGenerator;
+use crate::domain::services::weather_service::WeatherService;
+
 #[derive(derive_new::new)]
-pub struct Application<WS: LocalWeatherService, DIG: DisplayImageGenerator> {
+pub struct Application<WS: WeatherService, DIG: DisplayImageGenerator> {
     weather_service: WS,
     display_image_generator: DIG,
 }
 
 impl<WS, DIG> Application<WS, DIG>
 where
-    WS: LocalWeatherService,
+    WS: WeatherService,
     DIG: DisplayImageGenerator,
 {
     pub async fn run(&self, location: Location) -> anyhow::Result<PathBuf> {

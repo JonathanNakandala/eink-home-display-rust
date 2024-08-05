@@ -4,7 +4,7 @@ use reqwest::Client;
 use crate::adapters::weather::open_weather::response::OpenWeatherResponse;
 use crate::domain::models::location::Location;
 use crate::domain::models::weather::WeatherInformation;
-use crate::domain::services::weather_service::LocalWeatherService;
+use crate::domain::services::weather_service::WeatherService;
 
 #[derive(derive_new::new)]
 pub struct OpenWeatherWeatherServiceAdapter {
@@ -12,7 +12,7 @@ pub struct OpenWeatherWeatherServiceAdapter {
     client: Client,
 }
 
-impl LocalWeatherService for OpenWeatherWeatherServiceAdapter {
+impl WeatherService for OpenWeatherWeatherServiceAdapter {
     async fn get_weather_for_location(
         &self,
         location: Location,

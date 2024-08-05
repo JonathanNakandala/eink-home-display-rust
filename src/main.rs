@@ -12,7 +12,7 @@ use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::open_weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
-use eink_home_display_rust::domain::services::weather_service::LocalWeatherService;
+use eink_home_display_rust::domain::services::weather_service::WeatherService;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -45,7 +45,7 @@ fn initialize_logging() {
 
 fn create_application(
     config: &ApplicationConfig,
-) -> Application<impl LocalWeatherService, impl DisplayImageGenerator> {
+) -> Application<impl WeatherService, impl DisplayImageGenerator> {
     Application::new(
         setup_weather_service(&config.weather),
         ChromeRenderDisplayImageGenerator::new(
@@ -56,7 +56,7 @@ fn create_application(
     )
 }
 
-fn setup_weather_service(config: &WeatherConfig) -> impl LocalWeatherService {
+fn setup_weather_service(config: &WeatherConfig) -> impl WeatherService {
     match config.provider {
         WeatherProvider::OpenWeather => OpenWeatherWeatherServiceAdapter::new(
             config.open_weather.api_key.clone(),
