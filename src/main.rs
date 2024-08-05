@@ -9,7 +9,7 @@ use eink_home_display_rust::adapters::weather::open_weather::open_weather_weathe
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
 use eink_home_display_rust::config::application::ApplicationConfig;
-use eink_home_display_rust::config::open_weather::{WeatherConfig, WeatherProvider};
+use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::weather_service::WeatherService;
@@ -59,6 +59,7 @@ fn create_application(
 fn setup_weather_service(config: &WeatherConfig) -> impl WeatherService {
     match config.provider {
         WeatherProvider::OpenWeather => OpenWeatherWeatherServiceAdapter::new(
+            config.open_weather.host_url.clone(),
             config.open_weather.api_key.clone(),
             reqwest::Client::new(),
         ),

@@ -8,6 +8,7 @@ use crate::domain::services::weather_service::WeatherService;
 
 #[derive(derive_new::new)]
 pub struct OpenWeatherWeatherServiceAdapter {
+    host_url: String,
     api_key: String,
     client: Client,
 }
@@ -18,8 +19,8 @@ impl WeatherService for OpenWeatherWeatherServiceAdapter {
         location: Location,
     ) -> anyhow::Result<WeatherInformation> {
         let url = format!(
-            "https://api.openweathermap.org/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
-            location.latitude, location.longitude, self.api_key
+            "{}/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
+            self.host_url, location.latitude, location.longitude, self.api_key
         );
 
         let response = self.client.get(&url).send().await?;

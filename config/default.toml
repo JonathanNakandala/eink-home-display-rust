@@ -7,6 +7,7 @@ provider = "OpenWeather"
 
 [weather.open_weather]
 api_key = ""
+host_url = ""
 
 [output]
 save_directory = ""

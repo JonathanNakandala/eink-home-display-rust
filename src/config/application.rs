@@ -4,7 +4,7 @@ use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use serde_valid::Validate;
 
-use crate::config::open_weather::WeatherConfig;
+use crate::config::weather::WeatherConfig;
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ApplicationConfig {
