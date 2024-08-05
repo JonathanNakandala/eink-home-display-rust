@@ -9,6 +9,7 @@ provider = "OpenWeather"
 api_key = ""
 
 [output]
+provider = "FileOutput"
 save_directory = ""
 
 [image]

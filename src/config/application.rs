@@ -20,9 +20,15 @@ pub struct LocationConfig {
     pub latitude: f64,
     pub longitude: f64,
 }
+#[derive(Debug, Deserialize)]
+pub enum OutputProvider {
+    FileOutput,
+    EinkWaveshare,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct OutputConfig {
+    pub output_type: OutputProvider,
     pub save_directory: PathBuf,
 }
 

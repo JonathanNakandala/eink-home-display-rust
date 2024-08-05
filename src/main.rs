@@ -1,18 +1,21 @@
 use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
-use serde_valid::Validate;
-use tracing_subscriber::{EnvFilter, fmt};
-
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
+use eink_home_display_rust::adapters::display_output::{EinkWaveshareAdapter, FileOutputAdapter};
 use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
-use eink_home_display_rust::config::application::ApplicationConfig;
+use eink_home_display_rust::config::application::OutputConfig;
+use eink_home_display_rust::config::application::{ApplicationConfig, OutputProvider};
 use eink_home_display_rust::config::open_weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::weather_service::LocalWeatherService;
+use eink_home_display_rust::domain::services::DisplayOutput;
+use serde_valid::Validate;
+use std::boxed::Box;
+use tracing_subscriber::{fmt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -53,6 +56,7 @@ fn create_application(
             config.image.width,
             config.image.height,
         ),
+        setup_output_adapter(&config.output),
     )
 }
 
@@ -62,5 +66,12 @@ fn setup_weather_service(config: &WeatherConfig) -> impl LocalWeatherService {
             config.open_weather.api_key.clone(),
             reqwest::Client::new(),
         ),
+    }
+}
+
+fn setup_output_adapter(config: &OutputConfig) -> Box<dyn DisplayOutput> {
+    match config.output_type {
+        OutputProvider::FileOutput => Box::new(FileOutputAdapter::new()),
+        OutputProvider::EinkWaveshare => Box::new(EinkWaveshareAdapter::new()),
     }
 }
