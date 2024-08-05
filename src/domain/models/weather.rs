@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Serialize, derive_new::new)]
+#[derive(Debug, Serialize, derive_new::new, PartialOrd, PartialEq)]
 pub struct WeatherInformation {
     temperature: i8
 }
