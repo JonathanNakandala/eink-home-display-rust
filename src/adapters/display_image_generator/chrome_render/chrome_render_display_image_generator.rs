@@ -1,19 +1,21 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use handlebars::Handlebars;
-use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 use headless_chrome::{Browser, FetcherOptions, LaunchOptions};
+use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 use crate::adapters::display_image_generator::chrome_render::generate_1bit::{
     generate_1bit_image, save_1bit_array_as_png,
 };
 use crate::domain::models::GlanceData;
+use crate::domain::models::image::ImageData;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 #[derive(derive_new::new)]
 pub struct ChromeRenderDisplayImageGenerator {
-    save_dir: PathBuf,
     image_width: u32,
     image_height: u32,
 }
@@ -53,25 +55,40 @@ impl ChromeRenderDisplayImageGenerator {
 
         Ok(png_data)
     }
+
+    async fn read_image_from_file(&self, path: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {
+        let mut f = File::open(path).await?;
+        let mut buffer = vec![];
+        f.read_to_end(&mut buffer).await?;
+        Ok(buffer)
+    }
 }
 
 impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
-    async fn generate(&self, data: GlanceData) -> anyhow::Result<PathBuf> {
+    async fn generate(&self, data: GlanceData) -> anyhow::Result<ImageData> {
         let html = self.render_glance_data(&data)?;
 
         let rendered_image = self.capture_webpage(html).await?;
         let one_bit_rendered_image =
             generate_1bit_image(rendered_image).context("Failed to generate 1-bit image")?;
 
-        let output_path = self.save_dir.join("one_bit_screenshot.png");
+        let dir = PathBuf::from("/tmp/eink_display/");
+
+        if !dir.exists() {
+            tokio::fs::create_dir(dir.as_path()).await?;
+        }
+
+        let output_path = dir.as_path().join("one_bit_screenshot.png");
         save_1bit_array_as_png(
             &one_bit_rendered_image,
             self.image_width,
             self.image_height,
-            output_path.to_str().unwrap(),
+            output_path.as_path(),
         )
         .context("Failed to save 1-bit screenshot")?;
 
-        Ok(output_path)
+        Ok(ImageData::new(
+            self.read_image_from_file(output_path.as_path()).await?,
+        ))
     }
 }
