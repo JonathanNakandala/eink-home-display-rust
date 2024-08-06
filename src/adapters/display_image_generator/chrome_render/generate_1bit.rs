@@ -1,3 +1,4 @@
+use std::path::Path;
 use anyhow::{Context, Error, Result};
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 
@@ -37,7 +38,7 @@ pub(super) fn save_1bit_array_as_png(
     one_bit_array: &[u8],
     width: u32,
     height: u32,
-    output_path: &str,
+    output_path: impl AsRef<Path>,
 ) -> Result<(), Error> {
     let mut img = ImageBuffer::new(width, height);
 

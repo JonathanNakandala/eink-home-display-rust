@@ -9,7 +9,7 @@ provider = "OpenWeather"
 api_key = ""
 host_url = ""
 
-[output]
+[file_store]
 save_directory = ""
 
 [image]
