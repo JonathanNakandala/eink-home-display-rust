@@ -11,7 +11,7 @@ pub struct ApplicationConfig {
     #[validate]
     pub weather: WeatherConfig,
     pub location: LocationConfig,
-    pub output: OutputConfig,
+    pub file_store: FileStoreConfig,
     pub image: ImageConfig,
 }
 
@@ -22,8 +22,8 @@ pub struct LocationConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct OutputConfig {
-    pub save_directory: PathBuf,
+pub struct FileStoreConfig {
+    pub save_directory: PathBuf
 }
 
 #[derive(Debug, Deserialize)]

@@ -5,6 +5,8 @@ use serde_valid::Validate;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
+use eink_home_display_rust::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
+use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
 use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
@@ -12,6 +14,8 @@ use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
+use eink_home_display_rust::domain::services::image_repository::ImageRepository;
+use eink_home_display_rust::domain::services::ImageDisplayService;
 use eink_home_display_rust::domain::services::weather_service::WeatherService;
 
 #[tokio::main]
@@ -25,13 +29,8 @@ async fn main() -> Result<()> {
     config.validate()?;
     log::info!("Settings loaded successfully: {:?}", config);
 
-    let application = create_application(&config);
-
     let location = Location::new(config.location.latitude, config.location.longitude);
-    let result = application.run(location).await;
-    log::info!("Image saved to {}", result?.to_string_lossy());
-
-    Ok(())
+    create_application(&config).run(location).await
 }
 
 fn initialize_logging() {
@@ -45,14 +44,17 @@ fn initialize_logging() {
 
 fn create_application(
     config: &ApplicationConfig,
-) -> Application<impl WeatherService, impl DisplayImageGenerator> {
+) -> Application<
+    impl WeatherService,
+    impl DisplayImageGenerator,
+    impl ImageDisplayService,
+    impl ImageRepository,
+> {
     Application::new(
         setup_weather_service(&config.weather),
-        ChromeRenderDisplayImageGenerator::new(
-            config.output.save_directory.clone(),
-            config.image.width,
-            config.image.height,
-        ),
+        ChromeRenderDisplayImageGenerator::new(config.image.width, config.image.height),
+        EinkWaveshareAdapter::new(),
+        FileStoreImageRepository::new(config.file_store.save_directory.clone()),
     )
 }
 
