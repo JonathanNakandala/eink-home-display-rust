@@ -1,8 +1,7 @@
-use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use serde_valid::Validate;
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
 use eink_home_display_rust::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
@@ -15,18 +14,40 @@ use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::image_repository::ImageRepository;
-use eink_home_display_rust::domain::services::ImageDisplayService;
 use eink_home_display_rust::domain::services::weather_service::WeatherService;
+use eink_home_display_rust::domain::services::ImageDisplayService;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     initialize_logging();
 
-    let args = cli::Args::try_parse()?;
+    let args = match cli::Args::try_parse() {
+        Ok(args) => args,
+        Err(e) => {
+            log::error!("Failed to parse command-line arguments: {}", e);
+            eprintln!("Error: Invalid command-line arguments. Use --help for usage information.");
+            std::process::exit(1);
+        }
+    };
 
-    let config =
-        ApplicationConfig::new(args.config_file.as_path()).context("Failed to load settings")?;
-    config.validate()?;
+    let config = match ApplicationConfig::new(&args.config_file) {
+        Ok(config) => config,
+        Err(e) => {
+            log::error!("Failed to load settings: {}", e);
+            eprintln!(
+                "Error: Failed to load configuration from {}. Please check your config file.",
+                args.config_file.display()
+            );
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = config.validate() {
+        log::error!("Configuration validation failed: {}", e);
+        eprintln!("Error: Configuration is invalid. Please check your config file.");
+        std::process::exit(1);
+    }
+
     log::info!("Settings loaded successfully: {:?}", config);
 
     let location = Location::new(config.location.latitude, config.location.longitude);
