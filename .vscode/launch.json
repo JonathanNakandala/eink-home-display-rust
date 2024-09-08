@@ -1,0 +1,31 @@
+{
+    "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "targetHost",
+            "type": "promptString",
+            "description": "Enter the target host (e.g., raspberrypi.local)",
+            "default": "jonpi.local"
+        },
+        {
+            "id": "targetPort",
+            "type": "promptString",
+            "description": "Enter the target port for remote debugging",
+            "default": "17777"
+        }
+    ],
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "custom",
+            "name": "Deploy and Debug to Raspi ARMv6",
+            "preLaunchTask": "Build, Deploy, and Debug",
+            "targetCreateCommands": [
+                "target create ${workspaceFolder}/target/arm-unknown-linux-gnueabihf/debug/${workspaceFolderBasename}"
+            ],
+            "processCreateCommands": [
+                "gdb-remote ${input:targetHost}:${input:targetPort}"
+            ]
+        }
+    ]
+}
