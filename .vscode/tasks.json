@@ -1,0 +1,117 @@
+{
+    "version": "2.0.0",
+    "inputs": [
+        {
+            "id": "targetHost",
+            "type": "promptString",
+            "description": "Enter the target host (e.g., raspberrypi.local)",
+            "default": "jonpi.local"
+        },
+        {
+            "id": "targetPort",
+            "type": "promptString",
+            "description": "Enter the target port for remote debugging",
+            "default": "17777"
+        }
+    ],
+    "tasks": [
+        {
+            "label": "Build Local",
+            "type": "cargo",
+            "command": "build",
+            "args": [],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Build Raspberry PI Armv6",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "build",
+                "--target=arm-unknown-linux-gnueabihf"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "Create Remote Directory",
+            "type": "shell",
+            "command": "ssh",
+            "args": [
+                "${input:targetHost}",
+                "mkdir -p ~/rust-eink/config"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Deploy to Remote",
+            "type": "shell",
+            "command": "scp",
+            "args": [
+                "${workspaceFolder}/target/arm-unknown-linux-gnueabihf/debug/${workspaceFolderBasename}",
+                "${workspaceFolder}/config/config.toml",
+                "${input:targetHost}:~/rust-eink/"
+            ],
+            "dependsOn": [
+                "Build Raspberry PI Armv6",
+                "Create Remote Directory"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Copy Config to Subdirectory",
+            "type": "shell",
+            "command": "ssh",
+            "args": [
+                "${input:targetHost}",
+                "cp ~/rust-eink/config.toml ~/rust-eink/config/"
+            ],
+            "dependsOn": "Deploy to Remote",
+            "problemMatcher": []
+        },
+        {
+            "label": "Start Remote GDB Server",
+            "type": "shell",
+            "command": "ssh",
+            "args": [
+                "${input:targetHost}",
+                "cd ~/rust-eink && gdbserver :${input:targetPort} ./${workspaceFolderBasename}"
+            ],
+            "isBackground": true,
+            "problemMatcher": [
+                {
+                    "pattern": [
+                        {
+                            "regexp": ".",
+                            "file": 1,
+                            "location": 2,
+                            "message": 3
+                        }
+                    ],
+                    "background": {
+                        "activeOnStart": true,
+                        "beginsPattern": "^Listening on port",
+                        "endsPattern": "^$"
+                    }
+                }
+            ]
+        },
+        {
+            "label": "Build, Deploy, and Debug",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Build Raspberry PI Armv6",
+                "Create Remote Directory",
+                "Deploy to Remote",
+                "Copy Config to Subdirectory",
+                "Start Remote GDB Server"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
