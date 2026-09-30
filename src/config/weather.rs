@@ -3,6 +3,7 @@ use serde_valid::Validate;
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct WeatherConfig {
+    pub enabled: bool,
     pub provider: WeatherProvider,
     #[validate]
     pub open_weather: OpenWeatherConfig,

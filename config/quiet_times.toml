@@ -1,0 +1,18 @@
+[network_rail]
+enabled = true
+feed_url = "https://publicdatafeeds.networkrail.co.uk/ntrod/CifFileAuthenticate"
+username = ""
+password = ""
+raw_file = "schedule_full.json.gz"
+cache_file = "hornsey_cache.json"
+# HRNSY = Hornsey, ALEXNDP = Alexandra Palace - the section of track visible from the balcony.
+timing_points = ["HRNSY", "ALEXNDP"]
+
+[rules]
+buffer_minutes = 2
+# Only affects which gaps are listed individually per day; the day's single
+# largest gap is always reported regardless of this threshold.
+min_gap_minutes = 5
+use_time_windows = true
+weekday_window = ["17:00", "23:59"]
+weekend_window = ["07:00", "23:59"]
