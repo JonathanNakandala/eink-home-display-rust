@@ -6,6 +6,7 @@ pub mod location;
 pub mod weather;
 
 pub mod image;
+pub mod train;
 
 #[derive(Debug, derive_new::new, Serialize)]
 pub struct GlanceData {

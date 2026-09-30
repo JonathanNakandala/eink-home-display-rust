@@ -6,12 +6,14 @@ use tracing_subscriber::{fmt, EnvFilter};
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
 use eink_home_display_rust::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
+use eink_home_display_rust::adapters::weather::no_op::no_op_weather_service::NoOpWeatherServiceAdapter;
 use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
 use eink_home_display_rust::domain::models::location::Location;
+use eink_home_display_rust::domain::models::weather::WeatherInformation;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::image_repository::ImageRepository;
 use eink_home_display_rust::domain::services::weather_service::WeatherService;
@@ -79,12 +81,36 @@ fn create_application(
     )
 }
 
-fn setup_weather_service(config: &WeatherConfig) -> impl WeatherService {
+enum WeatherServiceImpl {
+    OpenWeather(OpenWeatherWeatherServiceAdapter),
+    NoOp(NoOpWeatherServiceAdapter),
+}
+
+impl WeatherService for WeatherServiceImpl {
+    async fn get_weather_for_location(
+        &self,
+        location: Location,
+    ) -> anyhow::Result<WeatherInformation> {
+        match self {
+            WeatherServiceImpl::OpenWeather(service) => {
+                service.get_weather_for_location(location).await
+            }
+            WeatherServiceImpl::NoOp(service) => service.get_weather_for_location(location).await,
+        }
+    }
+}
+
+fn setup_weather_service(config: &WeatherConfig) -> WeatherServiceImpl {
+    if !config.enabled {
+        return WeatherServiceImpl::NoOp(NoOpWeatherServiceAdapter::new());
+    }
     match config.provider {
-        WeatherProvider::OpenWeather => OpenWeatherWeatherServiceAdapter::new(
-            config.open_weather.host_url.clone(),
-            config.open_weather.api_key.clone(),
-            reqwest::Client::new(),
+        WeatherProvider::OpenWeather => WeatherServiceImpl::OpenWeather(
+            OpenWeatherWeatherServiceAdapter::new(
+                config.open_weather.host_url.clone(),
+                config.open_weather.api_key.clone(),
+                reqwest::Client::new(),
+            ),
         ),
     }
 }

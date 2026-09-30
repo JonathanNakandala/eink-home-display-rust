@@ -3,6 +3,7 @@ latitude = ""
 longitude = ""
 
 [weather]
+enabled = true
 provider = "OpenWeather"
 
 [weather.open_weather]
