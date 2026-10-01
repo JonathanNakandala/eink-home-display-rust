@@ -4,7 +4,7 @@ use serde_valid::Validate;
 use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::departures::setup_departure_boards;
-use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
+use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
@@ -81,7 +81,7 @@ fn create_application(
 > {
     Ok(Application::new(
         setup_weather_service(&config.weather)?,
-        ChromeRenderDisplayImageGenerator::new(cache.chrome()),
+        ChromeRenderDisplayImageGenerator::new(cache.chrome(), DEFAULT_IDLE_TIMEOUT),
         setup_display(&config.display),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
