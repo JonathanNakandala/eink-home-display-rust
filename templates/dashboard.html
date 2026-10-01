@@ -208,6 +208,17 @@
             fill: #000;
         }
 
+        .weather .uv {
+            font-size: 2vw;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+        }
+
+        .weather .uv span {
+            font-weight: 300;
+            letter-spacing: 0;
+        }
+
         .weather .precipitation {
             width: 100%;
         }
@@ -318,6 +329,9 @@
                 <div><svg viewBox="0 0 10 10"><path d="M5 9.5 L10 0.5 H0 Z"/></svg><span class="trim">{{weather_information.min}}°</span></div>
             </div>
         </div>
+        {{#with weather_information.uv_index}}
+        <div class="uv">UV {{value}} <span>{{band}}</span></div>
+        {{/with}}
         {{#with weather_information.precipitation}}
         <div class="precipitation">
             <div class="caption">{{caption}}</div>

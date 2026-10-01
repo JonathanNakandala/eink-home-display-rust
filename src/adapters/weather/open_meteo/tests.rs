@@ -16,7 +16,7 @@ async fn returns_temperatures_and_condition_at_location() {
             .query_param("latitude", "1")
             .query_param("longitude", "2")
             .query_param("current", "temperature_2m,weather_code")
-            .query_param("daily", "temperature_2m_max,temperature_2m_min")
+            .query_param("daily", "temperature_2m_max,temperature_2m_min,uv_index_max")
             .query_param("forecast_days", "1");
         then.status(200)
             .header("content-type", "application/json; charset=UTF-8")
@@ -197,4 +197,49 @@ async fn weather_still_shows_when_air_quality_fails() {
         .unwrap();
 
     assert_that(&serde_json::to_value(&weather).unwrap()["air_quality"].is_null()).is_true();
+}
+
+async fn weather_with_daily(daily: &str) -> serde_json::Value {
+    let server = MockServer::start();
+    let body = format!(
+        r#"{{ "utc_offset_seconds": 0,
+              "current": {{ "temperature_2m": 3.4, "weather_code": 0 }},
+              "daily": {daily} }}"#
+    );
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/forecast");
+        then.status(200).header("content-type", "application/json").body(body);
+    });
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let weather = under_test
+        .get_weather_for_location(Location::new(1f64, 2f64))
+        .await
+        .unwrap()
+        .unwrap();
+    serde_json::to_value(&weather).unwrap()
+}
+
+#[tokio::test]
+async fn shows_the_days_peak_uv_when_it_is_worth_noticing() {
+    let weather = weather_with_daily(
+        r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6], "uv_index_max": [6.4] }"#,
+    )
+    .await;
+    assert_that(&weather["uv_index"]["value"].as_u64()).is_equal_to(Some(6));
+    assert_that(&weather["uv_index"]["band"].as_str()).is_equal_to(Some("High"));
+}
+
+#[tokio::test]
+async fn shows_low_uv_but_leaves_it_off_when_missing() {
+    let low = weather_with_daily(
+        r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6], "uv_index_max": [2.2] }"#,
+    )
+    .await;
+    assert_that(&low["uv_index"]["value"].as_u64()).is_equal_to(Some(2));
+    assert_that(&low["uv_index"]["band"].as_str()).is_equal_to(Some("Low"));
+    let missing = weather_with_daily(
+        r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6] }"#,
+    )
+    .await;
+    assert_that(&missing["uv_index"].is_null()).is_true();
 }
