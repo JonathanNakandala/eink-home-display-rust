@@ -5,3 +5,5 @@ temp/
 .DS_Store
 reference/
 config/default.toml
+
+/output
