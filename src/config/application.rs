@@ -4,12 +4,15 @@ use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use serde_valid::Validate;
 
+use crate::config::departures::DeparturesConfig;
 use crate::config::weather::WeatherConfig;
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ApplicationConfig {
     #[validate]
     pub weather: WeatherConfig,
+    #[validate]
+    pub departures: DeparturesConfig,
     pub location: LocationConfig,
     pub file_store: FileStoreConfig,
     pub image: ImageConfig,
