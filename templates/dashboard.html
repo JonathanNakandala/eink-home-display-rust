@@ -4,141 +4,169 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@300;600&display=swap" rel="stylesheet">
     <style>
-        body, html {
+        @font-face {
+            font-family: 'Overpass';
+            font-weight: 300;
+            src: url('fonts/Overpass/Overpass-Light.ttf') format('truetype');
+        }
+        @font-face {
+            font-family: 'Overpass';
+            font-weight: 600;
+            src: url('fonts/Overpass/Overpass-SemiBold.ttf') format('truetype');
+        }
+
+        html, body {
             margin: 0;
             padding: 0;
             overflow: hidden;
+            font-family: 'Overpass', sans-serif;
+            font-weight: 300;
+            color: #000;
+            background: #fff;
         }
+
         .container {
             display: grid;
-            grid-template-columns: 3fr 1fr;
-            grid-template-rows: auto auto 1fr;
-            grid-template-areas: 'time-date time-date' 'departures weather' 'departures weather';
+            grid-template-columns: 1fr;
+            grid-template-rows: auto 1fr;
+            grid-template-areas: 'header' 'main';
             width: 100vw;
             height: 100vh;
-            font-family: 'Overpass', sans-serif;
             box-sizing: border-box;
-            padding: 10px;
+            padding: 10px 16px;
         }
 
-        .container .time-date {
-            grid-area: time-date;
+        /* The weather column only exists when weather is enabled; departures take the rest. */
+        .container.has-weather {
+            grid-template-columns: 1fr 22vw;
+            grid-template-areas: 'header header' 'main weather';
+            column-gap: 16px;
+        }
+
+        .header {
+            grid-area: header;
             display: flex;
             justify-content: space-between;
-            align-items: center;
-        }
-
-        .container .time-date .time {
-            font-size: 6vw;
-            font-weight: 300;
-            text-align: left;
-        }
-
-        .container .time-date .date {
-            display: flex;
             align-items: baseline;
+            font-size: 7vw;
+            line-height: 1.1;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #000;
         }
 
-        .container .time-date .date .day {
-            font-size: 6vw;
+        .header .day {
             font-weight: 600;
-            margin-right: 5px;
+            margin-right: 0.25em;
         }
 
-        .container .time-date .date .date-num {
-            font-size: 6vw;
-            font-weight: 300;
+        /* One table for every board, so columns line up between them. The text
+           shrinks as lines are added (--lines) to fit the height left under the header. */
+        .departures {
+            grid-area: main;
+            min-height: 0;
+            --lines: 1;
+            font-size: min(3vw, calc(72vh / (var(--lines) * 1.35)));
+            padding-top: 0.4em;
         }
 
-        .container .table, .container .northbound, .container .southbound {
+        .departures table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 2vw;
+            table-layout: fixed;
         }
 
-        .container .table th,
-        .container .table td,
-        .container .northbound th,
-        .container .northbound td,
-        .container .southbound th,
-        .container .southbound td {
+        .departures col.time { width: 3.2em; }
+        .departures col.status { width: 5em; }
+        .departures col.delay { width: 5em; }
+
+        .departures th,
+        .departures td {
             text-align: left;
-            padding: 2px;
-            font-weight: 300;
+            padding: 0.1em 0.3em 0.1em 0;
+            line-height: 1.25;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
-        .container .table th, .container .northbound th, .container .southbound th {
+        .departures th {
             font-weight: 600;
-            font-size: 2.5vw;
+            font-size: 1.1em;
+            letter-spacing: 0.04em;
+            padding-top: 0.7em;
         }
 
-        .container .departures {
-            grid-area: departures;
+        .departures tr:first-child th {
+            padding-top: 0;
         }
 
-        .container .weather {
+        .departures .none {
+            font-style: italic;
+        }
+
+        .departures tr.cancelled td {
+            text-decoration: line-through;
+        }
+
+        .departures tr.delayed .status {
+            font-weight: 600;
+        }
+
+        .weather {
             grid-area: weather;
             display: flex;
             flex-direction: column;
-            justify-content: space-around;
             align-items: center;
+            justify-content: center;
+            gap: 1vh;
+            text-align: center;
         }
 
-        .container .weather .temperatures {
+        .weather .icon svg {
+            display: block;
+            width: 18vw;
+            height: 18vw;
+        }
+
+        .weather .current {
+            font-size: 8vw;
+            line-height: 1;
+        }
+
+        .weather .range {
             display: flex;
-            align-items: center;
-            justify-content: space-between;
-            width: 100%;
+            gap: 1.2em;
+            font-size: 2.6vw;
         }
 
-        .container .weather .temperatures .current {
-            font-size: 5vw;
-            font-weight: 300;
-        }
-
-        .container .weather .temperatures .min-max {
-            display: flex;
-            flex-direction: column;
-            font-size: 2.5vw;
-            font-weight: 300;
-        }
-
-        @media (max-width: 800px) {
-            .container .time-date .time,
-            .container .time-date .date .day,
-            .container .time-date .date .date-num {
-                font-size: 8vw;
-            }
-            .container .table, .container .northbound, .container .southbound {
-                font-size: 2.5vw;
-            }
-            .container .table th, .container .northbound th, .container .southbound th {
-                font-size: 3vw;
-            }
-            .container .weather .temperatures .current {
-                font-size: 6vw;
-            }
-            .container .weather .temperatures .min-max {
-                font-size: 3vw;
-            }
+        .weather .range span {
+            font-size: 0.65em;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            margin-right: 0.3em;
         }
     </style>
 </head>
 <body>
-<div class="container">
-    <div class="time-date">
+<div class="container{{#if weather_information}} has-weather{{/if}}">
+    <div class="header">
         <div class="time">{{date.currentTime}}</div>
         <div class="date">
-            <div class="day">{{date.currentDay}}</div>
-            <div class="date-num">{{date.currentDate}}</div>
+            <span class="day">{{date.currentDay}}</span><span class="date-num">{{date.currentDate}}</span>
         </div>
     </div>
 
-    <div class="departures">
-        {{#each departures}}
-        <table class="table">
+    {{#if departures}}
+    <div class="departures" style="--lines: {{departure_lines}}">
+        <table>
+            <colgroup>
+                <col class="time">
+                <col>
+                <col class="status">
+                <col class="delay">
+            </colgroup>
+            {{#each departures}}
             <thead>
             <tr>
                 <th colspan="4">{{this.name}}</th>
@@ -146,31 +174,33 @@
             </thead>
             <tbody>
             {{#each this.services}}
-            <tr>
+            <tr class="{{#if (eq this.status "Cancelled")}}cancelled{{/if}}{{#if (eq this.status "Delayed")}} delayed{{/if}}">
                 <td>{{this.time}}</td>
                 <td>{{this.destination}}</td>
-                <td>{{this.status}}</td>
-                <td>{{this.delay}}</td>
+                <td class="status">{{this.status}}</td>
+                <td>{{#if this.delay}}exp {{this.delay}}{{/if}}</td>
             </tr>
             {{else}}
             <tr>
-                <td colspan="4">No scheduled services</td>
+                <td class="none" colspan="4">No scheduled services</td>
             </tr>
             {{/each}}
             </tbody>
+            {{/each}}
         </table>
-        {{/each}}
     </div>
+    {{/if}}
 
+    {{#if weather_information}}
     <div class="weather">
-        <div class="temperatures">
-            <div class="current">{{weather_information.temperature}}°C</div>
-            <div class="min-max">
-                <div>{{weather_information.temperature}}°C</div>
-                <div>{{weather_information.temperature}}°C</div>
-            </div>
+        <div class="icon">{{> (lookup weather_information "condition")}}</div>
+        <div class="current">{{weather_information.temperature}}°</div>
+        <div class="range">
+            <div><span>LOW</span>{{weather_information.min}}°</div>
+            <div><span>HIGH</span>{{weather_information.max}}°</div>
         </div>
     </div>
+    {{/if}}
 </div>
 </body>
 </html>

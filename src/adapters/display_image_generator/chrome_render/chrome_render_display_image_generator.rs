@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -15,6 +15,32 @@ use crate::domain::models::GlanceData;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+
+const DASHBOARD_TEMPLATE: &str = include_str!("../../../../templates/dashboard.html");
+
+/// Files the template references by relative path. They are compiled in and
+/// written next to the rendered HTML, so the binary needs nothing deployed
+/// alongside it.
+const ASSETS: &[(&str, &[u8])] = &[
+    (
+        "fonts/Overpass/Overpass-Light.ttf",
+        include_bytes!("../../../../templates/fonts/Overpass/Overpass-Light.ttf"),
+    ),
+    (
+        "fonts/Overpass/Overpass-SemiBold.ttf",
+        include_bytes!("../../../../templates/fonts/Overpass/Overpass-SemiBold.ttf"),
+    ),
+];
+
+/// Inline SVGs, available in the template as partials named after `WeatherCondition`.
+const ICONS: &[(&str, &str)] = &[
+    ("clear", include_str!("../../../../templates/weather_icons/013-sun-8.svg")),
+    ("clouds", include_str!("../../../../templates/weather_icons/051-cloud-3.svg")),
+    ("drizzle", include_str!("../../../../templates/weather_icons/099-rain-4.svg")),
+    ("rain", include_str!("../../../../templates/weather_icons/067-storm-6.svg")),
+    ("thunderstorm", include_str!("../../../../templates/weather_icons/057-storm-7.svg")),
+    ("snow", include_str!("../../../../templates/weather_icons/047-snow-4.svg")),
+];
 
 /// Renders the dashboard template in headless Chrome at the display's native
 /// size and returns the screenshot. Reducing it to the panel's colour depth is
@@ -48,18 +74,32 @@ fn find_system_chrome() -> Option<PathBuf> {
 }
 
 impl ChromeRenderDisplayImageGenerator {
-    fn render_glance_data(&self, glance_data: &GlanceData) -> anyhow::Result<String> {
+    /// The dashboard as HTML. Fonts are referenced by relative path, so it
+    /// renders correctly from a directory holding [`ASSETS`].
+    pub fn render_html(&self, glance_data: &GlanceData) -> anyhow::Result<String> {
         let mut handlebars = Handlebars::new();
-        handlebars.register_template_string(
-            "dashboard",
-            include_str!("../../../../templates/dashboard.html"),
-        )?;
-
-        let rendered = handlebars.render("dashboard", glance_data)?;
-        Ok(rendered)
+        for (name, svg) in ICONS {
+            // Drop the XML prolog and comments: they are invalid inside HTML.
+            let svg = &svg[svg.find("<svg").unwrap_or(0)..];
+            handlebars.register_partial(name, svg)?;
+        }
+        handlebars.register_template_string("dashboard", DASHBOARD_TEMPLATE)?;
+        Ok(handlebars.render("dashboard", glance_data)?)
     }
 
-    async fn capture_webpage(&self, html: String, profile: &DisplayProfile) -> anyhow::Result<Vec<u8>> {
+    /// Writes the HTML and its assets to `dir`, returning the HTML file's path.
+    pub fn write_page(&self, dir: &Path, html: &str) -> anyhow::Result<PathBuf> {
+        for (path, bytes) in ASSETS {
+            let target = dir.join(path);
+            std::fs::create_dir_all(target.parent().expect("asset paths have a parent"))?;
+            std::fs::write(target, bytes)?;
+        }
+        let page = dir.join("dashboard.html");
+        std::fs::write(&page, html)?;
+        Ok(page)
+    }
+
+    async fn capture_webpage(&self, page: &Path, profile: &DisplayProfile) -> anyhow::Result<Vec<u8>> {
         let fetcher_options = FetcherOptions::default()
             .with_allow_download(true)
             .with_install_dir("/tmp/headless_chrome".into());
@@ -99,8 +139,11 @@ impl ChromeRenderDisplayImageGenerator {
             device_posture: None,
         })
         .context("Failed to set viewport size")?;
-        tab.navigate_to(format!("data:text/html;charset=utf-8,{}", html).as_str())?
-            .wait_until_navigated()?;
+        let url = format!("file://{}", page.display());
+        tab.navigate_to(&url)?.wait_until_navigated()?;
+        // Fonts load after navigation; a screenshot taken before then uses the fallback.
+        tab.evaluate("document.fonts.ready.then(() => true)", true)
+            .context("Failed to wait for fonts")?;
 
         let screenshot_options = CaptureScreenshotFormatOption::Png;
         let png_data = tab
@@ -117,26 +160,33 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
         data: GlanceData,
         profile: &DisplayProfile,
     ) -> anyhow::Result<ImageData> {
-        let html = self.render_glance_data(&data)?;
-        let png = self.capture_webpage(html, profile).await?;
+        let html = self.render_html(&data)?;
+        // Keep the directory alive until the screenshot has been taken.
+        let dir = tempfile::tempdir().context("Failed to create render directory")?;
+        let page = self.write_page(dir.path(), &html)?;
+        let png = self.capture_webpage(&page, profile).await?;
         Ok(ImageData::new(png))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::models::DateInfo;
     use crate::domain::models::display::Palette;
-    use crate::domain::models::weather::WeatherInformation;
+    use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
 
     use super::*;
 
-    /// Needs a real Chrome (and network for the font), so run with `--ignored`.
+    /// Needs a real Chrome, so run with `--ignored`.
     #[tokio::test]
     #[ignore]
     async fn renders_a_png_at_the_profile_size() {
         let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
         let profile = DisplayProfile { width: 800, height: 480, palette: Palette::Mono };
-        let data = GlanceData::new(WeatherInformation::new(12), vec![]);
+        let data = GlanceData::new(
+            Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
+            vec![],
+            DateInfo::new(chrono::Local::now()));
 
         let image = ChromeRenderDisplayImageGenerator::new()
             .generate(data, &profile)

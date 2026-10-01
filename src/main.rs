@@ -5,18 +5,13 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
-use eink_home_display_rust::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
+use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
-use eink_home_display_rust::adapters::weather::no_op::no_op_weather_service::NoOpWeatherServiceAdapter;
-use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
+use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
-use eink_home_display_rust::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
-use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
-use eink_home_display_rust::domain::models::display::DisplayProfile;
-use eink_home_display_rust::domain::models::image::ImageData;
+use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::domain::models::location::Location;
-use eink_home_display_rust::domain::models::weather::WeatherInformation;
 use eink_home_display_rust::domain::services::departures_service::DeparturesService;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::image_repository::ImageRepository;
@@ -87,65 +82,4 @@ fn create_application(
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
     ))
-}
-
-enum WeatherServiceImpl {
-    OpenWeather(OpenWeatherWeatherServiceAdapter),
-    NoOp(NoOpWeatherServiceAdapter),
-}
-
-impl WeatherService for WeatherServiceImpl {
-    async fn get_weather_for_location(
-        &self,
-        location: Location,
-    ) -> anyhow::Result<WeatherInformation> {
-        match self {
-            WeatherServiceImpl::OpenWeather(service) => {
-                service.get_weather_for_location(location).await
-            }
-            WeatherServiceImpl::NoOp(service) => service.get_weather_for_location(location).await,
-        }
-    }
-}
-
-fn setup_weather_service(config: &WeatherConfig) -> WeatherServiceImpl {
-    if !config.enabled {
-        return WeatherServiceImpl::NoOp(NoOpWeatherServiceAdapter::new());
-    }
-    match config.provider {
-        WeatherProvider::OpenWeather => WeatherServiceImpl::OpenWeather(
-            OpenWeatherWeatherServiceAdapter::new(
-                config.open_weather.host_url.clone(),
-                config.open_weather.api_key.clone(),
-                reqwest::Client::new(),
-            ),
-        ),
-    }
-}
-
-enum DisplayImpl {
-    WaveshareEpd7in5V2(EinkWaveshareAdapter),
-}
-
-#[async_trait::async_trait]
-impl ImageDisplayService for DisplayImpl {
-    fn profile(&self) -> DisplayProfile {
-        match self {
-            DisplayImpl::WaveshareEpd7in5V2(display) => display.profile(),
-        }
-    }
-
-    async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
-        match self {
-            DisplayImpl::WaveshareEpd7in5V2(display) => display.display(data).await,
-        }
-    }
-}
-
-fn setup_display(config: &DisplayConfig) -> DisplayImpl {
-    match config.kind {
-        DisplayKind::WaveshareEpd7in5V2 => {
-            DisplayImpl::WaveshareEpd7in5V2(EinkWaveshareAdapter::new(config.dither))
-        }
-    }
 }

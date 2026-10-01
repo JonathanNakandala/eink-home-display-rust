@@ -108,3 +108,45 @@ pub enum StopsCommand {
         query: String,
     },
 }
+
+#[derive(clap::Parser)]
+pub struct RenderArgs {
+    /// Path to application config file. Needed for --live; without it the
+    /// Waveshare 7.5" profile is used.
+    #[arg(short, long)]
+    pub config_file: Option<PathBuf>,
+
+    /// Where to write the rendered PNG; the dithered version goes next to it
+    /// with a `.dithered.png` extension
+    #[arg(short, long, default_value = "render.png")]
+    pub output: PathBuf,
+
+    /// Fetch real weather and departures instead of using sample data
+    #[arg(long)]
+    pub live: bool,
+
+    /// Also write the rendered HTML (with its fonts) to this directory, to open in a browser
+    #[arg(long)]
+    pub html_dir: Option<PathBuf>,
+
+    /// How greys are reduced for the dithered preview; defaults to the config's setting
+    #[arg(long, value_enum)]
+    pub dither: Option<DitherArg>,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum DitherArg {
+    None,
+    FloydSteinberg,
+    Ordered,
+}
+
+impl From<DitherArg> for crate::domain::models::display::Dither {
+    fn from(arg: DitherArg) -> Self {
+        match arg {
+            DitherArg::None => Self::None,
+            DitherArg::FloydSteinberg => Self::FloydSteinberg,
+            DitherArg::Ordered => Self::Ordered,
+        }
+    }
+}

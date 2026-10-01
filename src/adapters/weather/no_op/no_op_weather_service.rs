@@ -9,8 +9,8 @@ impl WeatherService for NoOpWeatherServiceAdapter {
     async fn get_weather_for_location(
         &self,
         _location: Location,
-    ) -> anyhow::Result<WeatherInformation> {
-        log::debug!("Weather disabled via config, returning default WeatherInformation");
-        Ok(WeatherInformation::new(0))
+    ) -> anyhow::Result<Option<WeatherInformation>> {
+        log::debug!("Weather disabled via config, leaving it off the display");
+        Ok(None)
     }
 }
