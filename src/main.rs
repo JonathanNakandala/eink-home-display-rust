@@ -11,8 +11,10 @@ use eink_home_display_rust::adapters::weather::no_op::no_op_weather_service::NoO
 use eink_home_display_rust::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
-use eink_home_display_rust::config::application::ApplicationConfig;
+use eink_home_display_rust::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
 use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
+use eink_home_display_rust::domain::models::display::DisplayProfile;
+use eink_home_display_rust::domain::models::image::ImageData;
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::models::weather::WeatherInformation;
 use eink_home_display_rust::domain::services::departures_service::DeparturesService;
@@ -80,8 +82,8 @@ fn create_application(
 > {
     Ok(Application::new(
         setup_weather_service(&config.weather),
-        ChromeRenderDisplayImageGenerator::new(config.image.width, config.image.height),
-        EinkWaveshareAdapter::new(),
+        ChromeRenderDisplayImageGenerator::new(),
+        setup_display(&config.display),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
     ))
@@ -118,5 +120,32 @@ fn setup_weather_service(config: &WeatherConfig) -> WeatherServiceImpl {
                 reqwest::Client::new(),
             ),
         ),
+    }
+}
+
+enum DisplayImpl {
+    WaveshareEpd7in5V2(EinkWaveshareAdapter),
+}
+
+#[async_trait::async_trait]
+impl ImageDisplayService for DisplayImpl {
+    fn profile(&self) -> DisplayProfile {
+        match self {
+            DisplayImpl::WaveshareEpd7in5V2(display) => display.profile(),
+        }
+    }
+
+    async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
+        match self {
+            DisplayImpl::WaveshareEpd7in5V2(display) => display.display(data).await,
+        }
+    }
+}
+
+fn setup_display(config: &DisplayConfig) -> DisplayImpl {
+    match config.kind {
+        DisplayKind::WaveshareEpd7in5V2 => {
+            DisplayImpl::WaveshareEpd7in5V2(EinkWaveshareAdapter::new(config.dither))
+        }
     }
 }

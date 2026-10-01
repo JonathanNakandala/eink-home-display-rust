@@ -1,17 +1,26 @@
 use async_trait::async_trait;
 
+use crate::domain::models::display::{Dither, DisplayProfile, Palette};
 use crate::domain::models::image::ImageData;
 use crate::domain::services::image_display_service::ImageDisplayService;
 
+use super::eink_driver::{HEIGHT, WIDTH};
 use super::frame::frame_from_encoded_image;
 
+/// Waveshare 7.5" V2: 800x480, black and white.
 #[derive(derive_new::new)]
-pub struct EinkWaveshareAdapter {}
+pub struct EinkWaveshareAdapter {
+    dither: Dither,
+}
 
 #[async_trait]
 impl ImageDisplayService for EinkWaveshareAdapter {
+    fn profile(&self) -> DisplayProfile {
+        DisplayProfile { width: WIDTH, height: HEIGHT, palette: Palette::Mono }
+    }
+
     async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
-        let frame = frame_from_encoded_image(&data.data)?;
+        let frame = frame_from_encoded_image(&data.data, self.dither)?;
 
         // SPI and the panel's busy-wait are blocking, and a refresh takes seconds.
         tokio::task::spawn_blocking(move || show_frame(&frame)).await?

@@ -5,6 +5,7 @@ use crate::domain::models::weather::WeatherInformation;
 
 pub mod arrival;
 pub mod departures;
+pub mod display;
 pub mod location;
 pub mod stop_point;
 pub mod weather;

@@ -7,6 +7,7 @@ use serde_valid::Validate;
 
 use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::weather::WeatherConfig;
+use crate::domain::models::display::Dither;
 
 #[derive(Debug, Serialize, Deserialize, Validate, JsonSchema)]
 pub struct ApplicationConfig {
@@ -20,7 +21,7 @@ pub struct ApplicationConfig {
     pub providers: ProvidersConfig,
     pub location: LocationConfig,
     pub file_store: FileStoreConfig,
-    pub image: ImageConfig,
+    pub display: DisplayConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -37,10 +38,18 @@ pub struct FileStoreConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ImageConfig {
-    /// Display size in pixels.
-    pub height: u32,
-    pub width: u32,
+pub struct DisplayConfig {
+    /// Which display to render for and drive. Its size and colour depth are fixed by the hardware.
+    pub kind: DisplayKind,
+    /// How greys are reduced to the panel's levels.
+    #[serde(default)]
+    pub dither: Dither,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum DisplayKind {
+    /// Waveshare 7.5" V2, 800x480 black and white.
+    WaveshareEpd7in5V2,
 }
 
 impl ApplicationConfig {
