@@ -14,6 +14,10 @@ pub struct DepartureBoardConfig {
     /// Maximum number of rows to show.
     #[serde(default = "default_rows")]
     pub rows: u8,
+    /// Minutes it takes to get to the station or stop. Services leaving sooner than
+    /// this are left off, since they can't be caught. National Rail boards support up to 119.
+    #[serde(default)]
+    pub travel_minutes: u16,
     #[serde(flatten)]
     pub source: DepartureSource,
 }

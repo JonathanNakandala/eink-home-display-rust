@@ -16,22 +16,33 @@ pub struct OpenLdbwsDeparturesServiceAdapter {
     api_key: String,
     from: String,
     to: String,
+    /// Minutes to get to the station; the board is requested as it will be then.
+    travel_minutes: u16,
     client: Client,
 }
+
+/// The largest `timeOffset` the API accepts, in minutes.
+const MAX_TIME_OFFSET: u16 = 119;
 
 impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
     async fn get_departures(&self, num_rows: u8) -> anyhow::Result<Vec<DepartureService>> {
         let url = format!("{}/{}", self.host_url, self.from);
 
+        let mut query = vec![
+            ("numRows", num_rows.to_string()),
+            ("filterCrs", self.to.clone()),
+            ("filterType", "to".to_owned()),
+        ];
+        if self.travel_minutes > 0 {
+            // Ask for the board as of when we could get there, so trains we'd miss are never listed.
+            query.push(("timeOffset", self.travel_minutes.min(MAX_TIME_OFFSET).to_string()));
+        }
+
         let response = self
             .client
             .get(&url)
             .header("x-apikey", &self.api_key)
-            .query(&[
-                ("numRows", num_rows.to_string()),
-                ("filterCrs", self.to.clone()),
-                ("filterType", "to".to_owned()),
-            ])
+            .query(&query)
             .send()
             .await?
             .error_for_status()
