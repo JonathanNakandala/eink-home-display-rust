@@ -1,103 +1,49 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ApplicationConfig",
   "type": "object",
-  "required": [
-    "display",
-    "file_store",
-    "location",
-    "weather"
-  ],
   "properties": {
     "departures": {
       "description": "Departure boards shown on the display, in order. Each picks its own provider.",
-      "default": [],
       "type": "array",
+      "default": [],
       "items": {
-        "$ref": "#/definitions/DepartureBoardConfig"
+        "$ref": "#/$defs/DepartureBoardConfig"
       }
     },
     "display": {
-      "$ref": "#/definitions/DisplayConfig"
+      "$ref": "#/$defs/DisplayConfig"
     },
     "file_store": {
-      "$ref": "#/definitions/FileStoreConfig"
+      "$ref": "#/$defs/FileStoreConfig"
     },
     "location": {
-      "$ref": "#/definitions/LocationConfig"
+      "$ref": "#/$defs/LocationConfig"
     },
     "providers": {
       "description": "Credentials and endpoints shared by all boards using a provider.",
-      "default": {},
-      "allOf": [
-        {
-          "$ref": "#/definitions/ProvidersConfig"
-        }
-      ]
+      "$ref": "#/$defs/ProvidersConfig",
+      "default": {}
     },
     "weather": {
-      "$ref": "#/definitions/WeatherConfig"
+      "$ref": "#/$defs/WeatherConfig"
     }
   },
-  "definitions": {
+  "required": [
+    "weather",
+    "location",
+    "file_store",
+    "display"
+  ],
+  "$defs": {
     "DepartureBoardConfig": {
       "description": "One `[[departures]]` entry: a titled board fed by a single provider.",
       "type": "object",
-      "oneOf": [
-        {
-          "description": "National Rail live board between two CRS codes.",
-          "type": "object",
-          "required": [
-            "from",
-            "provider",
-            "to"
-          ],
-          "properties": {
-            "from": {
-              "description": "CRS code of the station to show departures from, e.g. \"HRN\".",
-              "type": "string"
-            },
-            "provider": {
-              "type": "string",
-              "enum": [
-                "OpenLdbws"
-              ]
-            },
-            "to": {
-              "description": "CRS code the services must call at, e.g. \"WIH\".",
-              "type": "string"
-            }
-          }
-        },
-        {
-          "description": "TfL arrivals at a single stop (bus stop or station NaPTAN id).",
-          "type": "object",
-          "required": [
-            "provider",
-            "stop_id"
-          ],
-          "properties": {
-            "provider": {
-              "type": "string",
-              "enum": [
-                "Tfl"
-              ]
-            },
-            "stop_id": {
-              "description": "NaPTAN id from `tfl_stops`, e.g. \"940GZZLUTPN\" (tube) or \"490000173RC\" (bus).",
-              "type": "string"
-            }
-          }
-        }
-      ],
-      "required": [
-        "name"
-      ],
       "properties": {
         "enabled": {
           "description": "Set to false to skip this board without deleting it.",
-          "default": true,
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         },
         "name": {
           "description": "Heading shown above the board on the display.",
@@ -105,46 +51,83 @@
         },
         "rows": {
           "description": "Maximum number of rows to show.",
-          "default": 4,
           "type": "integer",
           "format": "uint8",
-          "minimum": 0.0
+          "default": 4,
+          "maximum": 255,
+          "minimum": 0
         }
-      }
+      },
+      "oneOf": [
+        {
+          "description": "National Rail live board between two CRS codes.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "CRS code of the station to show departures from, e.g. \"HRN\".",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string",
+              "const": "OpenLdbws"
+            },
+            "to": {
+              "description": "CRS code the services must call at, e.g. \"WIH\".",
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "from",
+            "to"
+          ]
+        },
+        {
+          "description": "TfL arrivals at a single stop (bus stop or station NaPTAN id).",
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "const": "Tfl"
+            },
+            "stop_id": {
+              "description": "NaPTAN id from `tfl_stops`, e.g. \"940GZZLUTPN\" (tube) or \"490000173RC\" (bus).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "stop_id"
+          ]
+        }
+      ],
+      "required": [
+        "name"
+      ]
     },
     "DisplayConfig": {
       "type": "object",
-      "required": [
-        "kind"
-      ],
       "properties": {
         "dither": {
           "description": "How greys are reduced to the panel's levels.",
-          "default": "None",
-          "allOf": [
-            {
-              "$ref": "#/definitions/Dither"
-            }
-          ]
+          "$ref": "#/$defs/Dither",
+          "default": "None"
         },
         "kind": {
           "description": "Which display to render for and drive. Its size and colour depth are fixed by the hardware.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/DisplayKind"
-            }
-          ]
+          "$ref": "#/$defs/DisplayKind"
         }
-      }
+      },
+      "required": [
+        "kind"
+      ]
     },
     "DisplayKind": {
       "oneOf": [
         {
           "description": "Waveshare 7.5\" V2, 800x480 black and white.",
           "type": "string",
-          "enum": [
-            "WaveshareEpd7in5V2"
-          ]
+          "const": "WaveshareEpd7in5V2"
         }
       ]
     },
@@ -154,44 +137,34 @@
         {
           "description": "Plain threshold: crisp text, harsh on greys.",
           "type": "string",
-          "enum": [
-            "None"
-          ]
+          "const": "None"
         },
         {
           "description": "Error diffusion: smooth greys, a bit noisy on text.",
           "type": "string",
-          "enum": [
-            "FloydSteinberg"
-          ]
+          "const": "FloydSteinberg"
         },
         {
           "description": "4x4 Bayer matrix: regular pattern, stable between refreshes.",
           "type": "string",
-          "enum": [
-            "Ordered"
-          ]
+          "const": "Ordered"
         }
       ]
     },
     "FileStoreConfig": {
       "type": "object",
-      "required": [
-        "save_directory"
-      ],
       "properties": {
         "save_directory": {
           "description": "Where rendered images are saved; empty for the working directory.",
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "save_directory"
+      ]
     },
     "LocationConfig": {
       "type": "object",
-      "required": [
-        "latitude",
-        "longitude"
-      ],
       "properties": {
         "latitude": {
           "description": "Decimal degrees, used for the weather lookup.",
@@ -202,14 +175,14 @@
           "type": "number",
           "format": "double"
         }
-      }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ]
     },
     "OpenLdbwsConfig": {
       "type": "object",
-      "required": [
-        "api_key",
-        "host_url"
-      ],
       "properties": {
         "api_key": {
           "description": "Consumer Key from your raildata.org.uk \"Live Arrival and Departure Boards\" subscription.",
@@ -219,14 +192,14 @@
           "description": "Base path up to and including the operation name; the CRS code is appended as the final path segment.",
           "type": "string"
         }
-      }
-    },
-    "OpenWeatherConfig": {
-      "type": "object",
+      },
       "required": [
         "api_key",
         "host_url"
-      ],
+      ]
+    },
+    "OpenWeatherConfig": {
+      "type": "object",
       "properties": {
         "api_key": {
           "description": "32-character OpenWeather API key.",
@@ -237,7 +210,11 @@
         "host_url": {
           "type": "string"
         }
-      }
+      },
+      "required": [
+        "api_key",
+        "host_url"
+      ]
     },
     "ProvidersConfig": {
       "description": "Credentials/endpoints shared by every board using that provider, under `[providers.*]`.",
@@ -246,7 +223,7 @@
         "open_ldbws": {
           "anyOf": [
             {
-              "$ref": "#/definitions/OpenLdbwsConfig"
+              "$ref": "#/$defs/OpenLdbwsConfig"
             },
             {
               "type": "null"
@@ -256,7 +233,7 @@
         "tfl": {
           "anyOf": [
             {
-              "$ref": "#/definitions/TflConfig"
+              "$ref": "#/$defs/TflConfig"
             },
             {
               "type": "null"
@@ -277,30 +254,30 @@
         },
         "host_url": {
           "description": "TfL Unified API base URL.",
-          "default": "https://api.tfl.gov.uk",
-          "type": "string"
+          "type": "string",
+          "default": "https://api.tfl.gov.uk"
         }
       }
     },
     "WeatherConfig": {
       "type": "object",
-      "required": [
-        "enabled",
-        "open_weather",
-        "provider"
-      ],
       "properties": {
         "enabled": {
           "description": "When false no weather is fetched and the display shows none.",
           "type": "boolean"
         },
         "open_weather": {
-          "$ref": "#/definitions/OpenWeatherConfig"
+          "$ref": "#/$defs/OpenWeatherConfig"
         },
         "provider": {
-          "$ref": "#/definitions/WeatherProvider"
+          "$ref": "#/$defs/WeatherProvider"
         }
-      }
+      },
+      "required": [
+        "enabled",
+        "provider",
+        "open_weather"
+      ]
     },
     "WeatherProvider": {
       "type": "string",
