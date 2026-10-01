@@ -32,10 +32,11 @@ impl ApplicationConfig {
             weather: WeatherConfig {
                 enabled: true,
                 provider: WeatherProvider::OpenWeather,
-                open_weather: OpenWeatherConfig {
+                open_weather: Some(OpenWeatherConfig {
                     api_key: "0".repeat(32),
                     host_url: "https://api.openweathermap.org".to_owned(),
-                },
+                }),
+                open_meteo: None,
             },
             departures: vec![
                 board(

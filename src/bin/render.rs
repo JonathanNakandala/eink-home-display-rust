@@ -89,7 +89,7 @@ async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
     // Reuse the application's own fetching by running it against a capture-only generator.
     let (tx, rx) = std::sync::mpsc::channel();
     let app = Application::new(
-        setup_weather_service(&config.weather),
+        setup_weather_service(&config.weather)?,
         Capture(tx),
         NoDisplay,
         NoStore,

@@ -76,7 +76,7 @@ fn create_application(
     >,
 > {
     Ok(Application::new(
-        setup_weather_service(&config.weather),
+        setup_weather_service(&config.weather)?,
         ChromeRenderDisplayImageGenerator::new(),
         setup_display(&config.display),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
