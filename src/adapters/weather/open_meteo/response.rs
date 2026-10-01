@@ -23,7 +23,22 @@ pub struct OpenMeteoDailyResponse {
     pub temperature_2m_min: Vec<f64>,
 }
 
-/// Parallel arrays, one entry per 15-minute slot. Values are `null` where the model has none.
+#[derive(Deserialize, Debug)]
+pub struct OpenMeteoAirQualityResponse {
+    pub current: OpenMeteoAirQualityCurrent,
+}
+
+#[derive(Deserialize, Debug, Default)]
+#[serde(default)]
+pub struct OpenMeteoAirQualityCurrent {
+    pub european_aqi: Option<f64>,
+    pub european_aqi_pm2_5: Option<f64>,
+    pub european_aqi_pm10: Option<f64>,
+    pub european_aqi_nitrogen_dioxide: Option<f64>,
+    pub european_aqi_ozone: Option<f64>,
+    pub european_aqi_sulphur_dioxide: Option<f64>,
+}
+
 #[derive(Deserialize, Debug, Default)]
 pub struct OpenMeteoMinutelyResponse {
     /// Local time, e.g. "2026-10-01T11:15".

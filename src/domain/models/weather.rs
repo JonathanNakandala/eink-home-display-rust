@@ -1,6 +1,8 @@
 use chrono::{Duration, NaiveDateTime};
 use serde::Serialize;
 
+use crate::domain::models::air_quality::AirQuality;
+
 /// Serialised in lowercase to match the icon partial of the same name in the template.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -22,6 +24,9 @@ pub struct WeatherInformation {
     /// Left off the display when `None`, i.e. no precipitation is expected soon.
     #[new(default)]
     precipitation: Option<PrecipitationOutlook>,
+    /// Left off the display when `None`, i.e. the provider has no air quality data.
+    #[new(default)]
+    air_quality: Option<AirQuality>,
 }
 
 impl WeatherInformation {
@@ -31,6 +36,11 @@ impl WeatherInformation {
 
     pub fn with_precipitation(mut self, precipitation: Option<PrecipitationOutlook>) -> Self {
         self.precipitation = precipitation;
+        self
+    }
+
+    pub fn with_air_quality(mut self, air_quality: Option<AirQuality>) -> Self {
+        self.air_quality = air_quality;
         self
     }
 }

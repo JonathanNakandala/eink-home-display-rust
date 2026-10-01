@@ -2,7 +2,10 @@ use anyhow::Context;
 use chrono::{Duration, NaiveDateTime, Utc};
 use reqwest::Client;
 
-use crate::adapters::weather::open_meteo::response::{OpenMeteoMinutelyResponse, OpenMeteoResponse};
+use crate::adapters::weather::open_meteo::response::{
+    OpenMeteoAirQualityResponse, OpenMeteoMinutelyResponse, OpenMeteoResponse,
+};
+use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::location::Location;
 use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, WeatherCondition, WeatherInformation,
@@ -16,6 +19,7 @@ const SLOTS_PER_HOUR: f64 = 4.0;
 #[derive(derive_new::new)]
 pub struct OpenMeteoWeatherServiceAdapter {
     host_url: String,
+    air_quality_host_url: String,
     client: Client,
 }
 
@@ -24,6 +28,57 @@ impl WeatherService for OpenMeteoWeatherServiceAdapter {
         &self,
         location: Location,
     ) -> anyhow::Result<Option<WeatherInformation>> {
+        let (forecast, air_quality) = tokio::join!(
+            self.get_forecast(&location),
+            self.get_air_quality(&location)
+        );
+        // Air quality is a bonus: without it the rest of the weather still shows.
+        let air_quality = air_quality.unwrap_or_else(|error| {
+            log::warn!("Failed to get air quality: {error:#}");
+            None
+        });
+        Ok(forecast?.map(|weather| weather.with_air_quality(air_quality)))
+    }
+}
+
+impl OpenMeteoWeatherServiceAdapter {
+    async fn get_air_quality(&self, location: &Location) -> anyhow::Result<Option<AirQuality>> {
+        let body: OpenMeteoAirQualityResponse = self
+            .client
+            .get(format!("{}/v1/air-quality", self.air_quality_host_url))
+            .query(&[
+                ("latitude", location.latitude.to_string()),
+                ("longitude", location.longitude.to_string()),
+                (
+                    "current",
+                    "european_aqi,european_aqi_pm2_5,european_aqi_pm10,european_aqi_nitrogen_dioxide,\
+                     european_aqi_ozone,european_aqi_sulphur_dioxide"
+                        .to_owned(),
+                ),
+            ])
+            .send()
+            .await?
+            .error_for_status()
+            .context("Failed to fetch air quality data")?
+            .json()
+            .await
+            .context("Failed to parse air quality data")?;
+        log::debug!("Air quality response body: {:#?}", &body);
+
+        let current = body.current;
+        Ok(AirQuality::new(
+            current.european_aqi,
+            &[
+                ("PM2.5", current.european_aqi_pm2_5),
+                ("PM10", current.european_aqi_pm10),
+                ("NO₂", current.european_aqi_nitrogen_dioxide),
+                ("Ozone", current.european_aqi_ozone),
+                ("SO₂", current.european_aqi_sulphur_dioxide),
+            ],
+        ))
+    }
+
+    async fn get_forecast(&self, location: &Location) -> anyhow::Result<Option<WeatherInformation>> {
         let response = self
             .client
             .get(format!("{}/v1/forecast", self.host_url))
