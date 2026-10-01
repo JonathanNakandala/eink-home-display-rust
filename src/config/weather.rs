@@ -45,6 +45,9 @@ pub struct OpenMeteoConfig {
     /// Air quality is served from its own host.
     #[serde(default = "default_open_meteo_air_quality_host_url")]
     pub air_quality_host_url: String,
+    /// Also fetch pollen counts (Europe only). Off by default; they are not shown on the display yet.
+    #[serde(default)]
+    pub pollen: bool,
 }
 
 fn default_open_meteo_air_quality_host_url() -> String {

@@ -223,6 +223,11 @@
           "description": "Open-Meteo API base URL, e.g. for a self-hosted instance or a paid plan.",
           "type": "string",
           "default": "https://api.open-meteo.com"
+        },
+        "pollen": {
+          "description": "Also fetch pollen counts (Europe only). Off by default; they are not shown on the display yet.",
+          "type": "boolean",
+          "default": false
         }
       }
     },

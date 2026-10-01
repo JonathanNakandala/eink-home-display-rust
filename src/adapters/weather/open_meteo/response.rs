@@ -40,6 +40,13 @@ pub struct OpenMeteoAirQualityCurrent {
     pub european_aqi_nitrogen_dioxide: Option<f64>,
     pub european_aqi_ozone: Option<f64>,
     pub european_aqi_sulphur_dioxide: Option<f64>,
+    // Grains/m³; only present when asked for, and only in Europe.
+    pub alder_pollen: Option<f64>,
+    pub birch_pollen: Option<f64>,
+    pub grass_pollen: Option<f64>,
+    pub mugwort_pollen: Option<f64>,
+    pub olive_pollen: Option<f64>,
+    pub ragweed_pollen: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Default)]

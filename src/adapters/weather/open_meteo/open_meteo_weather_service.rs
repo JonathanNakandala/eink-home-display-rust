@@ -7,6 +7,7 @@ use crate::adapters::weather::open_meteo::response::{
 };
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::location::Location;
+use crate::domain::models::pollen::{Pollen, PollenType};
 use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, UvIndex, WeatherCondition,
     WeatherInformation,
@@ -21,6 +22,8 @@ const SLOTS_PER_HOUR: f64 = 4.0;
 pub struct OpenMeteoWeatherServiceAdapter {
     host_url: String,
     air_quality_host_url: String,
+    /// Also ask for pollen counts, which come from the air quality endpoint.
+    pollen: bool,
     client: Client,
 }
 
@@ -33,29 +36,35 @@ impl WeatherService for OpenMeteoWeatherServiceAdapter {
             self.get_forecast(&location),
             self.get_air_quality(&location)
         );
-        // Air quality is a bonus: without it the rest of the weather still shows.
-        let air_quality = air_quality.unwrap_or_else(|error| {
+        // Air quality and pollen are a bonus: without them the rest of the weather still shows.
+        let (air_quality, pollen) = air_quality.unwrap_or_else(|error| {
             log::warn!("Failed to get air quality: {error:#}");
-            None
+            (None, None)
         });
-        Ok(forecast?.map(|weather| weather.with_air_quality(air_quality)))
+        Ok(forecast?.map(|weather| weather.with_air_quality(air_quality).with_pollen(pollen)))
     }
 }
 
 impl OpenMeteoWeatherServiceAdapter {
-    async fn get_air_quality(&self, location: &Location) -> anyhow::Result<Option<AirQuality>> {
+    async fn get_air_quality(
+        &self,
+        location: &Location,
+    ) -> anyhow::Result<(Option<AirQuality>, Option<Pollen>)> {
+        let mut variables = "european_aqi,european_aqi_pm2_5,european_aqi_pm10,\
+                             european_aqi_nitrogen_dioxide,european_aqi_ozone,european_aqi_sulphur_dioxide"
+            .to_owned();
+        if self.pollen {
+            variables.push_str(
+                ",alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen",
+            );
+        }
         let body: OpenMeteoAirQualityResponse = self
             .client
             .get(format!("{}/v1/air-quality", self.air_quality_host_url))
             .query(&[
                 ("latitude", location.latitude.to_string()),
                 ("longitude", location.longitude.to_string()),
-                (
-                    "current",
-                    "european_aqi,european_aqi_pm2_5,european_aqi_pm10,european_aqi_nitrogen_dioxide,\
-                     european_aqi_ozone,european_aqi_sulphur_dioxide"
-                        .to_owned(),
-                ),
+                ("current", variables),
             ])
             .send()
             .await?
@@ -67,7 +76,17 @@ impl OpenMeteoWeatherServiceAdapter {
         log::debug!("Air quality response body: {:#?}", &body);
 
         let current = body.current;
-        Ok(AirQuality::new(
+        let pollen = self.pollen.then(|| {
+            Pollen::new(&[
+                (PollenType::Alder, current.alder_pollen),
+                (PollenType::Birch, current.birch_pollen),
+                (PollenType::Grass, current.grass_pollen),
+                (PollenType::Mugwort, current.mugwort_pollen),
+                (PollenType::Olive, current.olive_pollen),
+                (PollenType::Ragweed, current.ragweed_pollen),
+            ])
+        });
+        let air_quality = AirQuality::new(
             current.european_aqi,
             &[
                 ("PM2.5", current.european_aqi_pm2_5),
@@ -76,7 +95,8 @@ impl OpenMeteoWeatherServiceAdapter {
                 ("Ozone", current.european_aqi_ozone),
                 ("SO₂", current.european_aqi_sulphur_dioxide),
             ],
-        ))
+        );
+        Ok((air_quality, pollen.flatten()))
     }
 
     async fn get_forecast(&self, location: &Location) -> anyhow::Result<Option<WeatherInformation>> {

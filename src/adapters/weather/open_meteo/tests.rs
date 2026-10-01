@@ -26,7 +26,7 @@ async fn returns_temperatures_and_condition_at_location() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
 
     let result = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -54,7 +54,7 @@ async fn errors_when_the_daily_forecast_is_empty() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
 
     let result = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -87,7 +87,7 @@ async fn charts_the_coming_precipitation_when_some_is_expected() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
 
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -117,7 +117,7 @@ async fn leaves_the_chart_off_when_the_forecast_has_no_precipitation_data() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
 
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -155,7 +155,7 @@ async fn lists_air_quality_worst_pollutant_first() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
 
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -188,7 +188,7 @@ async fn weather_still_shows_when_air_quality_fails() {
         then.status(500);
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
 
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -210,7 +210,7 @@ async fn weather_with_daily(daily: &str) -> serde_json::Value {
         when.method(GET).path("/v1/forecast");
         then.status(200).header("content-type", "application/json").body(body);
     });
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
         .await
@@ -242,4 +242,63 @@ async fn shows_low_uv_but_leaves_it_off_when_missing() {
     )
     .await;
     assert_that(&missing["uv_index"].is_null()).is_true();
+}
+
+const POLLEN_VARIABLES: &str = "european_aqi,european_aqi_pm2_5,european_aqi_pm10,european_aqi_nitrogen_dioxide,\
+    european_aqi_ozone,european_aqi_sulphur_dioxide,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,\
+    olive_pollen,ragweed_pollen";
+
+async fn weather_with_air_quality(pollen: bool, expected_variables: Option<&str>) -> serde_json::Value {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/forecast");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                r#"{ "utc_offset_seconds": 0,
+                     "current": { "temperature_2m": 3.4, "weather_code": 0 },
+                     "daily": { "temperature_2m_max": [6.0], "temperature_2m_min": [1.6] } }"#,
+            );
+    });
+    let air = server.mock(|when, then| {
+        let when = when.method(GET).path("/v1/air-quality");
+        if let Some(variables) = expected_variables {
+            when.query_param("current", variables);
+        }
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                r#"{ "current": { "european_aqi": 20, "grass_pollen": 85.0, "birch_pollen": 0.0,
+                                  "olive_pollen": null } }"#,
+            );
+    });
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), pollen, reqwest::Client::new());
+    let weather = under_test
+        .get_weather_for_location(Location::new(1f64, 2f64))
+        .await
+        .unwrap()
+        .unwrap();
+    air.assert();
+    serde_json::to_value(&weather).unwrap()
+}
+
+#[tokio::test]
+async fn fetches_pollen_counts_when_enabled() {
+    let weather = weather_with_air_quality(true, Some(POLLEN_VARIABLES)).await;
+    assert_that(&weather["pollen"]).is_equal_to(serde_json::json!({
+        "readings": [
+            { "type": "Birch", "grains": 0.0 },
+            { "type": "Grass", "grains": 85.0 },
+        ]
+    }));
+}
+
+#[tokio::test]
+async fn does_not_ask_for_or_return_pollen_by_default() {
+    let weather = weather_with_air_quality(
+        false,
+        Some("european_aqi,european_aqi_pm2_5,european_aqi_pm10,european_aqi_nitrogen_dioxide,european_aqi_ozone,european_aqi_sulphur_dioxide"),
+    )
+    .await;
+    assert_that(&weather["pollen"].is_null()).is_true();
 }
