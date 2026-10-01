@@ -1,4 +1,7 @@
 pub use self::output::EinkWaveshareAdapter;
 
-mod output;
 mod eink_driver;
+mod frame;
+#[cfg(target_os = "linux")]
+mod hardware;
+mod output;
