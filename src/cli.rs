@@ -42,3 +42,25 @@ pub struct QuietTimesArgs {
     #[arg(long)]
     pub start: Option<String>,
 }
+
+#[derive(clap::Parser)]
+pub struct DeparturesArgs {
+    /// Path to application config file
+    #[arg(short, long)]
+    pub config_file: PathBuf,
+
+    /// Which board(s) to print
+    #[arg(long, value_enum, default_value_t = Direction::Both)]
+    pub direction: Direction,
+
+    /// Number of services to request per board
+    #[arg(long, default_value_t = 4)]
+    pub rows: u8,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+pub enum Direction {
+    Northbound,
+    Southbound,
+    Both,
+}
