@@ -1,6 +1,6 @@
 use crate::domain::models::departures::DepartureService;
 use crate::domain::models::location::Location;
-use crate::domain::models::{DepartureBoardData, GlanceData};
+use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
 use crate::domain::services::departures_service::DeparturesService;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
@@ -57,7 +57,11 @@ where
             boards,
         )?;
 
-        let glance_data = GlanceData::new(weather_information, departures);
+        let glance_data = GlanceData::new(
+            weather_information,
+            departures,
+            DateInfo::new(chrono::Local::now()),
+        );
         let profile = self.image_viewing_service.profile();
         let image_data = self
             .display_image_generator

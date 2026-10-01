@@ -3,11 +3,11 @@ use speculoos::prelude::*;
 
 use crate::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use crate::domain::models::location::Location;
-use crate::domain::models::weather::WeatherInformation;
+use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
 use crate::domain::services::weather_service::WeatherService;
 
 #[tokio::test]
-async fn returns_temperature_at_location() {
+async fn returns_temperatures_and_condition_at_location() {
     let server = MockServer::start();
 
     let hello_mock = server.mock(|when, then| {
@@ -19,7 +19,7 @@ async fn returns_temperature_at_location() {
             .query_param("units", "metric");
         then.status(200)
             .header("content-type", "application/json; charset=UTF-8")
-            .body("{ \"main\": { \"temp\": 3.0 } }");
+            .body(r#"{ "main": { "temp": 3.4, "temp_min": 1.6, "temp_max": 6.0 }, "weather": [{ "id": 501 }] }"#);
     });
 
     let under_test = OpenWeatherWeatherServiceAdapter::new(
@@ -33,5 +33,10 @@ async fn returns_temperature_at_location() {
         .await;
 
     hello_mock.assert();
-    assert_that(&result).is_ok_containing(WeatherInformation::new(3));
+    assert_that(&result).is_ok_containing(Some(WeatherInformation::new(
+        3,
+        2,
+        6,
+        WeatherCondition::Rain,
+    )));
 }
