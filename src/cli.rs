@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::adapters::display_image_generator::chrome_render::ChromeSource;
 use crate::scheduler::Schedule;
 
 #[derive(clap::Parser)]
@@ -12,6 +13,10 @@ pub struct Args {
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
 
+    /// Always render with the pinned Chrome downloaded into the cache, even if one is installed
+    #[arg(long)]
+    pub bundled_chrome: bool,
+
     /// Keep running and refresh on a cron schedule in local time, e.g. "*/10 * * * *"
     #[arg(long, value_parser = Schedule::parse_cron, conflicts_with = "every")]
     pub cron: Option<Schedule>,
@@ -23,6 +28,13 @@ pub struct Args {
     /// With --cron or --every, wait for the first slot instead of refreshing at startup
     #[arg(long)]
     pub no_initial_run: bool,
+}
+
+impl From<bool> for ChromeSource {
+    /// From a `--bundled-chrome` flag.
+    fn from(bundled: bool) -> Self {
+        if bundled { Self::Bundled } else { Self::PreferSystem }
+    }
 }
 
 impl Args {
@@ -143,6 +155,10 @@ pub struct RenderArgs {
     /// Cache directory, overriding cache.directory from the config; default is ./cache
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
+
+    /// Always render with the pinned Chrome downloaded into the cache, even if one is installed
+    #[arg(long)]
+    pub bundled_chrome: bool,
 
     /// Folder for the rendered images, created if missing
     #[arg(short, long, default_value = "output")]
