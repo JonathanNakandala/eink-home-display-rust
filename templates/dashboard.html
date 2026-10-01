@@ -39,7 +39,7 @@
 
         /* The weather column only exists when weather is enabled; departures take the rest. */
         .container.has-weather {
-            grid-template-columns: 1fr 22vw;
+            grid-template-columns: 1fr 26vw;
             grid-template-areas: 'header header' 'main weather';
             column-gap: 16px;
         }
@@ -151,33 +151,61 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            gap: 1vh;
+            /* Starts level with the first board, under the header's rule. */
+            justify-content: flex-start;
+            gap: 1.6vh;
+            padding: 1.4vw 0.8vw 0;
             text-align: center;
+        }
+
+        .weather .now {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75vw;
         }
 
         .weather .icon svg {
             display: block;
-            width: 18vw;
-            height: 18vw;
+            width: 5.5vw;
+            height: 5.5vw;
+            /* The cloud's weight sits low in its box. */
+            transform: translateY(-0.3vw);
+        }
+
+        /* Trimmed to digit height so the high lines up with the top of the temperature
+           and the low with its baseline. */
+        .weather .trim {
+            display: block;
+            line-height: 1;
+            text-box: trim-both cap alphabetic;
         }
 
         .weather .current {
-            font-size: 8vw;
-            line-height: 1;
+            font-size: 6.25vw;
         }
 
         .weather .range {
+            align-self: stretch;
             display: flex;
-            gap: 1.2em;
-            font-size: 2.6vw;
+            flex-direction: column;
+            justify-content: space-between;
+            text-align: left;
+            font-size: 2.5vw;
+            font-weight: 600;
         }
 
-        .weather .range span {
-            font-size: 0.65em;
-            font-weight: 600;
-            letter-spacing: 0.06em;
-            margin-right: 0.3em;
+        .weather .range > div {
+            display: flex;
+            align-items: center;
+            gap: 0.4vw;
+        }
+
+        .weather .range svg {
+            display: block;
+            height: 0.62em;
+            width: auto;
+            fill: #000;
         }
 
         .weather .precipitation {
@@ -241,11 +269,13 @@
 
     {{#if weather_information}}
     <div class="weather">
-        <div class="icon">{{> (lookup weather_information "condition")}}</div>
-        <div class="current">{{weather_information.temperature}}°</div>
-        <div class="range">
-            <div><span>LOW</span>{{weather_information.min}}°</div>
-            <div><span>HIGH</span>{{weather_information.max}}°</div>
+        <div class="now">
+            <div class="icon">{{> (lookup weather_information "condition")}}</div>
+            <div class="current trim">{{weather_information.temperature}}°</div>
+            <div class="range">
+                <div><svg viewBox="0 0 10 10"><path d="M5 0.5 L10 9.5 H0 Z"/></svg><span class="trim">{{weather_information.max}}°</span></div>
+                <div><svg viewBox="0 0 10 10"><path d="M5 9.5 L10 0.5 H0 Z"/></svg><span class="trim">{{weather_information.min}}°</span></div>
+            </div>
         </div>
         {{#with weather_information.precipitation}}
         <div class="precipitation">
