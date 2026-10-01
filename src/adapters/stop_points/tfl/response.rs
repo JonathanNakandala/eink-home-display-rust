@@ -52,4 +52,6 @@ pub struct Prediction {
     #[serde(default)]
     pub current_location: String,
     pub time_to_station: u32,
+    #[serde(default)]
+    pub station_name: String,
 }

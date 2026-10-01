@@ -29,5 +29,6 @@ fn to_domain(p: Prediction) -> Arrival {
         p.platform_name,
         p.current_location,
         p.time_to_station,
+        p.station_name,
     )
 }

@@ -5,7 +5,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::cli::DeparturesArgs;
 use eink_home_display_rust::config::application::ApplicationConfig;
-use eink_home_display_rust::domain::models::departures::DepartureService;
+use eink_home_display_rust::domain::models::departures::{DepartureStatus, Departures};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -45,8 +45,8 @@ async fn main() -> Result<()> {
             continue;
         };
         let rows = args.rows.unwrap_or(board_config.rows);
-        match board.fetch(rows).await {
-            Ok(services) => print_board(&board_config.name, &services),
+        match board.fetch(rows, chrono::Local::now()).await {
+            Ok(departures) => print_board(&board_config.name, &departures),
             Err(e) => println!("\n{}\n  error: {e:#}", board_config.name),
         }
     }
@@ -54,17 +54,25 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_board(name: &str, services: &[DepartureService]) {
-    println!("\n{name}");
-    if services.is_empty() {
+fn print_board(name: &str, departures: &Departures) {
+    if departures.station.is_empty() {
+        println!("\n{name}");
+    } else {
+        println!("\n{name}  ({})", departures.station);
+    }
+    if departures.services.is_empty() {
         println!("  no scheduled trains");
         return;
     }
-    println!("  {:<8} {:<32} {:<10} DELAY", "TIME", "DESTINATION", "STATUS");
-    for service in services {
+    println!("  {:<8} {:<9} {:<32} IN", "TIME", "EXPECTED", "DESTINATION");
+    for service in &departures.services {
+        let expected = match service.status {
+            DepartureStatus::Cancelled => "cancelled",
+            _ => &service.expected,
+        };
         println!(
-            "  {:<8} {:<32} {:<10} {}",
-            service.time, service.destination, service.status, service.delay
+            "  {:<8} {:<9} {:<32} {}",
+            service.time, expected, service.destination, service.countdown
         );
     }
 }

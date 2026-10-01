@@ -5,6 +5,8 @@ use serde::Deserialize;
 /// formation, etc.) are left to serde's default "ignore unknown fields".
 #[derive(Debug, Deserialize, Default)]
 pub struct StationBoard {
+    #[serde(default, rename = "locationName")]
+    pub location_name: Option<String>,
     #[serde(default, rename = "trainServices")]
     pub train_services: Option<Vec<Service>>,
 }

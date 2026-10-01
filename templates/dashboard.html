@@ -60,56 +60,89 @@
             margin-right: 0.25em;
         }
 
-        /* One table for every board, so columns line up between them. The text
-           shrinks as lines are added (--lines) to fit the height left under the header. */
+        /* One grid for every board, so columns line up between them. Each column is as wide
+           as its widest entry (never narrower than its minimum), rather than stretching to
+           fill the screen. The text shrinks as lines are added (--lines) to fit the height
+           left under the header. */
         .departures {
             grid-area: main;
+            min-width: 0;
             min-height: 0;
             --lines: 1;
-            font-size: min(3vw, calc(72vh / (var(--lines) * 1.35)));
+            font-size: min(3vw, calc(68vh / (var(--lines) * 1.35)));
             padding-top: 0.4em;
+            display: grid;
+            grid-template-columns:
+                minmax(2.6em, max-content)  /* time */
+                minmax(2.6em, max-content)  /* expected */
+                minmax(0, max-content)      /* destination, ellipsised if the screen is too narrow */
+                minmax(2.8em, max-content); /* countdown */
+            column-gap: 0.9em;
+            justify-content: start;
+            align-content: start;
         }
 
-        .departures table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
+        /* Boards and rows take the parent's columns instead of making their own. */
+        .departures .board,
+        .departures .row {
+            display: grid;
+            grid-column: 1 / -1;
+            grid-template-columns: subgrid;
+            align-items: baseline;
         }
 
-        .departures col.time { width: 3.2em; }
-        .departures col.status { width: 5em; }
-        .departures col.delay { width: 5em; }
+        .departures .board h2 {
+            grid-column: 1 / -1;
+            margin: 0;
+            padding-top: 0.7em;
+            font-size: 1.1em;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            line-height: 1.25;
+        }
 
-        .departures th,
-        .departures td {
-            text-align: left;
-            padding: 0.1em 0.3em 0.1em 0;
+        .departures .board h2 .station {
+            margin-left: 0.5em;
+            font-size: 0.9em;
+            font-weight: 300;
+            letter-spacing: 0;
+        }
+
+        .departures .board:first-child h2 {
+            padding-top: 0;
+        }
+
+        .departures .row {
+            padding: 0.1em 0;
             line-height: 1.25;
             white-space: nowrap;
+        }
+
+        .departures .destination {
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        .departures th {
-            font-weight: 600;
-            font-size: 1.1em;
-            letter-spacing: 0.04em;
-            padding-top: 0.7em;
+        /* A live prediction has no expected time, so the destination uses that column too. */
+        .departures .row.live .destination {
+            grid-column: 2 / span 2;
         }
 
-        .departures tr:first-child th {
-            padding-top: 0;
+        .departures .countdown {
+            text-align: right;
         }
 
-        .departures .none {
+        .departures .row.none {
+            display: block;
             font-style: italic;
         }
 
-        .departures tr.cancelled td {
+        .departures .row.cancelled > * {
             text-decoration: line-through;
         }
 
-        .departures tr.delayed .status {
+        /* The scheduled time stays as is; the new time beside it is what to go by. */
+        .departures .row.delayed .expected {
             font-weight: 600;
         }
 
@@ -159,40 +192,21 @@
 
     {{#if departures}}
     <div class="departures" style="--lines: {{departure_lines}}">
-        <table>
-            <colgroup>
-                <col class="time">
-                <col>
-                <col class="status">
-                <col class="delay">
-            </colgroup>
-            {{#each departures}}
-            <thead>
-            <tr>
-                <th colspan="4">{{this.name}}</th>
-            </tr>
-            </thead>
-            <tbody>
+        {{#each departures}}
+        <section class="board">
+            <h2>{{this.name}}{{#if this.station}} <span class="station">{{this.station}}</span>{{/if}}</h2>
             {{#each this.services}}
-            <tr class="{{#if (eq this.status "Cancelled")}}cancelled{{/if}}{{#if (eq this.status "Delayed")}} delayed{{/if}}">
-                <td>{{this.time}}</td>
-                {{#if this.status}}
-                <td>{{this.destination}}</td>
-                <td class="status">{{this.status}}</td>
-                <td>{{#if this.delay}}exp {{this.delay}}{{/if}}</td>
-                {{else}}
-                {{! No status (e.g. a TfL countdown): let the destination use the whole row }}
-                <td colspan="3">{{this.destination}}</td>
-                {{/if}}
-            </tr>
+            <div class="row {{this.status}}">
+                <span class="time">{{this.time}}</span>
+                {{#unless (eq this.status "live")}}<span class="expected">{{this.expected}}</span>{{/unless}}
+                <span class="destination">{{this.destination}}</span>
+                <span class="countdown">{{this.countdown}}</span>
+            </div>
             {{else}}
-            <tr>
-                <td class="none" colspan="4">No scheduled services</td>
-            </tr>
+            <div class="row none">No scheduled services</div>
             {{/each}}
-            </tbody>
-            {{/each}}
-        </table>
+        </section>
+        {{/each}}
     </div>
     {{/if}}
 

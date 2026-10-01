@@ -1,7 +1,7 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local};
 use serde::Serialize;
 
-use crate::domain::models::departures::DepartureService;
+use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus};
 use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
 
 pub mod arrival;
@@ -14,10 +14,20 @@ pub mod weather;
 pub mod image;
 pub mod train;
 
-#[derive(Debug, Clone, derive_new::new, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DepartureBoardData {
     name: String,
+    /// The station's own name, shown beside the heading; empty when it adds nothing.
+    station: String,
     services: Vec<DepartureService>,
+}
+
+impl DepartureBoardData {
+    pub fn new(name: String, station: String, services: Vec<DepartureService>) -> Self {
+        // A board already titled "Turnpike Lane" doesn't need the station repeated.
+        let station = if station.eq_ignore_ascii_case(&name) { String::new() } else { station };
+        Self { name, station, services }
+    }
 }
 
 /// The date and time as shown in the dashboard header.
@@ -72,39 +82,75 @@ impl GlanceData {
 }
 
 impl GlanceData {
-    /// Made-up but representative data (on time, delayed and cancelled
-    /// services, plus a TfL-style countdown board) for previewing the layout offline.
+    /// Made-up but representative data (on time, delayed, cancelled and live
+    /// services), timed relative to `now`, for previewing the layout offline.
+    /// The first service on each board leaves after the journey to it: 5 minutes
+    /// to Hornsey and 15 to Turnpike Lane.
     pub fn sample(now: DateTime<Local>) -> Self {
-        let service = |time: &str, destination: &str, status: &str, delay: &str| {
-            DepartureService::new(time.into(), destination.into(), status.into(), delay.into())
+        let at = |minutes: i64| (now + Duration::minutes(minutes)).format("%H:%M").to_string();
+        let timetabled = |minutes: i64, destination: &str, status, expected: Option<i64>| {
+            let leaves_in = expected.unwrap_or(minutes);
+            DepartureService::new(
+                at(minutes),
+                destination.into(),
+                status,
+                expected.map(at).unwrap_or_default(),
+                countdown(leaves_in * 60),
+            )
+        };
+        let live = |minutes: i64, destination: &str| {
+            DepartureService::new(
+                at(minutes),
+                destination.into(),
+                DepartureStatus::Live,
+                String::new(),
+                countdown(minutes * 60),
+            )
         };
         Self::new(
             Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
             vec![
                 DepartureBoardData::new(
                     "NORTHBOUND".into(),
+                    "Hornsey".into(),
                     vec![
-                        service("14:12", "Welwyn Garden City", "On time", ""),
-                        service("14:27", "Hertford North", "Delayed", "14:33"),
-                        service("14:42", "Welwyn Garden City", "Cancelled", ""),
-                        service("14:57", "Stevenage", "On time", ""),
+                        timetabled(7, "Welwyn Garden City", DepartureStatus::OnTime, None),
+                        timetabled(22, "Hertford North", DepartureStatus::Delayed, Some(28)),
+                        // Cancelled and "late" trains have no countdown.
+                        DepartureService::new(
+                            at(37),
+                            "Welwyn Garden City".into(),
+                            DepartureStatus::Cancelled,
+                            String::new(),
+                            String::new(),
+                        ),
+                        DepartureService::new(
+                            at(52),
+                            "Stevenage".into(),
+                            DepartureStatus::Delayed,
+                            "late".into(),
+                            String::new(),
+                        ),
                     ],
                 ),
                 DepartureBoardData::new(
                     "SOUTHBOUND".into(),
+                    "Hornsey".into(),
                     vec![
-                        service("14:09", "Moorgate", "On time", ""),
-                        service("14:24", "Kings Cross", "On time", ""),
+                        timetabled(6, "Moorgate", DepartureStatus::OnTime, None),
+                        timetabled(21, "Kings Cross", DepartureStatus::OnTime, None),
+                        timetabled(36, "Moorgate", DepartureStatus::OnTime, None),
+                        timetabled(51, "Kings Cross", DepartureStatus::OnTime, None),
                     ],
                 ),
-                // TfL boards only know the countdown, so status and delay are empty.
                 DepartureBoardData::new(
                     "TURNPIKE LANE".into(),
+                    "Turnpike Lane".into(), // the same as the title, so it isn't repeated
                     vec![
-                        service("due", "Piccadilly Cockfosters", "", ""),
-                        service("3 min", "Piccadilly Heathrow Terminal 5", "", ""),
-                        service("6 min", "Piccadilly Cockfosters", "", ""),
-                        service("9 min", "Piccadilly Uxbridge", "", ""),
+                        live(16, "Cockfosters"),
+                        live(16, "Oakwood"),
+                        live(20, "Heathrow Terminal 5"),
+                        live(24, "Cockfosters"),
                     ],
                 ),
             ],
