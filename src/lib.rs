@@ -3,4 +3,5 @@ pub mod domain;
 pub mod adapters;
 pub mod config;
 pub mod cli;
+pub mod scheduler;
 pub mod quiet_times;
