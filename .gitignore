@@ -2,3 +2,4 @@
 temp/
 /.idea
 *.png
+.DS_Store

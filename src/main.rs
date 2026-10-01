@@ -3,7 +3,7 @@ use clap::Parser;
 use serde_valid::Validate;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::adapters::departures::setup_departures_service;
+use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
 use eink_home_display_rust::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
@@ -13,7 +13,6 @@ use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::weather::{WeatherConfig, WeatherProvider};
-use eink_home_display_rust::domain::models::departures::StationPair;
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::models::weather::WeatherInformation;
 use eink_home_display_rust::domain::services::departures_service::DeparturesService;
@@ -56,17 +55,7 @@ async fn main() -> Result<()> {
     log::info!("Settings loaded successfully: {:?}", config);
 
     let location = Location::new(config.location.latitude, config.location.longitude);
-    let northbound = StationPair::new(
-        config.departures.stations.northbound_from.clone(),
-        config.departures.stations.northbound_to.clone(),
-    );
-    let southbound = StationPair::new(
-        config.departures.stations.southbound_from.clone(),
-        config.departures.stations.southbound_to.clone(),
-    );
-    create_application(&config)
-        .run(location, northbound, southbound)
-        .await
+    create_application(&config)?.run(location).await
 }
 
 fn initialize_logging() {
@@ -80,20 +69,22 @@ fn initialize_logging() {
 
 fn create_application(
     config: &ApplicationConfig,
-) -> Application<
-    impl WeatherService,
-    impl DisplayImageGenerator,
-    impl ImageDisplayService,
-    impl ImageRepository,
-    impl DeparturesService,
+) -> Result<
+    Application<
+        impl WeatherService,
+        impl DisplayImageGenerator,
+        impl ImageDisplayService,
+        impl ImageRepository,
+        impl DeparturesService,
+    >,
 > {
-    Application::new(
+    Ok(Application::new(
         setup_weather_service(&config.weather),
         ChromeRenderDisplayImageGenerator::new(config.image.width, config.image.height),
         EinkWaveshareAdapter::new(),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
-        setup_departures_service(&config.departures),
-    )
+        setup_departure_boards(&config.departures, &config.providers)?,
+    ))
 }
 
 enum WeatherServiceImpl {

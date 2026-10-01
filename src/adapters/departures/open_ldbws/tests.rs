@@ -52,10 +52,12 @@ async fn returns_parsed_departures_for_station_pair() {
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
         "apikey".to_owned(),
+        "HRN".to_owned(),
+        "WGC".to_owned(),
         reqwest::Client::new(),
     );
 
-    let result = under_test.get_departures("HRN", "WGC", 4).await;
+    let result = under_test.get_departures(4).await;
 
     mock.assert();
     assert_that(&result).is_ok_containing(vec![

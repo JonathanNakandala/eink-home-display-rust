@@ -8,22 +8,20 @@ use crate::domain::services::departures_service::DeparturesService;
 /// `host_url` is the Rail Data Marketplace product's base path up to and
 /// including the operation name, e.g.
 /// `https://api1.raildata.org.uk/1010-live-arrival-and-departure-boards-arr-and-dep1_1/LDBWS/api/20220120/GetArrDepBoardWithDetails`
-/// — the station CRS code is appended as the final path segment.
+/// — the `from` station CRS code is appended as the final path segment, and
+/// `to` is used as the destination filter.
 #[derive(derive_new::new)]
 pub struct OpenLdbwsDeparturesServiceAdapter {
     host_url: String,
     api_key: String,
+    from: String,
+    to: String,
     client: Client,
 }
 
 impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
-    async fn get_departures(
-        &self,
-        from: &str,
-        to: &str,
-        num_rows: u8,
-    ) -> anyhow::Result<Vec<DepartureService>> {
-        let url = format!("{}/{}", self.host_url, from);
+    async fn get_departures(&self, num_rows: u8) -> anyhow::Result<Vec<DepartureService>> {
+        let url = format!("{}/{}", self.host_url, self.from);
 
         let response = self
             .client
@@ -31,7 +29,7 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
             .header("x-apikey", &self.api_key)
             .query(&[
                 ("numRows", num_rows.to_string()),
-                ("filterCrs", to.to_owned()),
+                ("filterCrs", self.to.clone()),
                 ("filterType", "to".to_owned()),
             ])
             .send()
