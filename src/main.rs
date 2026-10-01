@@ -6,7 +6,7 @@ use serde_valid::Validate;
 use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::departures::setup_departure_boards;
-use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, DEFAULT_IDLE_TIMEOUT};
+use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
@@ -58,12 +58,13 @@ async fn main() -> Result<()> {
     let location = Location::new(config.location.latitude, config.location.longitude);
     let cache = CachePaths::new(args.cache_dir.clone().unwrap_or_else(|| config.cache.directory.clone()));
     cache.ensure_exists()?;
+    let chrome_source = ChromeSource::from(args.bundled_chrome);
 
     let Some(schedule) = args.schedule() else {
-        return create_application(&config, &cache, DEFAULT_IDLE_TIMEOUT)?.run(location).await;
+        return create_application(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source)?.run(location).await;
     };
     // Built once so the Chrome it launches is kept between runs.
-    let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT)?;
+    let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source)?;
     run_periodically(schedule, !args.no_initial_run, shutdown_signal(), || app.run(location)).await
 }
 
@@ -80,6 +81,7 @@ fn create_application(
     config: &ApplicationConfig,
     cache: &CachePaths,
     chrome_idle_timeout: Duration,
+    chrome_source: ChromeSource,
 ) -> Result<
     Application<
         impl WeatherService,
@@ -91,7 +93,7 @@ fn create_application(
 > {
     Ok(Application::new(
         setup_weather_service(&config.weather)?,
-        ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout),
+        ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source),
         setup_display(&config.display),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,

@@ -48,6 +48,16 @@ const ICONS: &[(&str, &str)] = &[
     ("snow", include_str!("../../../../templates/weather_icons/047-snow-4.svg")),
 ];
 
+/// Which Chrome to render with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChromeSource {
+    /// An installed Chrome if one works, else the pinned download.
+    #[default]
+    PreferSystem,
+    /// Always the pinned download in the cache, so renders don't vary with the host's Chrome.
+    Bundled,
+}
+
 /// Renders the dashboard template in headless Chrome at the display's native
 /// size and returns the screenshot. Reducing it to the panel's colour depth is
 /// the display adapter's job.
@@ -63,6 +73,7 @@ struct Inner {
     /// Where a downloaded Chrome is extracted, and found again on later runs.
     chrome_install_dir: PathBuf,
     idle_timeout: Duration,
+    source: ChromeSource,
     browser: Mutex<Option<LaunchedBrowser>>,
 }
 
@@ -98,11 +109,12 @@ fn find_system_chrome() -> Option<PathBuf> {
 }
 
 impl ChromeRenderDisplayImageGenerator {
-    pub fn new(chrome_install_dir: PathBuf, idle_timeout: Duration) -> Self {
+    pub fn new(chrome_install_dir: PathBuf, idle_timeout: Duration, source: ChromeSource) -> Self {
         Self {
             inner: Arc::new(Inner {
                 chrome_install_dir,
                 idle_timeout,
+                source,
                 browser: Mutex::new(None),
             }),
         }
@@ -164,7 +176,13 @@ impl Inner {
             .devtools(false)
             .headless(true)
             // None makes headless_chrome download its pinned revision instead.
-            .path(find_system_chrome())
+            .path(match self.source {
+                ChromeSource::PreferSystem => find_system_chrome(),
+                ChromeSource::Bundled => {
+                    log::info!("Using the bundled Chrome in {}", self.chrome_install_dir.display());
+                    None
+                }
+            })
             .fetcher_options(fetcher_options)
             .idle_browser_timeout(self.idle_timeout)
             .build()?;
@@ -183,7 +201,9 @@ impl Inner {
 fn capture_in_new_tab(browser: &Browser, page: &Path, profile: &DisplayProfile) -> anyhow::Result<Vec<u8>> {
     let tab = browser.new_tab().context("Failed to create new tab")?;
     let result = capture_in_tab(&tab, page, profile);
-    if let Err(e) = tab.close(false) {
+    // Not close(false): the pinned Chromium never answers Target.closeTarget, so that call
+    // waits out its timeout and leaves the connection dead, defeating reuse.
+    if let Err(e) = tab.close(true) {
         log::warn!("Could not close the render tab: {e}");
     }
     result
@@ -281,6 +301,7 @@ mod tests {
         let image = ChromeRenderDisplayImageGenerator::new(
             std::env::temp_dir().join("eink_test_chrome"),
             DEFAULT_IDLE_TIMEOUT,
+            ChromeSource::PreferSystem,
         )
             .generate(data, &profile)
             .await
@@ -313,6 +334,7 @@ mod tests {
         let generator = ChromeRenderDisplayImageGenerator::new(
             std::env::temp_dir().join("eink_test_chrome"),
             Duration::from_secs(300),
+            ChromeSource::PreferSystem,
         );
 
         generator.generate(sample_data(), &profile).await.unwrap();
@@ -325,5 +347,34 @@ mod tests {
         generator.generate(sample_data(), &profile).await.unwrap();
         let relaunched = kept_pid(&generator).expect("Chrome is kept after relaunch");
         assert_ne!(relaunched, first, "a dead Chrome was replaced");
+    }
+
+    /// Needs network on first run to download Chrome, so run with `--ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn renders_and_reuses_the_bundled_chrome() {
+        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
+        let profile = DisplayProfile { width: 800, height: 480, palette: Palette::Mono };
+        let generator = ChromeRenderDisplayImageGenerator::new(
+            std::env::temp_dir().join("eink_test_chrome"),
+            Duration::from_secs(300),
+            ChromeSource::Bundled,
+        );
+
+        let started = std::time::Instant::now();
+        let image = generator.generate(sample_data(), &profile).await.unwrap();
+        let decoded = image::load_from_memory(&image.data).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (800, 480));
+        let first = kept_pid(&generator).expect("Chrome is kept after a render");
+
+        let second_started = std::time::Instant::now();
+        generator.generate(sample_data(), &profile).await.unwrap();
+        assert_eq!(kept_pid(&generator), Some(first), "second render reused it");
+        assert!(
+            second_started.elapsed() < Duration::from_secs(15),
+            "a reused render took {:?} (first took {:?})",
+            second_started.elapsed(),
+            started.elapsed()
+        );
     }
 }
