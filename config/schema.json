@@ -214,6 +214,11 @@
     "OpenMeteoConfig": {
       "type": "object",
       "properties": {
+        "air_quality_host_url": {
+          "description": "Air quality is served from its own host.",
+          "type": "string",
+          "default": "https://air-quality-api.open-meteo.com"
+        },
         "host_url": {
           "description": "Open-Meteo API base URL, e.g. for a self-hosted instance or a paid plan.",
           "type": "string",

@@ -26,7 +26,7 @@ async fn returns_temperatures_and_condition_at_location() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
 
     let result = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -54,7 +54,7 @@ async fn errors_when_the_daily_forecast_is_empty() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
 
     let result = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -87,7 +87,7 @@ async fn charts_the_coming_precipitation_when_some_is_expected() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
 
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -117,7 +117,7 @@ async fn leaves_the_chart_off_when_the_forecast_has_no_precipitation_data() {
             );
     });
 
-    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), reqwest::Client::new());
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
 
     let weather = under_test
         .get_weather_for_location(Location::new(1f64, 2f64))
@@ -126,4 +126,75 @@ async fn leaves_the_chart_off_when_the_forecast_has_no_precipitation_data() {
         .unwrap();
 
     assert_that(&serde_json::to_value(&weather).unwrap()["precipitation"].is_null()).is_true();
+}
+
+#[tokio::test]
+async fn lists_air_quality_worst_pollutant_first() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/forecast");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                r#"{ "utc_offset_seconds": 0,
+                     "current": { "temperature_2m": 3.4, "weather_code": 0 },
+                     "daily": { "temperature_2m_max": [6.0], "temperature_2m_min": [1.6] } }"#,
+            );
+    });
+    let air = server.mock(|when, then| {
+        when.method(GET)
+            .path("/v1/air-quality")
+            .query_param("latitude", "1")
+            .query_param("longitude", "2");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                r#"{ "current": { "european_aqi": 62, "european_aqi_pm2_5": 31, "european_aqi_pm10": 62,
+                                  "european_aqi_nitrogen_dioxide": 27, "european_aqi_ozone": 18,
+                                  "european_aqi_sulphur_dioxide": null } }"#,
+            );
+    });
+
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+
+    let weather = under_test
+        .get_weather_for_location(Location::new(1f64, 2f64))
+        .await
+        .unwrap()
+        .unwrap();
+
+    air.assert();
+    let air = serde_json::to_value(&weather).unwrap()["air_quality"].clone();
+    assert_that(&air["overall"]["band"].as_str()).is_equal_to(Some("Poor"));
+    let labels: Vec<_> = air["pollutants"].as_array().unwrap().iter().map(|p| p["label"].as_str().unwrap()).collect();
+    assert_that(&labels).is_equal_to(vec!["PM10", "PM2.5", "NO₂", "Ozone"]);
+}
+
+#[tokio::test]
+async fn weather_still_shows_when_air_quality_fails() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/forecast");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                r#"{ "utc_offset_seconds": 0,
+                     "current": { "temperature_2m": 3.4, "weather_code": 0 },
+                     "daily": { "temperature_2m_max": [6.0], "temperature_2m_min": [1.6] } }"#,
+            );
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/air-quality");
+        then.status(500);
+    });
+
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), reqwest::Client::new());
+
+    let weather = under_test
+        .get_weather_for_location(Location::new(1f64, 2f64))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_that(&serde_json::to_value(&weather).unwrap()["air_quality"].is_null()).is_true();
 }

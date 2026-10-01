@@ -1,11 +1,13 @@
 use chrono::{DateTime, Duration, Local, Timelike};
 use serde::Serialize;
 
+use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus};
 use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, WeatherCondition, WeatherInformation,
 };
 
+pub mod air_quality;
 pub mod arrival;
 pub mod departures;
 pub mod display;
@@ -127,7 +129,17 @@ impl GlanceData {
         Self::new(
             Some(
                 WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)
-                    .with_precipitation(PrecipitationOutlook::from_slots(&showers, local)),
+                    .with_precipitation(PrecipitationOutlook::from_slots(&showers, local))
+                    .with_air_quality(AirQuality::new(
+                        Some(62.0),
+                        &[
+                            ("PM2.5", Some(31.0)),
+                            ("PM10", Some(62.0)),
+                            ("NO₂", Some(27.0)),
+                            ("Ozone", Some(18.0)),
+                            ("SO₂", Some(4.0)),
+                        ],
+                    )),
             ),
             vec![
                 DepartureBoardData::new(

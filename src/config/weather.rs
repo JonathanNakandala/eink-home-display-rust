@@ -17,6 +17,7 @@ pub struct WeatherConfig {
 }
 
 pub const DEFAULT_OPEN_METEO_HOST_URL: &str = "https://api.open-meteo.com";
+pub const DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL: &str = "https://air-quality-api.open-meteo.com";
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub enum WeatherProvider {
@@ -41,6 +42,13 @@ pub struct OpenMeteoConfig {
     /// Open-Meteo API base URL, e.g. for a self-hosted instance or a paid plan.
     #[serde(default = "default_open_meteo_host_url")]
     pub host_url: String,
+    /// Air quality is served from its own host.
+    #[serde(default = "default_open_meteo_air_quality_host_url")]
+    pub air_quality_host_url: String,
+}
+
+fn default_open_meteo_air_quality_host_url() -> String {
+    DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL.to_owned()
 }
 
 fn default_open_meteo_host_url() -> String {
