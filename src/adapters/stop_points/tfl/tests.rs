@@ -114,7 +114,8 @@ async fn returns_arrivals_soonest_first() {
             r#"[
                 {"lineName": "Piccadilly", "destinationName": "Cockfosters Underground Station",
                  "towards": "Cockfosters", "platformName": "EastBound - Platform 1",
-                 "currentLocation": "Between Arsenal and Finsbury Park", "timeToStation": 343},
+                 "currentLocation": "Between Arsenal and Finsbury Park", "timeToStation": 343,
+                 "stationName": "Turnpike Lane Underground Station"},
                 {"lineName": "12", "towards": "Marble Arch", "platformName": "RC", "timeToStation": 60}
             ]"#,
         );
@@ -124,7 +125,7 @@ async fn returns_arrivals_soonest_first() {
 
     mock.assert();
     assert_that(&result).is_ok_containing(vec![
-        Arrival::new("12".into(), "".into(), "Marble Arch".into(), "RC".into(), "".into(), 60),
+        Arrival::new("12".into(), "".into(), "Marble Arch".into(), "RC".into(), "".into(), 60, "".into()),
         Arrival::new(
             "Piccadilly".into(),
             "Cockfosters Underground Station".into(),
@@ -132,6 +133,7 @@ async fn returns_arrivals_soonest_first() {
             "EastBound - Platform 1".into(),
             "Between Arsenal and Finsbury Park".into(),
             343,
+            "Turnpike Lane Underground Station".into(),
         ),
     ]);
 }

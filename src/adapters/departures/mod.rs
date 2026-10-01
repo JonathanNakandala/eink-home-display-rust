@@ -2,6 +2,7 @@ pub mod open_ldbws;
 pub mod tfl;
 
 use anyhow::{bail, Context};
+use chrono::{DateTime, Local};
 
 use open_ldbws::open_ldbws_departures_service::OpenLdbwsDeparturesServiceAdapter;
 use tfl::tfl_departures_service::TflDeparturesServiceAdapter;
@@ -9,7 +10,7 @@ use tfl::tfl_departures_service::TflDeparturesServiceAdapter;
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::application::DepartureBoard;
 use crate::config::departures::{DepartureBoardConfig, DEFAULT_TFL_HOST_URL, DepartureSource, ProvidersConfig};
-use crate::domain::models::departures::DepartureService;
+use crate::domain::models::departures::Departures;
 use crate::domain::services::departures_service::DeparturesService;
 
 pub enum DeparturesServiceImpl {
@@ -18,10 +19,14 @@ pub enum DeparturesServiceImpl {
 }
 
 impl DeparturesService for DeparturesServiceImpl {
-    async fn get_departures(&self, num_rows: u8) -> anyhow::Result<Vec<DepartureService>> {
+    async fn get_departures(
+        &self,
+        num_rows: u8,
+        now: DateTime<Local>,
+    ) -> anyhow::Result<Departures> {
         match self {
-            DeparturesServiceImpl::OpenLdbws(service) => service.get_departures(num_rows).await,
-            DeparturesServiceImpl::Tfl(service) => service.get_departures(num_rows).await,
+            DeparturesServiceImpl::OpenLdbws(service) => service.get_departures(num_rows, now).await,
+            DeparturesServiceImpl::Tfl(service) => service.get_departures(num_rows, now).await,
         }
     }
 }

@@ -1,8 +1,11 @@
 use anyhow::Context;
+use chrono::{DateTime, Local};
 use reqwest::Client;
 
 use crate::adapters::departures::open_ldbws::response::{Service, StationBoard};
-use crate::domain::models::departures::DepartureService;
+use crate::domain::models::departures::{
+    countdown, seconds_until, DepartureService, DepartureStatus, Departures,
+};
 use crate::domain::services::departures_service::DeparturesService;
 
 /// `host_url` is the Rail Data Marketplace product's base path up to and
@@ -25,7 +28,11 @@ pub struct OpenLdbwsDeparturesServiceAdapter {
 const MAX_TIME_OFFSET: u16 = 119;
 
 impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
-    async fn get_departures(&self, num_rows: u8) -> anyhow::Result<Vec<DepartureService>> {
+    async fn get_departures(
+        &self,
+        num_rows: u8,
+        now: DateTime<Local>,
+    ) -> anyhow::Result<Departures> {
         let url = format!("{}/{}", self.host_url, self.from);
 
         let mut query = vec![
@@ -55,13 +62,19 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
 
         let services = station_board.train_services.unwrap_or_default();
 
-        Ok(services.into_iter().filter_map(to_domain_service).collect())
+        Ok(Departures::new(
+            station_board.location_name.unwrap_or_default(),
+            services
+                .into_iter()
+                .filter_map(|service| to_domain_service(service, now))
+                .collect(),
+        ))
     }
 }
 
 /// Entries without a scheduled departure time are arrivals-only (the board
 /// covers both), and aren't relevant to a departures listing.
-fn to_domain_service(service: Service) -> Option<DepartureService> {
+fn to_domain_service(service: Service, now: DateTime<Local>) -> Option<DepartureService> {
     let std = service.std?;
     let destination = service
         .destination
@@ -69,11 +82,21 @@ fn to_domain_service(service: Service) -> Option<DepartureService> {
         .map(|l| l.location_name.clone())
         .unwrap_or_default();
 
-    let (status, delay) = match service.etd.as_deref() {
-        Some("On time") | None => ("On time".to_owned(), String::new()),
-        Some("Cancelled") => ("Cancelled".to_owned(), String::new()),
-        Some(estimated) => ("Delayed".to_owned(), estimated.to_owned()),
+    // The status, what to show as expected, and the time to count down to
+    // (none when there is no reliable one).
+    let (status, expected, leaves_at) = match service.etd.as_deref() {
+        Some("On time") | None => (DepartureStatus::OnTime, String::new(), Some(std.clone())),
+        Some("Cancelled") => (DepartureStatus::Cancelled, String::new(), None),
+        // Usually an estimated time like "18:27"; otherwise the board only says "Delayed".
+        Some(estimated) if estimated.contains(':') => {
+            (DepartureStatus::Delayed, estimated.to_owned(), Some(estimated.to_owned()))
+        }
+        Some(_) => (DepartureStatus::Delayed, "late".to_owned(), None),
     };
+    let countdown = leaves_at
+        .and_then(|time| seconds_until(now, &time))
+        .map(countdown)
+        .unwrap_or_default();
 
-    Some(DepartureService::new(std, destination, status, delay))
+    Some(DepartureService::new(std, destination, status, expected, countdown))
 }

@@ -1,4 +1,6 @@
-use crate::domain::models::departures::DepartureService;
+use chrono::{DateTime, Local};
+
+use crate::domain::models::departures::Departures;
 use crate::domain::models::location::Location;
 use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
 use crate::domain::services::departures_service::DeparturesService;
@@ -16,8 +18,8 @@ pub struct DepartureBoard<DS: DeparturesService> {
 }
 
 impl<DS: DeparturesService> DepartureBoard<DS> {
-    pub async fn fetch(&self, rows: u8) -> anyhow::Result<Vec<DepartureService>> {
-        self.service.get_departures(rows).await
+    pub async fn fetch(&self, rows: u8, now: DateTime<Local>) -> anyhow::Result<Departures> {
+        self.service.get_departures(rows, now).await
     }
 }
 
@@ -46,10 +48,16 @@ where
     DS: DeparturesService,
 {
     pub async fn run(&self, location: Location) -> anyhow::Result<()> {
+        // One instant for the whole frame, so the clock and the countdowns agree.
+        let now = chrono::Local::now();
         let boards = futures_util::future::try_join_all(
             self.departure_boards.iter().map(|board| async move {
-                let services = board.fetch(board.rows).await?;
-                anyhow::Ok(DepartureBoardData::new(board.name.clone(), services))
+                let departures = board.fetch(board.rows, now).await?;
+                anyhow::Ok(DepartureBoardData::new(
+                    board.name.clone(),
+                    departures.station,
+                    departures.services,
+                ))
             }),
         );
         let (weather_information, departures) = tokio::try_join!(
@@ -60,7 +68,7 @@ where
         let glance_data = GlanceData::new(
             weather_information,
             departures,
-            DateInfo::new(chrono::Local::now()),
+            DateInfo::new(now),
         );
         let profile = self.image_viewing_service.profile();
         let image_data = self

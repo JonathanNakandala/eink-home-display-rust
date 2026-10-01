@@ -1,8 +1,9 @@
+use chrono::{DateTime, Local, TimeZone};
 use httpmock::prelude::*;
 use speculoos::prelude::*;
 
 use crate::adapters::departures::open_ldbws::open_ldbws_departures_service::OpenLdbwsDeparturesServiceAdapter;
-use crate::domain::models::departures::DepartureService;
+use crate::domain::models::departures::{DepartureService, DepartureStatus, Departures};
 use crate::domain::services::departures_service::DeparturesService;
 
 const SAMPLE_RESPONSE: &str = r#"{
@@ -33,6 +34,11 @@ const SAMPLE_RESPONSE: &str = r#"{
     ]
 }"#;
 
+/// The sample board was generated at 18:00.
+fn now() -> DateTime<Local> {
+    Local.with_ymd_and_hms(2024, 1, 10, 18, 0, 0).unwrap()
+}
+
 #[tokio::test]
 async fn returns_parsed_departures_for_station_pair() {
     let server = MockServer::start();
@@ -58,29 +64,35 @@ async fn returns_parsed_departures_for_station_pair() {
         reqwest::Client::new(),
     );
 
-    let result = under_test.get_departures(4).await;
+    let result = under_test.get_departures(4, now()).await;
 
     mock.assert();
-    assert_that(&result).is_ok_containing(vec![
+    assert_that(&result).is_ok_containing(Departures::new(
+        "Hornsey".to_owned(),
+        vec![
         DepartureService::new(
             "18:04".to_owned(),
             "Welwyn Garden City".to_owned(),
-            "On time".to_owned(),
+            DepartureStatus::OnTime,
             String::new(),
+            "4 min".to_owned(),
         ),
         DepartureService::new(
             "18:19".to_owned(),
             "Welwyn Garden City".to_owned(),
-            "Delayed".to_owned(),
+            DepartureStatus::Delayed,
             "18:27".to_owned(),
+            "27 min".to_owned(),
         ),
         DepartureService::new(
             "18:34".to_owned(),
             "Welwyn Garden City".to_owned(),
-            "Cancelled".to_owned(),
+            DepartureStatus::Cancelled,
+            String::new(),
             String::new(),
         ),
-    ]);
+    ],
+    ));
 }
 
 #[tokio::test]
@@ -105,7 +117,7 @@ async fn asks_for_the_board_as_it_will_be_after_the_travel_time() {
         reqwest::Client::new(),
     );
 
-    under_test.get_departures(4).await.unwrap();
+    under_test.get_departures(4, now()).await.unwrap();
 
     mock.assert();
 }
@@ -132,7 +144,7 @@ async fn caps_the_time_offset_at_what_the_api_accepts() {
         reqwest::Client::new(),
     );
 
-    under_test.get_departures(4).await.unwrap();
+    under_test.get_departures(4, now()).await.unwrap();
 
     mock.assert();
 }
