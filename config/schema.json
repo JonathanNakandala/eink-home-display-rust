@@ -1,0 +1,270 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApplicationConfig",
+  "type": "object",
+  "required": [
+    "file_store",
+    "image",
+    "location",
+    "weather"
+  ],
+  "properties": {
+    "departures": {
+      "description": "Departure boards shown on the display, in order. Each picks its own provider.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/DepartureBoardConfig"
+      }
+    },
+    "file_store": {
+      "$ref": "#/definitions/FileStoreConfig"
+    },
+    "image": {
+      "$ref": "#/definitions/ImageConfig"
+    },
+    "location": {
+      "$ref": "#/definitions/LocationConfig"
+    },
+    "providers": {
+      "description": "Credentials and endpoints shared by all boards using a provider.",
+      "default": {},
+      "allOf": [
+        {
+          "$ref": "#/definitions/ProvidersConfig"
+        }
+      ]
+    },
+    "weather": {
+      "$ref": "#/definitions/WeatherConfig"
+    }
+  },
+  "definitions": {
+    "DepartureBoardConfig": {
+      "description": "One `[[departures]]` entry: a titled board fed by a single provider.",
+      "type": "object",
+      "oneOf": [
+        {
+          "description": "National Rail live board between two CRS codes.",
+          "type": "object",
+          "required": [
+            "from",
+            "provider",
+            "to"
+          ],
+          "properties": {
+            "from": {
+              "description": "CRS code of the station to show departures from, e.g. \"HRN\".",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "OpenLdbws"
+              ]
+            },
+            "to": {
+              "description": "CRS code the services must call at, e.g. \"WIH\".",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "TfL arrivals at a single stop (bus stop or station NaPTAN id).",
+          "type": "object",
+          "required": [
+            "provider",
+            "stop_id"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "Tfl"
+              ]
+            },
+            "stop_id": {
+              "description": "NaPTAN id from `tfl_stops`, e.g. \"940GZZLUTPN\" (tube) or \"490000173RC\" (bus).",
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "enabled": {
+          "description": "Set to false to skip this board without deleting it.",
+          "default": true,
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Heading shown above the board on the display.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Maximum number of rows to show.",
+          "default": 4,
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        }
+      }
+    },
+    "FileStoreConfig": {
+      "type": "object",
+      "required": [
+        "save_directory"
+      ],
+      "properties": {
+        "save_directory": {
+          "description": "Where rendered images are saved; empty for the working directory.",
+          "type": "string"
+        }
+      }
+    },
+    "ImageConfig": {
+      "type": "object",
+      "required": [
+        "height",
+        "width"
+      ],
+      "properties": {
+        "height": {
+          "description": "Display size in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "LocationConfig": {
+      "type": "object",
+      "required": [
+        "latitude",
+        "longitude"
+      ],
+      "properties": {
+        "latitude": {
+          "description": "Decimal degrees, used for the weather lookup.",
+          "type": "number",
+          "format": "double"
+        },
+        "longitude": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "OpenLdbwsConfig": {
+      "type": "object",
+      "required": [
+        "api_key",
+        "host_url"
+      ],
+      "properties": {
+        "api_key": {
+          "description": "Consumer Key from your raildata.org.uk \"Live Arrival and Departure Boards\" subscription.",
+          "type": "string"
+        },
+        "host_url": {
+          "description": "Base path up to and including the operation name; the CRS code is appended as the final path segment.",
+          "type": "string"
+        }
+      }
+    },
+    "OpenWeatherConfig": {
+      "type": "object",
+      "required": [
+        "api_key",
+        "host_url"
+      ],
+      "properties": {
+        "api_key": {
+          "description": "32-character OpenWeather API key.",
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 32
+        },
+        "host_url": {
+          "type": "string"
+        }
+      }
+    },
+    "ProvidersConfig": {
+      "description": "Credentials/endpoints shared by every board using that provider, under `[providers.*]`.",
+      "type": "object",
+      "properties": {
+        "open_ldbws": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OpenLdbwsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tfl": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TflConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TflConfig": {
+      "type": "object",
+      "properties": {
+        "app_key": {
+          "description": "Optional: anonymous requests work but are rate limited.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host_url": {
+          "description": "TfL Unified API base URL.",
+          "default": "https://api.tfl.gov.uk",
+          "type": "string"
+        }
+      }
+    },
+    "WeatherConfig": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "open_weather",
+        "provider"
+      ],
+      "properties": {
+        "enabled": {
+          "description": "When false no weather is fetched and the display shows none.",
+          "type": "boolean"
+        },
+        "open_weather": {
+          "$ref": "#/definitions/OpenWeatherConfig"
+        },
+        "provider": {
+          "$ref": "#/definitions/WeatherProvider"
+        }
+      }
+    },
+    "WeatherProvider": {
+      "type": "string",
+      "enum": [
+        "OpenWeather"
+      ]
+    }
+  }
+}

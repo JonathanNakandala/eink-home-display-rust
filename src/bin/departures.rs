@@ -1,13 +1,11 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
-use serde_valid::Validate;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::adapters::departures::setup_departures_service;
-use eink_home_display_rust::cli::{DeparturesArgs, Direction};
+use eink_home_display_rust::adapters::departures::setup_departure_boards;
+use eink_home_display_rust::cli::DeparturesArgs;
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::domain::models::departures::DepartureService;
-use eink_home_display_rust::domain::services::departures_service::DeparturesService;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,52 +25,45 @@ async fn main() -> Result<()> {
         }
     };
 
-    if let Err(e) = config.validate() {
-        log::error!("Configuration validation failed: {}", e);
-        eprintln!("Error: Configuration is invalid. Please check your config file.");
-        std::process::exit(1);
+    let configs: Vec<_> = config
+        .departures
+        .iter()
+        .filter(|b| {
+            args.board
+                .as_ref()
+                .map_or(true, |name| b.name.eq_ignore_ascii_case(name))
+        })
+        .collect();
+    if configs.is_empty() {
+        bail!("No matching [[departures]] boards in config");
     }
 
-    let service = setup_departures_service(&config.departures);
-    let stations = &config.departures.stations;
-
-    if matches!(args.direction, Direction::Northbound | Direction::Both) {
-        let services = service
-            .get_departures(&stations.northbound_from, &stations.northbound_to, args.rows)
-            .await?;
-        print_board(
-            "NORTHBOUND",
-            &stations.northbound_from,
-            &stations.northbound_to,
-            &services,
-        );
-    }
-
-    if matches!(args.direction, Direction::Southbound | Direction::Both) {
-        let services = service
-            .get_departures(&stations.southbound_from, &stations.southbound_to, args.rows)
-            .await?;
-        print_board(
-            "SOUTHBOUND",
-            &stations.southbound_from,
-            &stations.southbound_to,
-            &services,
-        );
+    for board_config in configs {
+        let mut boards = setup_departure_boards(std::slice::from_ref(board_config), &config.providers)?;
+        let Some(board) = boards.pop() else {
+            println!("\n{}  (disabled)", board_config.name);
+            continue;
+        };
+        let rows = args.rows.unwrap_or(board_config.rows);
+        match board.fetch(rows).await {
+            Ok(services) => print_board(&board_config.name, &services),
+            Err(e) => println!("\n{}\n  error: {e:#}", board_config.name),
+        }
     }
 
     Ok(())
 }
 
-fn print_board(label: &str, from: &str, to: &str, services: &[DepartureService]) {
-    println!("\n{label}  {from} -> {to}");
+fn print_board(name: &str, services: &[DepartureService]) {
+    println!("\n{name}");
     if services.is_empty() {
         println!("  no scheduled trains");
         return;
     }
-    println!("  {:<6} {:<24} {:<10} DELAY", "TIME", "DESTINATION", "STATUS");
+    println!("  {:<8} {:<32} {:<10} DELAY", "TIME", "DESTINATION", "STATUS");
     for service in services {
         println!(
-            "  {:<6} {:<24} {:<10} {}",
+            "  {:<8} {:<32} {:<10} {}",
             service.time, service.destination, service.status, service.delay
         );
     }

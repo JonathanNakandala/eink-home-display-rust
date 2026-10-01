@@ -49,18 +49,62 @@ pub struct DeparturesArgs {
     #[arg(short, long)]
     pub config_file: PathBuf,
 
-    /// Which board(s) to print
-    #[arg(long, value_enum, default_value_t = Direction::Both)]
-    pub direction: Direction,
+    /// Only print the board with this name (case-insensitive); default is all
+    #[arg(long)]
+    pub board: Option<String>,
 
-    /// Number of services to request per board
-    #[arg(long, default_value_t = 4)]
-    pub rows: u8,
+    /// Override the number of services requested per board
+    #[arg(long)]
+    pub rows: Option<u8>,
 }
 
-#[derive(clap::ValueEnum, Clone, Copy, Debug)]
-pub enum Direction {
-    Northbound,
-    Southbound,
-    Both,
+#[derive(clap::Parser)]
+pub struct TflStopsArgs {
+    /// TfL API app key (optional; anonymous requests are rate limited)
+    #[arg(long, env = "TFL_APP_KEY", global = true)]
+    pub app_key: Option<String>,
+
+    /// Override the TfL API base URL
+    #[arg(long, global = true)]
+    pub host_url: Option<String>,
+
+    #[command(subcommand)]
+    pub command: StopsCommand,
+}
+
+#[derive(clap::Subcommand)]
+pub enum StopsCommand {
+    /// Find bus stops near a point
+    Bus {
+        #[arg(long, allow_hyphen_values = true)]
+        lat: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        lon: f64,
+        /// Search radius in metres
+        #[arg(long, default_value_t = 200)]
+        radius: u32,
+    },
+    /// Find Underground stations near a point
+    Tube {
+        #[arg(long, allow_hyphen_values = true)]
+        lat: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        lon: f64,
+        /// Search radius in metres
+        #[arg(long, default_value_t = 1000)]
+        radius: u32,
+    },
+    /// Show predicted arrivals at a bus stop or station, by stop ID
+    /// (e.g. 940GZZLUTPN for Turnpike Lane, 490000173RC for a bus stop)
+    Arrivals {
+        stop_id: String,
+        /// Maximum number of arrivals to show
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+    /// Search Underground stations by name
+    TubeSearch {
+        /// Station name, e.g. "finsbury park"
+        query: String,
+    },
 }

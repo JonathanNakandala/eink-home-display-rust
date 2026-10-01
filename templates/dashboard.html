@@ -15,7 +15,7 @@
             display: grid;
             grid-template-columns: 3fr 1fr;
             grid-template-rows: auto auto 1fr;
-            grid-template-areas: 'time-date time-date' 'northbound weather' 'southbound weather';
+            grid-template-areas: 'time-date time-date' 'departures weather' 'departures weather';
             width: 100vw;
             height: 100vh;
             font-family: 'Overpass', sans-serif;
@@ -74,12 +74,8 @@
             font-size: 2.5vw;
         }
 
-        .container .northbound {
-            grid-area: northbound;
-        }
-
-        .container .southbound {
-            grid-area: southbound;
+        .container .departures {
+            grid-area: departures;
         }
 
         .container .weather {
@@ -140,49 +136,31 @@
         </div>
     </div>
 
-    <table class="northbound">
-        <thead>
-        <tr>
-            <th colspan="4">NORTHBOUND</th>
-        </tr>
-        </thead>
-        <tbody>
-        {{#each nationalRail.northboundTrains}}
-        <tr>
-            <td>{{this.time}}</td>
-            <td>{{this.destination}}</td>
-            <td>{{this.status}}</td>
-            <td>{{this.delay}}</td>
-        </tr>
-        {{else}}
-        <tr>
-            <td colspan="4">No scheduled trains</td>
-        </tr>
+    <div class="departures">
+        {{#each departures}}
+        <table class="table">
+            <thead>
+            <tr>
+                <th colspan="4">{{this.name}}</th>
+            </tr>
+            </thead>
+            <tbody>
+            {{#each this.services}}
+            <tr>
+                <td>{{this.time}}</td>
+                <td>{{this.destination}}</td>
+                <td>{{this.status}}</td>
+                <td>{{this.delay}}</td>
+            </tr>
+            {{else}}
+            <tr>
+                <td colspan="4">No scheduled services</td>
+            </tr>
+            {{/each}}
+            </tbody>
+        </table>
         {{/each}}
-        </tbody>
-    </table>
-
-    <table class="southbound">
-        <thead>
-        <tr>
-            <th colspan="4">SOUTHBOUND</th>
-        </tr>
-        </thead>
-        <tbody>
-        {{#each nationalRail.southboundTrains}}
-        <tr>
-            <td>{{this.time}}</td>
-            <td>{{this.destination}}</td>
-            <td>{{this.status}}</td>
-            <td>{{this.delay}}</td>
-        </tr>
-        {{else}}
-        <tr>
-            <td colspan="4">No scheduled trains</td>
-        </tr>
-        {{/each}}
-        </tbody>
-    </table>
+    </div>
 
     <div class="weather">
         <div class="temperatures">
