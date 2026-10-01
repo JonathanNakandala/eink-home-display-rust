@@ -1912,9 +1912,9 @@ dependencies = [
 
 [[package]]
 name = "linux-embedded-hal"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a8a605c95f708c78554738a12153b213f107d3bd5323f7ce32d6deb3faafb40"
+checksum = "c54d3532c66df7cc711f1419e4ca28086dddb94fbe9f99be436ca520f907951f"
 dependencies = [
  "cast",
  "embedded-hal",
@@ -1922,7 +1922,7 @@ dependencies = [
  "gpio-cdev",
  "i2cdev",
  "nb",
- "nix 0.27.1",
+ "nix 0.31.3",
  "serialport",
  "spidev",
  "sysfs_gpio",
@@ -2023,15 +2023,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memoffset"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5de893c32cde5f383baa4c04c5d6dbdd735cfd4a794b0debdb2bb1b421da5ff4"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2106,7 +2097,7 @@ dependencies = [
  "cc",
  "cfg-if",
  "libc",
- "memoffset 0.6.5",
+ "memoffset",
 ]
 
 [[package]]
@@ -2118,8 +2109,6 @@ dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
  "libc",
- "memoffset 0.7.1",
- "pin-utils",
 ]
 
 [[package]]
@@ -2130,6 +2119,30 @@ checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -2424,12 +2437,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pin-utils"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkg-config"
@@ -3420,13 +3427,13 @@ dependencies = [
 
 [[package]]
 name = "spidev"
-version = "0.6.1"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32dadd0a877f0652fa52dbc4d2ed9f4877bea5cd30725507b36e1970a5ef0519"
+checksum = "4f611021817865236902d15bdf8d729b0bd232141b568d56bb88409a8dc27397"
 dependencies = [
  "bitflags 2.13.2",
  "libc",
- "nix 0.26.4",
+ "nix 0.29.0",
 ]
 
 [[package]]

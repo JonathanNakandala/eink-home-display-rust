@@ -35,4 +35,4 @@ httpmock = "0.8"
 speculoos = "0.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-linux-embedded-hal = "0.4"
+linux-embedded-hal = "0.5"
