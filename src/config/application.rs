@@ -50,6 +50,12 @@ pub struct DisplayConfig {
 pub enum DisplayKind {
     /// Waveshare 7.5" V2, 800x480 black and white.
     WaveshareEpd7in5V2,
+    /// Seeed reTerminal E1003, 10.3" 1872x1404 with 16 greys. Rendering only for now.
+    ReTerminalE1003,
+}
+
+impl DisplayKind {
+    pub const ALL: [DisplayKind; 2] = [DisplayKind::WaveshareEpd7in5V2, DisplayKind::ReTerminalE1003];
 }
 
 impl ApplicationConfig {

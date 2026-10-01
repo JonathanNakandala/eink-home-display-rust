@@ -5,13 +5,12 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
-use eink_home_display_rust::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
 use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli::RenderArgs;
-use eink_home_display_rust::config::application::ApplicationConfig;
+use eink_home_display_rust::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
 use eink_home_display_rust::domain::models::display::{Dither, DisplayProfile, Palette};
 use eink_home_display_rust::domain::models::image::ImageData;
 use eink_home_display_rust::domain::models::location::Location;
@@ -20,7 +19,7 @@ use eink_home_display_rust::domain::services::display_image_generator::DisplayIm
 use eink_home_display_rust::domain::services::image_display_service::ImageDisplayService;
 use eink_home_display_rust::domain::services::image_repository::ImageRepository;
 
-/// Renders the dashboard to PNG files without touching the e-paper panel.
+/// Renders the dashboard to PNG files without touching any display, one set per display type.
 #[tokio::main]
 async fn main() -> Result<()> {
     fmt()
@@ -37,9 +36,10 @@ async fn main() -> Result<()> {
         anyhow::bail!("--live needs --config-file");
     }
 
-    let profile = match &config {
-        Some(config) => setup_display(&config.display).profile(),
-        None => EinkWaveshareAdapter::new(Dither::None).profile(),
+    let kinds: Vec<DisplayKind> = if args.display.is_empty() {
+        DisplayKind::ALL.to_vec()
+    } else {
+        args.display.iter().copied().map(DisplayKind::from).collect()
     };
     let dither = args
         .dither
@@ -47,26 +47,42 @@ async fn main() -> Result<()> {
         .or(config.as_ref().map(|c| c.display.dither))
         .unwrap_or_default();
 
-    let generator = ChromeRenderDisplayImageGenerator::new();
     let data = match (&config, args.live) {
         (Some(config), true) => fetch_live(config).await?,
         _ => GlanceData::sample(chrono::Local::now()),
     };
 
-    if let Some(dir) = &args.html_dir {
-        std::fs::create_dir_all(dir)?;
-        let page = generator.write_page(dir, &generator.render_html(&data)?)?;
-        log::info!("Wrote {}", page.display());
+    std::fs::create_dir_all(&args.output_dir)
+        .with_context(|| format!("Failed to create {}", args.output_dir.display()))?;
+    let generator = ChromeRenderDisplayImageGenerator::new();
+
+    for kind in kinds {
+        let name = file_name(kind);
+        let profile = setup_display(&DisplayConfig { kind, dither }).profile();
+        log::info!("Rendering for {name} ({}x{}, {:?})", profile.width, profile.height, profile.palette);
+
+        if args.html {
+            let dir = args.output_dir.join(format!("page_{name}"));
+            std::fs::create_dir_all(&dir)?;
+            generator.write_page(&dir, &generator.render_html(&data)?)?;
+        }
+
+        let image = generator.generate(data.clone(), &profile).await?;
+        let render_path = args.output_dir.join(format!("page_render_{name}.png"));
+        let output_path = args.output_dir.join(format!("output_{name}.png"));
+        std::fs::write(&render_path, &image.data)
+            .with_context(|| format!("Failed to write {}", render_path.display()))?;
+        preview_on_panel(&image, &profile, dither)?.save(&output_path)?;
+        log::info!("Wrote {} and {} (dither: {dither:?})", render_path.display(), output_path.display());
     }
-
-    let image = generator.generate(data, &profile).await?;
-    ImageOutput(args.output.clone()).store(&image).await?;
-    log::info!("Wrote {}", args.output.display());
-
-    let dithered_path = args.output.with_extension("dithered.png");
-    preview_on_panel(&image, &profile, dither)?.save(&dithered_path)?;
-    log::info!("Wrote {} (dither: {dither:?})", dithered_path.display());
     Ok(())
+}
+
+fn file_name(kind: DisplayKind) -> &'static str {
+    match kind {
+        DisplayKind::WaveshareEpd7in5V2 => "Waveshare_EPD7in5V2",
+        DisplayKind::ReTerminalE1003 => "reTerminal_E1003",
+    }
 }
 
 async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
@@ -93,15 +109,6 @@ fn preview_on_panel(image: &ImageData, profile: &DisplayProfile, dither: Dither)
     };
     let luma = image::load_from_memory(&image.data)?.to_luma8();
     Ok(quantise_grey(&luma, levels, dither))
-}
-
-struct ImageOutput(std::path::PathBuf);
-
-#[async_trait::async_trait]
-impl ImageRepository for ImageOutput {
-    async fn store(&self, image: &ImageData) -> Result<()> {
-        std::fs::write(&self.0, &image.data).with_context(|| format!("Failed to write {}", self.0.display()))
-    }
 }
 
 /// Hands the fetched data back to `fetch_live` instead of rendering it.
