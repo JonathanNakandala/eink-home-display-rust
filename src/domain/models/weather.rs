@@ -2,6 +2,7 @@ use chrono::{Duration, NaiveDateTime};
 use serde::Serialize;
 
 use crate::domain::models::air_quality::AirQuality;
+use crate::domain::models::pollen::Pollen;
 
 /// Serialised in lowercase to match the icon partial of the same name in the template.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -30,6 +31,9 @@ pub struct WeatherInformation {
     /// Left off the display when `None`, i.e. the day's UV is too low to matter.
     #[new(default)]
     uv_index: Option<UvIndex>,
+    /// Only fetched when enabled in the config, and not on the display yet.
+    #[new(default)]
+    pollen: Option<Pollen>,
 }
 
 impl WeatherInformation {
@@ -39,6 +43,11 @@ impl WeatherInformation {
 
     pub fn with_precipitation(mut self, precipitation: Option<PrecipitationOutlook>) -> Self {
         self.precipitation = precipitation;
+        self
+    }
+
+    pub fn with_pollen(mut self, pollen: Option<Pollen>) -> Self {
+        self.pollen = pollen;
         self
     }
 

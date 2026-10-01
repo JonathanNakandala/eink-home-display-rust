@@ -54,16 +54,18 @@ pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherSe
         }
         WeatherProvider::OpenMeteo => {
             // The section is optional: no key is needed, so the default host works.
-            let (host_url, air_quality_host_url) = match &config.open_meteo {
-                Some(c) => (c.host_url.clone(), c.air_quality_host_url.clone()),
+            let (host_url, air_quality_host_url, pollen) = match &config.open_meteo {
+                Some(c) => (c.host_url.clone(), c.air_quality_host_url.clone(), c.pollen),
                 None => (
                     DEFAULT_OPEN_METEO_HOST_URL.to_owned(),
                     DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL.to_owned(),
+                    false,
                 ),
             };
             Ok(WeatherServiceImpl::OpenMeteo(OpenMeteoWeatherServiceAdapter::new(
                 host_url,
                 air_quality_host_url,
+                pollen,
                 reqwest::Client::new(),
             )))
         }
