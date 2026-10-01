@@ -4,7 +4,7 @@ use image::GrayImage;
 use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::departures::setup_departure_boards;
-use eink_home_display_rust::adapters::display_image_generator::chrome_render::ChromeRenderDisplayImageGenerator;
+use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| CacheConfig::default().directory),
     );
     cache.ensure_exists()?;
-    let generator = ChromeRenderDisplayImageGenerator::new(cache.chrome());
+    let generator = ChromeRenderDisplayImageGenerator::new(cache.chrome(), DEFAULT_IDLE_TIMEOUT);
 
     for kind in kinds {
         let name = file_name(kind);
