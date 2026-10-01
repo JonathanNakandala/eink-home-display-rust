@@ -3,14 +3,14 @@ use chrono::{Duration, NaiveDateTime, Utc};
 use reqwest::Client;
 
 use crate::adapters::weather::open_meteo::response::{
-    OpenMeteoAirQualityResponse, OpenMeteoMinutelyResponse, OpenMeteoResponse,
+    OpenMeteoAirQualityResponse, OpenMeteoDailyResponse, OpenMeteoMinutelyResponse, OpenMeteoResponse,
 };
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::location::Location;
 use crate::domain::models::pollen::{Pollen, PollenType};
 use crate::domain::models::weather::{
-    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, UvIndex, WeatherCondition,
-    WeatherInformation,
+    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, SunTimes, UvIndex,
+    WeatherCondition, WeatherInformation,
 };
 use crate::domain::services::weather_service::WeatherService;
 
@@ -107,7 +107,7 @@ impl OpenMeteoWeatherServiceAdapter {
                 ("latitude", location.latitude.to_string()),
                 ("longitude", location.longitude.to_string()),
                 ("current", "temperature_2m,weather_code".to_owned()),
-                ("daily", "temperature_2m_max,temperature_2m_min,uv_index_max".to_owned()),
+                ("daily", "temperature_2m_max,temperature_2m_min,uv_index_max,sunrise,sunset".to_owned()),
                 ("minutely_15", "precipitation,snowfall,weather_code".to_owned()),
                 ("forecast_minutely_15", FORECAST_SLOTS.to_string()),
                 ("forecast_days", "1".to_owned()),
@@ -145,9 +145,18 @@ impl OpenMeteoWeatherServiceAdapter {
                 condition_from_wmo_code(body.current.weather_code),
             )
             .with_precipitation(precipitation)
+            .with_sun(sun_times(&body.daily))
             .with_uv_index(body.daily.uv_index_max.first().copied().flatten().map(UvIndex::new)),
         ))
     }
+}
+
+/// `None` unless both times are present and readable, since half a pair isn't worth showing.
+fn sun_times(daily: &OpenMeteoDailyResponse) -> Option<SunTimes> {
+    let parse = |times: &[Option<String>]| {
+        NaiveDateTime::parse_from_str(times.first()?.as_deref()?, "%Y-%m-%dT%H:%M").ok()
+    };
+    Some(SunTimes::new(parse(&daily.sunrise)?, parse(&daily.sunset)?))
 }
 
 /// Slots whose time can't be read are dropped; if that leaves gaps the chart is skipped.

@@ -16,7 +16,7 @@ async fn returns_temperatures_and_condition_at_location() {
             .query_param("latitude", "1")
             .query_param("longitude", "2")
             .query_param("current", "temperature_2m,weather_code")
-            .query_param("daily", "temperature_2m_max,temperature_2m_min,uv_index_max")
+            .query_param("daily", "temperature_2m_max,temperature_2m_min,uv_index_max,sunrise,sunset")
             .query_param("forecast_days", "1");
         then.status(200)
             .header("content-type", "application/json; charset=UTF-8")
@@ -301,4 +301,32 @@ async fn does_not_ask_for_or_return_pollen_by_default() {
     )
     .await;
     assert_that(&weather["pollen"].is_null()).is_true();
+}
+
+#[tokio::test]
+async fn shows_todays_sunrise_and_sunset() {
+    let weather = weather_with_daily(
+        r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6],
+             "sunrise": ["2026-10-01T06:51"], "sunset": ["2026-10-01T18:29"] }"#,
+    )
+    .await;
+    assert_that(&weather["sun"]).is_equal_to(serde_json::json!({ "sunrise": "06:51", "sunset": "18:29" }));
+}
+
+#[tokio::test]
+async fn leaves_the_sun_off_when_either_time_is_missing() {
+    let polar = weather_with_daily(
+        r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6],
+             "sunrise": [null], "sunset": [null] }"#,
+    )
+    .await;
+    let half = weather_with_daily(
+        r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6],
+             "sunrise": ["2026-10-01T06:51"], "sunset": [null] }"#,
+    )
+    .await;
+    let absent = weather_with_daily(r#"{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6] }"#).await;
+    assert_that(&polar["sun"].is_null()).is_true();
+    assert_that(&half["sun"].is_null()).is_true();
+    assert_that(&absent["sun"].is_null()).is_true();
 }

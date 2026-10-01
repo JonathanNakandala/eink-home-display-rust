@@ -34,6 +34,9 @@ pub struct WeatherInformation {
     /// Only fetched when enabled in the config, and not on the display yet.
     #[new(default)]
     pollen: Option<Pollen>,
+    /// Left off the display when `None`, e.g. in polar day or night.
+    #[new(default)]
+    sun: Option<SunTimes>,
 }
 
 impl WeatherInformation {
@@ -43,6 +46,11 @@ impl WeatherInformation {
 
     pub fn with_precipitation(mut self, precipitation: Option<PrecipitationOutlook>) -> Self {
         self.precipitation = precipitation;
+        self
+    }
+
+    pub fn with_sun(mut self, sun: Option<SunTimes>) -> Self {
+        self.sun = sun;
         self
     }
 
@@ -59,6 +67,23 @@ impl WeatherInformation {
     pub fn with_air_quality(mut self, air_quality: Option<AirQuality>) -> Self {
         self.air_quality = air_quality;
         self
+    }
+}
+
+/// Today's sunrise and sunset in the location's local time, as shown on the display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SunTimes {
+    /// e.g. "06:51"
+    sunrise: String,
+    sunset: String,
+}
+
+impl SunTimes {
+    pub fn new(sunrise: NaiveDateTime, sunset: NaiveDateTime) -> Self {
+        Self {
+            sunrise: sunrise.format("%H:%M").to_string(),
+            sunset: sunset.format("%H:%M").to_string(),
+        }
     }
 }
 
@@ -297,6 +322,15 @@ mod tests {
                 PrecipitationSlot::new(at(11, 15) + Duration::minutes(15 * i as i64), *rate, *rate, kind)
             })
             .collect()
+    }
+
+    #[test]
+    fn sun_times_are_shown_as_hours_and_minutes() {
+        let at = |h, m| NaiveDate::from_ymd_opt(2026, 10, 1).unwrap().and_hms_opt(h, m, 59).unwrap();
+        assert_eq!(
+            SunTimes::new(at(6, 51), at(18, 29)),
+            SunTimes { sunrise: "06:51".into(), sunset: "18:29".into() }
+        );
     }
 
     #[test]
