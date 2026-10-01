@@ -13,6 +13,9 @@ pub struct OpenMeteoResponse {
 #[derive(Deserialize, Debug)]
 pub struct OpenMeteoCurrentResponse {
     pub temperature_2m: f64,
+    /// Only costs the feels-like figure when absent or null.
+    #[serde(default)]
+    pub apparent_temperature: Option<f64>,
     pub weather_code: u8,
 }
 

@@ -37,6 +37,9 @@ pub struct WeatherInformation {
     /// Left off the display when `None`, e.g. in polar day or night.
     #[new(default)]
     sun: Option<SunTimes>,
+    /// Only set when it differs enough from the temperature to be worth showing.
+    #[new(default)]
+    feels_like: Option<i8>,
 }
 
 impl WeatherInformation {
@@ -46,6 +49,15 @@ impl WeatherInformation {
 
     pub fn with_precipitation(mut self, precipitation: Option<PrecipitationOutlook>) -> Self {
         self.precipitation = precipitation;
+        self
+    }
+
+    /// Keeps `feels_like` only when it is at least `FEELS_LIKE_MIN_DIFFERENCE` degrees from
+    /// the temperature, going by the rounded figures that are shown.
+    pub fn with_feels_like(mut self, feels_like: Option<f64>) -> Self {
+        self.feels_like = feels_like
+            .map(|degrees| degrees.round() as i8)
+            .filter(|degrees| degrees.abs_diff(self.temperature) >= FEELS_LIKE_MIN_DIFFERENCE);
         self
     }
 
@@ -69,6 +81,9 @@ impl WeatherInformation {
         self
     }
 }
+
+/// Closer than this and the feels-like temperature isn't worth the space.
+const FEELS_LIKE_MIN_DIFFERENCE: u8 = 3;
 
 /// Today's sunrise and sunset in the location's local time, as shown on the display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -322,6 +337,22 @@ mod tests {
                 PrecipitationSlot::new(at(11, 15) + Duration::minutes(15 * i as i64), *rate, *rate, kind)
             })
             .collect()
+    }
+
+    #[test]
+    fn feels_like_is_kept_only_when_it_differs_enough() {
+        let weather = || WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds);
+        assert_eq!(weather().with_feels_like(Some(9.4)).feels_like, Some(9));
+        assert_eq!(weather().with_feels_like(Some(15.0)).feels_like, Some(15));
+        assert_eq!(weather().with_feels_like(Some(10.0)).feels_like, None);
+        assert_eq!(weather().with_feels_like(Some(13.4)).feels_like, None);
+        assert_eq!(weather().with_feels_like(None).feels_like, None);
+    }
+
+    #[test]
+    fn feels_like_can_be_below_zero() {
+        let weather = WeatherInformation::new(-4, -6, 1, WeatherCondition::Snow);
+        assert_eq!(weather.with_feels_like(Some(-9.6)).feels_like, Some(-10));
     }
 
     #[test]

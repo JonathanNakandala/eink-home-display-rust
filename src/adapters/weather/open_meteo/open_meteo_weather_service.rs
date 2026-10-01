@@ -106,7 +106,7 @@ impl OpenMeteoWeatherServiceAdapter {
             .query(&[
                 ("latitude", location.latitude.to_string()),
                 ("longitude", location.longitude.to_string()),
-                ("current", "temperature_2m,weather_code".to_owned()),
+                ("current", "temperature_2m,apparent_temperature,weather_code".to_owned()),
                 ("daily", "temperature_2m_max,temperature_2m_min,uv_index_max,sunrise,sunset".to_owned()),
                 ("minutely_15", "precipitation,snowfall,weather_code".to_owned()),
                 ("forecast_minutely_15", FORECAST_SLOTS.to_string()),
@@ -145,6 +145,7 @@ impl OpenMeteoWeatherServiceAdapter {
                 condition_from_wmo_code(body.current.weather_code),
             )
             .with_precipitation(precipitation)
+            .with_feels_like(body.current.apparent_temperature)
             .with_sun(sun_times(&body.daily))
             .with_uv_index(body.daily.uv_index_max.first().copied().flatten().map(UvIndex::new)),
         ))

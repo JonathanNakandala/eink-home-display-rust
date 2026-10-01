@@ -15,7 +15,7 @@ async fn returns_temperatures_and_condition_at_location() {
             .path("/v1/forecast")
             .query_param("latitude", "1")
             .query_param("longitude", "2")
-            .query_param("current", "temperature_2m,weather_code")
+            .query_param("current", "temperature_2m,apparent_temperature,weather_code")
             .query_param("daily", "temperature_2m_max,temperature_2m_min,uv_index_max,sunrise,sunset")
             .query_param("forecast_days", "1");
         then.status(200)
@@ -329,4 +329,43 @@ async fn leaves_the_sun_off_when_either_time_is_missing() {
     assert_that(&polar["sun"].is_null()).is_true();
     assert_that(&half["sun"].is_null()).is_true();
     assert_that(&absent["sun"].is_null()).is_true();
+}
+
+async fn weather_with_current(current: &str) -> serde_json::Value {
+    let server = MockServer::start();
+    let body = format!(
+        r#"{{ "utc_offset_seconds": 0, "current": {current},
+              "daily": {{ "temperature_2m_max": [6.0], "temperature_2m_min": [1.6] }} }}"#
+    );
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/forecast");
+        then.status(200).header("content-type", "application/json").body(body);
+    });
+    let under_test = OpenMeteoWeatherServiceAdapter::new(server.base_url(), server.base_url(), false, reqwest::Client::new());
+    let weather = under_test
+        .get_weather_for_location(Location::new(1f64, 2f64))
+        .await
+        .unwrap()
+        .unwrap();
+    serde_json::to_value(&weather).unwrap()
+}
+
+#[tokio::test]
+async fn shows_feels_like_when_it_differs_from_the_temperature() {
+    let weather = weather_with_current(
+        r#"{ "temperature_2m": 3.4, "apparent_temperature": -1.2, "weather_code": 0 }"#,
+    )
+    .await;
+    assert_that(&weather["feels_like"].as_i64()).is_equal_to(Some(-1));
+}
+
+#[tokio::test]
+async fn leaves_feels_like_off_when_close_or_missing() {
+    let close = weather_with_current(
+        r#"{ "temperature_2m": 3.4, "apparent_temperature": 2.1, "weather_code": 0 }"#,
+    )
+    .await;
+    let missing = weather_with_current(r#"{ "temperature_2m": 3.4, "weather_code": 0 }"#).await;
+    assert_that(&close["feels_like"].is_null()).is_true();
+    assert_that(&missing["feels_like"].is_null()).is_true();
 }
