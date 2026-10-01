@@ -211,6 +211,16 @@
         "host_url"
       ]
     },
+    "OpenMeteoConfig": {
+      "type": "object",
+      "properties": {
+        "host_url": {
+          "description": "Open-Meteo API base URL, e.g. for a self-hosted instance or a paid plan.",
+          "type": "string",
+          "default": "https://api.open-meteo.com"
+        }
+      }
+    },
     "OpenWeatherConfig": {
       "type": "object",
       "properties": {
@@ -279,8 +289,27 @@
           "description": "When false no weather is fetched and the display shows none.",
           "type": "boolean"
         },
+        "open_meteo": {
+          "description": "Optional: Open-Meteo needs no key, so the default host is used when omitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenMeteoConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "open_weather": {
-          "$ref": "#/$defs/OpenWeatherConfig"
+          "description": "Required when `provider = \"OpenWeather\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenWeatherConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "provider": {
           "$ref": "#/$defs/WeatherProvider"
@@ -288,14 +317,21 @@
       },
       "required": [
         "enabled",
-        "provider",
-        "open_weather"
+        "provider"
       ]
     },
     "WeatherProvider": {
-      "type": "string",
-      "enum": [
-        "OpenWeather"
+      "oneOf": [
+        {
+          "description": "Needs an API key and a One Call by Call subscription for the 4.0 API.",
+          "type": "string",
+          "const": "OpenWeather"
+        },
+        {
+          "description": "Free for non-commercial use, no key.",
+          "type": "string",
+          "const": "OpenMeteo"
+        }
       ]
     }
   }
