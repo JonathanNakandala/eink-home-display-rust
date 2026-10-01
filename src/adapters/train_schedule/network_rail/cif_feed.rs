@@ -26,6 +26,9 @@ pub async fn download_full_schedule(
 
     let mut file = tokio::fs::File::create(dest).await?;
     file.write_all(&bytes).await?;
+    // tokio buffers writes on a background thread; without this the file can be
+    // dropped before the data lands.
+    file.flush().await?;
     Ok(())
 }
 
