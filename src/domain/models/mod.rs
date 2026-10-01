@@ -14,7 +14,7 @@ pub mod weather;
 pub mod image;
 pub mod train;
 
-#[derive(Debug, derive_new::new, Serialize)]
+#[derive(Debug, Clone, derive_new::new, Serialize)]
 pub struct DepartureBoardData {
     name: String,
     services: Vec<DepartureService>,
@@ -42,7 +42,7 @@ impl DateInfo {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GlanceData {
     /// Left off the display when `None`.
     weather_information: Option<WeatherInformation>,

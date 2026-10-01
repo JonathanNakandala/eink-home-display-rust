@@ -12,7 +12,7 @@ pub enum WeatherCondition {
     Snow,
 }
 
-#[derive(Debug, Serialize, derive_new::new, PartialEq)]
+#[derive(Debug, Clone, Serialize, derive_new::new, PartialEq)]
 pub struct WeatherInformation {
     temperature: i8,
     min: i8,

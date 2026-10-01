@@ -111,27 +111,46 @@ pub enum StopsCommand {
 
 #[derive(clap::Parser)]
 pub struct RenderArgs {
-    /// Path to application config file. Needed for --live; without it the
-    /// Waveshare 7.5" profile is used.
+    /// Path to application config file. Needed for --live.
     #[arg(short, long)]
     pub config_file: Option<PathBuf>,
 
-    /// Where to write the rendered PNG; the dithered version goes next to it
-    /// with a `.dithered.png` extension
-    #[arg(short, long, default_value = "render.png")]
-    pub output: PathBuf,
+    /// Folder for the rendered images, created if missing
+    #[arg(short, long, default_value = "output")]
+    pub output_dir: PathBuf,
+
+    /// Display(s) to render for; repeat for several. Defaults to all of them.
+    #[arg(short, long, value_enum)]
+    pub display: Vec<DisplayArg>,
 
     /// Fetch real weather and departures instead of using sample data
     #[arg(long)]
     pub live: bool,
 
-    /// Also write the rendered HTML (with its fonts) to this directory, to open in a browser
+    /// Also write each display's HTML and fonts to <output-dir>/page_<display>/, to open in a browser
     #[arg(long)]
-    pub html_dir: Option<PathBuf>,
+    pub html: bool,
 
-    /// How greys are reduced for the dithered preview; defaults to the config's setting
+    /// How greys are reduced for the preview; defaults to the config's setting, else none
     #[arg(long, value_enum)]
     pub dither: Option<DitherArg>,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum DisplayArg {
+    #[value(name = "waveshare")]
+    Waveshare,
+    #[value(name = "reterminal-e1003", alias = "reterminal")]
+    ReTerminalE1003,
+}
+
+impl From<DisplayArg> for crate::config::application::DisplayKind {
+    fn from(arg: DisplayArg) -> Self {
+        match arg {
+            DisplayArg::Waveshare => Self::WaveshareEpd7in5V2,
+            DisplayArg::ReTerminalE1003 => Self::ReTerminalE1003,
+        }
+    }
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
