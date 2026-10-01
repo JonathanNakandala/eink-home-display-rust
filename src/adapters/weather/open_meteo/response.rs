@@ -21,6 +21,9 @@ pub struct OpenMeteoCurrentResponse {
 pub struct OpenMeteoDailyResponse {
     pub temperature_2m_max: Vec<f64>,
     pub temperature_2m_min: Vec<f64>,
+    /// Only costs the UV line when absent or null.
+    #[serde(default)]
+    pub uv_index_max: Vec<Option<f64>>,
 }
 
 #[derive(Deserialize, Debug)]

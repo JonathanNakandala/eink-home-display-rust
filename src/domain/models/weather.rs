@@ -27,6 +27,9 @@ pub struct WeatherInformation {
     /// Left off the display when `None`, i.e. the provider has no air quality data.
     #[new(default)]
     air_quality: Option<AirQuality>,
+    /// Left off the display when `None`, i.e. the day's UV is too low to matter.
+    #[new(default)]
+    uv_index: Option<UvIndex>,
 }
 
 impl WeatherInformation {
@@ -39,9 +42,37 @@ impl WeatherInformation {
         self
     }
 
+    pub fn with_uv_index(mut self, uv_index: Option<UvIndex>) -> Self {
+        self.uv_index = uv_index;
+        self
+    }
+
     pub fn with_air_quality(mut self, air_quality: Option<AirQuality>) -> Self {
         self.air_quality = air_quality;
         self
+    }
+}
+
+/// The day's highest UV index, with its WHO band. Shown even when Low, so a missing line
+/// means the lookup failed, not that the UV is low.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UvIndex {
+    value: u8,
+    /// e.g. "High"
+    band: &'static str,
+}
+
+impl UvIndex {
+    pub fn new(max: f64) -> Self {
+        let value = max.round().clamp(0.0, 99.0) as u8;
+        let band = match value {
+            0..=2 => "Low",
+            3..=5 => "Moderate",
+            6..=7 => "High",
+            8..=10 => "Very high",
+            _ => "Extreme",
+        };
+        Self { value, band }
     }
 }
 
@@ -257,6 +288,16 @@ mod tests {
                 PrecipitationSlot::new(at(11, 15) + Duration::minutes(15 * i as i64), *rate, *rate, kind)
             })
             .collect()
+    }
+
+    #[test]
+    fn uv_is_banded_including_when_low() {
+        assert_eq!(UvIndex::new(0.0), UvIndex { value: 0, band: "Low" });
+        assert_eq!(UvIndex::new(2.4), UvIndex { value: 2, band: "Low" });
+        assert_eq!(UvIndex::new(2.6), UvIndex { value: 3, band: "Moderate" });
+        assert_eq!(UvIndex::new(6.0), UvIndex { value: 6, band: "High" });
+        assert_eq!(UvIndex::new(8.4), UvIndex { value: 8, band: "Very high" });
+        assert_eq!(UvIndex::new(11.2), UvIndex { value: 11, band: "Extreme" });
     }
 
     #[test]

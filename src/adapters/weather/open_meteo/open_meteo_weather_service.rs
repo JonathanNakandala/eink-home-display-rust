@@ -8,7 +8,8 @@ use crate::adapters::weather::open_meteo::response::{
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::location::Location;
 use crate::domain::models::weather::{
-    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, WeatherCondition, WeatherInformation,
+    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, UvIndex, WeatherCondition,
+    WeatherInformation,
 };
 use crate::domain::services::weather_service::WeatherService;
 
@@ -86,7 +87,7 @@ impl OpenMeteoWeatherServiceAdapter {
                 ("latitude", location.latitude.to_string()),
                 ("longitude", location.longitude.to_string()),
                 ("current", "temperature_2m,weather_code".to_owned()),
-                ("daily", "temperature_2m_max,temperature_2m_min".to_owned()),
+                ("daily", "temperature_2m_max,temperature_2m_min,uv_index_max".to_owned()),
                 ("minutely_15", "precipitation,snowfall,weather_code".to_owned()),
                 ("forecast_minutely_15", FORECAST_SLOTS.to_string()),
                 ("forecast_days", "1".to_owned()),
@@ -123,7 +124,8 @@ impl OpenMeteoWeatherServiceAdapter {
                 max.round() as i8,
                 condition_from_wmo_code(body.current.weather_code),
             )
-            .with_precipitation(precipitation),
+            .with_precipitation(precipitation)
+            .with_uv_index(body.daily.uv_index_max.first().copied().flatten().map(UvIndex::new)),
         ))
     }
 }
