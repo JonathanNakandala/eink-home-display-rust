@@ -176,9 +176,14 @@
             {{#each this.services}}
             <tr class="{{#if (eq this.status "Cancelled")}}cancelled{{/if}}{{#if (eq this.status "Delayed")}} delayed{{/if}}">
                 <td>{{this.time}}</td>
+                {{#if this.status}}
                 <td>{{this.destination}}</td>
                 <td class="status">{{this.status}}</td>
                 <td>{{#if this.delay}}exp {{this.delay}}{{/if}}</td>
+                {{else}}
+                {{! No status (e.g. a TfL countdown): let the destination use the whole row }}
+                <td colspan="3">{{this.destination}}</td>
+                {{/if}}
             </tr>
             {{else}}
             <tr>

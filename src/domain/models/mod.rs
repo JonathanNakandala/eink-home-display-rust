@@ -73,7 +73,7 @@ impl GlanceData {
 
 impl GlanceData {
     /// Made-up but representative data (on time, delayed and cancelled
-    /// services, plus an empty board) for previewing the layout offline.
+    /// services, plus a TfL-style countdown board) for previewing the layout offline.
     pub fn sample(now: DateTime<Local>) -> Self {
         let service = |time: &str, destination: &str, status: &str, delay: &str| {
             DepartureService::new(time.into(), destination.into(), status.into(), delay.into())
@@ -97,7 +97,16 @@ impl GlanceData {
                         service("14:24", "Kings Cross", "On time", ""),
                     ],
                 ),
-                DepartureBoardData::new("TURNPIKE LANE".into(), vec![]),
+                // TfL boards only know the countdown, so status and delay are empty.
+                DepartureBoardData::new(
+                    "TURNPIKE LANE".into(),
+                    vec![
+                        service("due", "Piccadilly Cockfosters", "", ""),
+                        service("3 min", "Piccadilly Heathrow Terminal 5", "", ""),
+                        service("6 min", "Piccadilly Cockfosters", "", ""),
+                        service("9 min", "Piccadilly Uxbridge", "", ""),
+                    ],
+                ),
             ],
             DateInfo::new(now),
         )
