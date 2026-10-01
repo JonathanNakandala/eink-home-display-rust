@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::scheduler::Schedule;
+
 #[derive(clap::Parser)]
 pub struct Args {
     /// Path to application config file
@@ -9,6 +11,25 @@ pub struct Args {
     /// Cache directory, overriding cache.directory from the config
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
+
+    /// Keep running and refresh on a cron schedule in local time, e.g. "*/10 * * * *"
+    #[arg(long, value_parser = Schedule::parse_cron, conflicts_with = "every")]
+    pub cron: Option<Schedule>,
+
+    /// Keep running and refresh at this interval, e.g. 10m or 90s
+    #[arg(long, value_parser = Schedule::parse_every)]
+    pub every: Option<Schedule>,
+
+    /// With --cron or --every, wait for the first slot instead of refreshing at startup
+    #[arg(long)]
+    pub no_initial_run: bool,
+}
+
+impl Args {
+    /// The schedule to run on, or None for a single run.
+    pub fn schedule(&self) -> Option<&Schedule> {
+        self.cron.as_ref().or(self.every.as_ref())
+    }
 }
 
 #[derive(clap::Parser)]
