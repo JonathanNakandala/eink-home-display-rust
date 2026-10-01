@@ -1,8 +1,10 @@
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, Timelike};
 use serde::Serialize;
 
 use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus};
-use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
+use crate::domain::models::weather::{
+    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, WeatherCondition, WeatherInformation,
+};
 
 pub mod arrival;
 pub mod departures;
@@ -107,8 +109,26 @@ impl GlanceData {
                 countdown(minutes * 60),
             )
         };
+        // Dry for the first three quarters of an hour, then a shower.
+        let local = now.naive_local();
+        let quarter = local - Duration::minutes(local.minute() as i64 % 15) - Duration::seconds(local.second() as i64);
+        let showers = [0.0, 0.0, 0.0, 0.4, 1.2, 2.0, 1.0, 0.3]
+            .iter()
+            .enumerate()
+            .map(|(i, rate)| {
+                PrecipitationSlot::new(
+                    quarter + Duration::minutes(15 * i as i64),
+                    *rate,
+                    0.0,
+                    PrecipitationKind::Rain,
+                )
+            })
+            .collect::<Vec<_>>();
         Self::new(
-            Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
+            Some(
+                WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)
+                    .with_precipitation(PrecipitationOutlook::from_slots(&showers, local)),
+            ),
             vec![
                 DepartureBoardData::new(
                     "NORTHBOUND".into(),

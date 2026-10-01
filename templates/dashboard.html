@@ -179,6 +179,35 @@
             letter-spacing: 0.06em;
             margin-right: 0.3em;
         }
+
+        .weather .precipitation {
+            width: 100%;
+        }
+
+        .weather .precipitation .caption {
+            font-size: 1.7vw;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            margin-top: 0.6vh;
+        }
+
+        .weather .precipitation svg {
+            display: block;
+            width: 21vw;
+            height: auto;
+            margin: 0 auto;
+            overflow: visible;
+        }
+
+        .weather .precipitation text {
+            font-family: 'Overpass', sans-serif;
+            font-size: 12px;
+            fill: #000;
+        }
+
+        .weather .precipitation text.strong {
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -218,6 +247,24 @@
             <div><span>LOW</span>{{weather_information.min}}°</div>
             <div><span>HIGH</span>{{weather_information.max}}°</div>
         </div>
+        {{#with weather_information.precipitation}}
+        <div class="precipitation">
+            <div class="caption">{{caption}}</div>
+            <svg viewBox="0 -12 172 108">
+                <line x1="14" y1="70" x2="158" y2="70" stroke="#000" stroke-width="2"/>
+                {{#each bars}}
+                <rect x="{{x}}" y="{{y}}" width="{{width}}" height="{{height}}" fill="#000"/>
+                {{/each}}
+                {{#each ticks}}
+                <line x1="{{x}}" y1="70" x2="{{x}}" y2="{{#if labelled}}76{{else}}74{{/if}}" stroke="#000" stroke-width="2"/>
+                {{#if labelled}}<text x="{{x}}" y="90" text-anchor="{{anchor}}">{{label}}</text>{{/if}}
+                {{/each}}
+                <text class="strong" x="{{peak_x}}" y="{{peak_y}}" text-anchor="middle">{{peak_label}}</text>
+                <path d="M{{start_x}} 25 m-5 -7 h10 l-5 7 z" fill="#000"/>
+                <text class="strong" x="{{start_label_x}}" y="13" text-anchor="middle">{{start_label}}</text>
+            </svg>
+        </div>
+        {{/with}}
     </div>
     {{/if}}
 </div>
