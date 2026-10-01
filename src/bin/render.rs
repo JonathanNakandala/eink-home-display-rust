@@ -10,6 +10,7 @@ use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli::RenderArgs;
+use eink_home_display_rust::config::cache::{CacheConfig, CachePaths};
 use eink_home_display_rust::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
 use eink_home_display_rust::domain::models::display::{Dither, DisplayProfile, Palette};
 use eink_home_display_rust::domain::models::image::ImageData;
@@ -54,7 +55,14 @@ async fn main() -> Result<()> {
 
     std::fs::create_dir_all(&args.output_dir)
         .with_context(|| format!("Failed to create {}", args.output_dir.display()))?;
-    let generator = ChromeRenderDisplayImageGenerator::new();
+    let cache = CachePaths::new(
+        args.cache_dir
+            .clone()
+            .or_else(|| config.as_ref().map(|c| c.cache.directory.clone()))
+            .unwrap_or_else(|| CacheConfig::default().directory),
+    );
+    cache.ensure_exists()?;
+    let generator = ChromeRenderDisplayImageGenerator::new(cache.chrome());
 
     for kind in kinds {
         let name = file_name(kind);

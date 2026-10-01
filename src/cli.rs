@@ -5,6 +5,10 @@ pub struct Args {
     /// Path to application config file
     #[arg(short, long)]
     pub config_file: PathBuf,
+
+    /// Cache directory, overriding cache.directory from the config
+    #[arg(long)]
+    pub cache_dir: Option<PathBuf>,
 }
 
 #[derive(clap::Parser)]
@@ -114,6 +118,10 @@ pub struct RenderArgs {
     /// Path to application config file. Needed for --live.
     #[arg(short, long)]
     pub config_file: Option<PathBuf>,
+
+    /// Cache directory, overriding cache.directory from the config; default is ./cache
+    #[arg(long)]
+    pub cache_dir: Option<PathBuf>,
 
     /// Folder for the rendered images, created if missing
     #[arg(short, long, default_value = "output")]

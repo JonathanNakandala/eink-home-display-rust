@@ -47,7 +47,9 @@ const ICONS: &[(&str, &str)] = &[
 /// size and returns the screenshot. Reducing it to the panel's colour depth is
 /// the display adapter's job.
 #[derive(derive_new::new)]
-pub struct ChromeRenderDisplayImageGenerator {}
+pub struct ChromeRenderDisplayImageGenerator {
+    chrome_install_dir: PathBuf,
+}
 
 fn find_system_chrome() -> Option<PathBuf> {
     let path = match default_executable() {
@@ -103,7 +105,7 @@ impl ChromeRenderDisplayImageGenerator {
     async fn capture_webpage(&self, page: &Path, profile: &DisplayProfile) -> anyhow::Result<Vec<u8>> {
         let fetcher_options = FetcherOptions::default()
             .with_allow_download(true)
-            .with_install_dir("/tmp/headless_chrome".into());
+            .with_install_dir(Some(self.chrome_install_dir.clone()));
         let launcher_options = LaunchOptions::default_builder()
             .window_size(Some((profile.width, profile.height)))
             .devtools(false)
@@ -207,7 +209,7 @@ mod tests {
             vec![],
             DateInfo::new(chrono::Local::now()));
 
-        let image = ChromeRenderDisplayImageGenerator::new()
+        let image = ChromeRenderDisplayImageGenerator::new(std::env::temp_dir().join("eink_test_chrome"))
             .generate(data, &profile)
             .await
             .unwrap();

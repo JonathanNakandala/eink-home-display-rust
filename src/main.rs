@@ -11,6 +11,7 @@ use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
 use eink_home_display_rust::config::application::ApplicationConfig;
+use eink_home_display_rust::config::cache::CachePaths;
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::departures_service::DeparturesService;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
@@ -52,7 +53,9 @@ async fn main() -> Result<()> {
     log::info!("Settings loaded successfully: {:?}", config);
 
     let location = Location::new(config.location.latitude, config.location.longitude);
-    create_application(&config)?.run(location).await
+    let cache = CachePaths::new(args.cache_dir.unwrap_or_else(|| config.cache.directory.clone()));
+    cache.ensure_exists()?;
+    create_application(&config, &cache)?.run(location).await
 }
 
 fn initialize_logging() {
@@ -66,6 +69,7 @@ fn initialize_logging() {
 
 fn create_application(
     config: &ApplicationConfig,
+    cache: &CachePaths,
 ) -> Result<
     Application<
         impl WeatherService,
@@ -77,7 +81,7 @@ fn create_application(
 > {
     Ok(Application::new(
         setup_weather_service(&config.weather)?,
-        ChromeRenderDisplayImageGenerator::new(),
+        ChromeRenderDisplayImageGenerator::new(cache.chrome()),
         setup_display(&config.display),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
