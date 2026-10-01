@@ -3,3 +3,5 @@ temp/
 /.idea
 *.png
 .DS_Store
+reference/
+config/default.toml

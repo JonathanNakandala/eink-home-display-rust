@@ -58,7 +58,11 @@ where
         )?;
 
         let glance_data = GlanceData::new(weather_information, departures);
-        let image_data = self.display_image_generator.generate(glance_data).await?;
+        let profile = self.image_viewing_service.profile();
+        let image_data = self
+            .display_image_generator
+            .generate(glance_data, &profile)
+            .await?;
         self.image_repository.store(&image_data).await?;
         self.image_viewing_service.display(&image_data).await?;
         Ok(())

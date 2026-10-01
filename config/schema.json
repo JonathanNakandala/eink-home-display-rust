@@ -3,8 +3,8 @@
   "title": "ApplicationConfig",
   "type": "object",
   "required": [
+    "display",
     "file_store",
-    "image",
     "location",
     "weather"
   ],
@@ -17,11 +17,11 @@
         "$ref": "#/definitions/DepartureBoardConfig"
       }
     },
+    "display": {
+      "$ref": "#/definitions/DisplayConfig"
+    },
     "file_store": {
       "$ref": "#/definitions/FileStoreConfig"
-    },
-    "image": {
-      "$ref": "#/definitions/ImageConfig"
     },
     "location": {
       "$ref": "#/definitions/LocationConfig"
@@ -112,6 +112,68 @@
         }
       }
     },
+    "DisplayConfig": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "dither": {
+          "description": "How greys are reduced to the panel's levels.",
+          "default": "None",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Dither"
+            }
+          ]
+        },
+        "kind": {
+          "description": "Which display to render for and drive. Its size and colour depth are fixed by the hardware.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/DisplayKind"
+            }
+          ]
+        }
+      }
+    },
+    "DisplayKind": {
+      "oneOf": [
+        {
+          "description": "Waveshare 7.5\" V2, 800x480 black and white.",
+          "type": "string",
+          "enum": [
+            "WaveshareEpd7in5V2"
+          ]
+        }
+      ]
+    },
+    "Dither": {
+      "description": "How to reduce the rendered image to fewer levels.",
+      "oneOf": [
+        {
+          "description": "Plain threshold: crisp text, harsh on greys.",
+          "type": "string",
+          "enum": [
+            "None"
+          ]
+        },
+        {
+          "description": "Error diffusion: smooth greys, a bit noisy on text.",
+          "type": "string",
+          "enum": [
+            "FloydSteinberg"
+          ]
+        },
+        {
+          "description": "4x4 Bayer matrix: regular pattern, stable between refreshes.",
+          "type": "string",
+          "enum": [
+            "Ordered"
+          ]
+        }
+      ]
+    },
     "FileStoreConfig": {
       "type": "object",
       "required": [
@@ -121,26 +183,6 @@
         "save_directory": {
           "description": "Where rendered images are saved; empty for the working directory.",
           "type": "string"
-        }
-      }
-    },
-    "ImageConfig": {
-      "type": "object",
-      "required": [
-        "height",
-        "width"
-      ],
-      "properties": {
-        "height": {
-          "description": "Display size in pixels.",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "width": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
         }
       }
     },

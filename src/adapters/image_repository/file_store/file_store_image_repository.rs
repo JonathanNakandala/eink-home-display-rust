@@ -11,7 +11,7 @@ pub struct FileStoreImageRepository {
 #[async_trait::async_trait]
 impl ImageRepository for FileStoreImageRepository {
     async fn store(&self, image_data: &ImageData) -> anyhow::Result<()> {
-        let output_path = self.save_dir.join("one_bit_screenshot.png");
+        let output_path = self.save_dir.join("screenshot.png");
 
         let mut file = tokio::fs::File::create(output_path).await?;
         file.write_all(&*image_data.data).await?;

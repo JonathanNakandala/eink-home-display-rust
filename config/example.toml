@@ -47,6 +47,6 @@ longitude = -0.12
 [file_store]
 save_directory = "./output"
 
-[image]
-height = 480
-width = 800
+[display]
+kind = "WaveshareEpd7in5V2"
+dither = "None"
