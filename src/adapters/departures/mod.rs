@@ -57,6 +57,7 @@ fn setup_service(
                     config.api_key.clone(),
                     from.clone(),
                     to.clone(),
+                    board.travel_minutes,
                     reqwest::Client::new(),
                 ),
             ))
@@ -70,6 +71,7 @@ fn setup_service(
             Ok(DeparturesServiceImpl::Tfl(TflDeparturesServiceAdapter::new(
                 TflStopPointServiceAdapter::new(host_url, app_key, reqwest::Client::new()),
                 stop_id.clone(),
+                board.travel_minutes,
             )))
         }
     }

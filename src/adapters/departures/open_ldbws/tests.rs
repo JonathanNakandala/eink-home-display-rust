@@ -54,6 +54,7 @@ async fn returns_parsed_departures_for_station_pair() {
         "apikey".to_owned(),
         "HRN".to_owned(),
         "WGC".to_owned(),
+        0,
         reqwest::Client::new(),
     );
 
@@ -80,4 +81,58 @@ async fn returns_parsed_departures_for_station_pair() {
             String::new(),
         ),
     ]);
+}
+
+#[tokio::test]
+async fn asks_for_the_board_as_it_will_be_after_the_travel_time() {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/GetArrDepBoardWithDetails/HRN")
+            .query_param("timeOffset", "5");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(SAMPLE_RESPONSE);
+    });
+
+    let under_test = OpenLdbwsDeparturesServiceAdapter::new(
+        format!("{}/GetArrDepBoardWithDetails", server.base_url()),
+        "apikey".to_owned(),
+        "HRN".to_owned(),
+        "WGC".to_owned(),
+        5,
+        reqwest::Client::new(),
+    );
+
+    under_test.get_departures(4).await.unwrap();
+
+    mock.assert();
+}
+
+#[tokio::test]
+async fn caps_the_time_offset_at_what_the_api_accepts() {
+    let server = MockServer::start();
+
+    let mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/GetArrDepBoardWithDetails/HRN")
+            .query_param("timeOffset", "119");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(SAMPLE_RESPONSE);
+    });
+
+    let under_test = OpenLdbwsDeparturesServiceAdapter::new(
+        format!("{}/GetArrDepBoardWithDetails", server.base_url()),
+        "apikey".to_owned(),
+        "HRN".to_owned(),
+        "WGC".to_owned(),
+        500,
+        reqwest::Client::new(),
+    );
+
+    under_test.get_departures(4).await.unwrap();
+
+    mock.assert();
 }

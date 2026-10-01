@@ -56,6 +56,14 @@
           "default": 4,
           "maximum": 255,
           "minimum": 0
+        },
+        "travel_minutes": {
+          "description": "Minutes it takes to get to the station or stop. Services leaving sooner than\nthis are left off, since they can't be caught. National Rail boards support up to 119.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 0,
+          "maximum": 65535,
+          "minimum": 0
         }
       },
       "oneOf": [

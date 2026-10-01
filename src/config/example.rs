@@ -21,10 +21,11 @@ const EXAMPLE_HEADER: &str = "#:schema ./schema.json\n\
 
 impl ApplicationConfig {
     pub fn example() -> Self {
-        let board = |name: &str, source| DepartureBoardConfig {
+        let board = |name: &str, travel_minutes, source| DepartureBoardConfig {
             name: name.to_owned(),
             enabled: true,
             rows: 4,
+            travel_minutes,
             source,
         };
         ApplicationConfig {
@@ -39,13 +40,15 @@ impl ApplicationConfig {
             departures: vec![
                 board(
                     "NORTHBOUND",
+                    5,
                     DepartureSource::OpenLdbws { from: "HRN".into(), to: "WIH".into() },
                 ),
                 board(
                     "SOUTHBOUND",
+                    5,
                     DepartureSource::OpenLdbws { from: "HRN".into(), to: "FPK".into() },
                 ),
-                board("TURNPIKE LANE", DepartureSource::Tfl { stop_id: "940GZZLUTPN".into() }),
+                board("TURNPIKE LANE", 15, DepartureSource::Tfl { stop_id: "940GZZLUTPN".into() }),
             ],
             providers: ProvidersConfig {
                 open_ldbws: Some(OpenLdbwsConfig {
