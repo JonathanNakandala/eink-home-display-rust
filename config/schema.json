@@ -3,6 +3,13 @@
   "title": "ApplicationConfig",
   "type": "object",
   "properties": {
+    "cache": {
+      "description": "Re-creatable files kept between runs, such as a downloaded Chrome.",
+      "$ref": "#/$defs/CacheConfig",
+      "default": {
+        "directory": "cache"
+      }
+    },
     "departures": {
       "description": "Departure boards shown on the display, in order. Each picks its own provider.",
       "type": "array",
@@ -36,6 +43,17 @@
     "display"
   ],
   "$defs": {
+    "CacheConfig": {
+      "description": "Where files that can be re-created (a downloaded Chrome, for one) are kept between runs.",
+      "type": "object",
+      "properties": {
+        "directory": {
+          "description": "Relative paths are resolved against the working directory.",
+          "type": "string",
+          "default": "cache"
+        }
+      }
+    },
     "DepartureBoardConfig": {
       "description": "One `[[departures]]` entry: a titled board fed by a single provider.",
       "type": "object",

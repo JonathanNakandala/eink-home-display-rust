@@ -50,6 +50,9 @@ longitude = -0.12
 [file_store]
 save_directory = "./output"
 
+[cache]
+directory = "./cache"
+
 [display]
 kind = "WaveshareEpd7in5V2"
 dither = "None"

@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_valid::Validate;
 
+use crate::config::cache::CacheConfig;
 use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::weather::WeatherConfig;
 use crate::domain::models::display::Dither;
@@ -21,6 +22,9 @@ pub struct ApplicationConfig {
     pub providers: ProvidersConfig,
     pub location: LocationConfig,
     pub file_store: FileStoreConfig,
+    /// Re-creatable files kept between runs, such as a downloaded Chrome.
+    #[serde(default)]
+    pub cache: CacheConfig,
     pub display: DisplayConfig,
 }
 

@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use crate::config::cache::CacheConfig;
 use crate::config::application::{
     ApplicationConfig, DisplayConfig, DisplayKind, FileStoreConfig, LocationConfig,
 };
@@ -63,6 +64,7 @@ impl ApplicationConfig {
             },
             location: LocationConfig { latitude: 51.5, longitude: -0.12 },
             file_store: FileStoreConfig { save_directory: PathBuf::from("./output") },
+            cache: CacheConfig { directory: PathBuf::from("./cache") },
             display: DisplayConfig { kind: DisplayKind::WaveshareEpd7in5V2, dither: Dither::None },
         }
     }

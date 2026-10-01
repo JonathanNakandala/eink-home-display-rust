@@ -7,3 +7,4 @@ reference/
 config/default.toml
 
 /output
+/cache
