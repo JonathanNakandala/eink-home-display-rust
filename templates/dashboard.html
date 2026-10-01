@@ -55,6 +55,26 @@
             border-bottom: 2px solid #000;
         }
 
+        /* Sunrise and sunset sit in the free middle of the header. */
+        .header .sun {
+            align-self: center;
+            display: flex;
+            gap: 2.4vw;
+            font-size: 2.6vw;
+            font-weight: 600;
+        }
+
+        .header .sun span {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6vw;
+        }
+
+        .header .sun svg {
+            width: 3.2vw;
+            height: 3.2vw;
+        }
+
         .header .day {
             font-weight: 600;
             margin-right: 0.25em;
@@ -294,6 +314,16 @@
 <div class="container{{#if weather_information}} has-weather{{/if}}">
     <div class="header">
         <div class="time">{{date.currentTime}}</div>
+        {{#with weather_information.sun}}
+        <div class="sun">
+            <span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2" fill="#000"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>{{sunrise}}
+            </span>
+            <span>
+                <svg viewBox="0 0 24 24" fill="#000"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></svg>{{sunset}}
+            </span>
+        </div>
+        {{/with}}
         <div class="date">
             <span class="day">{{date.currentDay}}</span><span class="date-num">{{date.currentDate}}</span>
         </div>

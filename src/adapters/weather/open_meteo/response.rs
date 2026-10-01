@@ -24,6 +24,11 @@ pub struct OpenMeteoDailyResponse {
     /// Only costs the UV line when absent or null.
     #[serde(default)]
     pub uv_index_max: Vec<Option<f64>>,
+    /// Local time, e.g. "2026-10-01T06:51". Null in polar day or night.
+    #[serde(default)]
+    pub sunrise: Vec<Option<String>>,
+    #[serde(default)]
+    pub sunset: Vec<Option<String>>,
 }
 
 #[derive(Deserialize, Debug)]

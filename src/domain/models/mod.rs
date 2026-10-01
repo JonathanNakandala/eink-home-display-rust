@@ -4,8 +4,8 @@ use serde::Serialize;
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus};
 use crate::domain::models::weather::{
-    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, UvIndex, WeatherCondition,
-    WeatherInformation,
+    PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, SunTimes, UvIndex,
+    WeatherCondition, WeatherInformation,
 };
 
 pub mod air_quality;
@@ -133,6 +133,10 @@ impl GlanceData {
                 WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)
                     .with_precipitation(PrecipitationOutlook::from_slots(&showers, local))
                     .with_uv_index(Some(UvIndex::new(6.0)))
+                    .with_sun(Some(SunTimes::new(
+                        local.date().and_hms_opt(6, 51, 0).unwrap(),
+                        local.date().and_hms_opt(18, 29, 0).unwrap(),
+                    )))
                     .with_air_quality(AirQuality::new(
                         Some(62.0),
                         &[
