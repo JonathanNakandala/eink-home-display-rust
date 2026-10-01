@@ -921,6 +921,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trait-variant",
+ "url",
 ]
 
 [[package]]

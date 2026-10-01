@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use handlebars::Handlebars;
+use url::Url;
 use headless_chrome::protocol::cdp::Emulation::SetDeviceMetricsOverride;
 use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 use headless_chrome::browser::default_executable;
@@ -139,8 +140,8 @@ impl ChromeRenderDisplayImageGenerator {
             device_posture: None,
         })
         .context("Failed to set viewport size")?;
-        let url = format!("file://{}", page.display());
-        tab.navigate_to(&url)?.wait_until_navigated()?;
+        let url = file_url(page)?;
+        tab.navigate_to(url.as_str())?.wait_until_navigated()?;
         // Fonts load after navigation; a screenshot taken before then uses the fallback.
         tab.evaluate("document.fonts.ready.then(() => true)", true)
             .context("Failed to wait for fonts")?;
@@ -152,6 +153,12 @@ impl ChromeRenderDisplayImageGenerator {
 
         Ok(png_data)
     }
+}
+
+/// A `file://` URL for an absolute path, percent-encoding anything (spaces, non-ASCII) that needs it.
+fn file_url(path: &Path) -> anyhow::Result<Url> {
+    Url::from_file_path(path)
+        .map_err(|()| anyhow::anyhow!("{} is not an absolute path", path.display()))
 }
 
 impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
@@ -176,6 +183,18 @@ mod tests {
     use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
 
     use super::*;
+
+    #[test]
+    fn file_urls_encode_characters_that_need_it() {
+        let url = file_url(Path::new("/tmp/my render/dashboard é.html")).unwrap();
+
+        assert_eq!(url.as_str(), "file:///tmp/my%20render/dashboard%20%C3%A9.html");
+    }
+
+    #[test]
+    fn file_urls_need_an_absolute_path() {
+        assert!(file_url(Path::new("dashboard.html")).is_err());
+    }
 
     /// Needs a real Chrome, so run with `--ignored`.
     #[tokio::test]
