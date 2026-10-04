@@ -22,6 +22,8 @@ substitutions:
   fallback_url: "http://e-ink-home-display.local:8080/image"
   # The path the Rust app serves the image at.
   image_path: /image
+  # For the time shown when a download fails.
+  timezone: Europe/London
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
   # Empty takes the first image server found.
   server_name: ""
@@ -37,6 +39,7 @@ esphome:
   friendly_name: ${friendly_name}
   includes:
     - eink_discovery.h
+    - eink_notice.h
   on_boot:
     priority: -100
     then:
@@ -144,6 +147,11 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # Draw the failure notice instead of the picture.
+  - id: show_failure
+    type: bool
+    restore_value: no
+    initial_value: 'false'
 
 script:
   # Downloads from the remembered server, or the fallback URL before one has been found.
@@ -171,15 +179,40 @@ script:
           if (!server.format.empty() && server.format != "${image_format}" && strcasecmp(server.format.c_str(), "${image_format}") != 0)
             ESP_LOGE("eink_discovery", "Server sends %s but this firmware decodes ${image_format}; set both to the same format", server.format.c_str());
 
-  # Nothing worked: leave the picture on the panel (e-paper keeps it) and try next wake.
+  # Nothing worked: the picture stays on the panel (e-paper keeps it) apart from a notice in
+  # the corner saying when it last failed. Tries again at the next wake.
   - id: give_up
     then:
-      - logger.log: "Image download failed, sleeping"
+      - logger.log: "Image download failed, showing notice"
+      # The clock survives deep sleep; this just gives a fresh start a moment to sync.
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - wait_until:
+                condition:
+                  time.has_time:
+                timeout: 8s
+      - lambda: 'id(show_failure) = true;'
+      - component.update: epaper_display
+      - delay: ${refresh_settle}
       - if:
           condition:
             binary_sensor.is_off: maintenance_button
           then:
             - deep_sleep.enter: deep_sleep_1
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: ${timezone}
+
+font:
+  # The dashboard's own font, from the Rust app's templates; only the glyphs the notice needs.
+  - file: ../templates/fonts/Overpass/Overpass-SemiBold.ttf
+    id: notice_font
+    size: 36
+    glyphs: " :@0123456789Laustpdefi"
 
 spi:
   id: epaper_spi_bus
@@ -201,7 +234,14 @@ display:
       mirror_x: true
       mirror_y: false
     lambda: |-
-      it.image(0, 0, id(dashboard));
+      if (id(show_failure)) {
+        // Only this corner is refreshed; the rest of the panel keeps its picture.
+        auto now = id(sntp_time).now();
+        eink_notice::draw(*id(epaper_display), id(notice_font),
+                          now.is_valid() ? now.strftime("Last update failed @ %H:%M") : std::string("Last update failed"));
+      } else {
+        it.image(0, 0, id(dashboard));
+      }
 
 output:
   # Battery measurement enable

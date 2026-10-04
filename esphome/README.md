@@ -73,6 +73,20 @@ finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 The image format can't be found out at run time (`online_image` fixes it at compile time). The
 server announces its format, and the log reports an error if it differs from `image_format`.
 
+### When the download fails
+
+The old picture stays on the panel, with a label in the bottom-right corner:
+`Last update failed @ 14:32` (the time of the failed wake, in `timezone`). The next successful
+download redraws the whole screen and the label goes away.
+
+After deep sleep the device keeps no copy of the picture, so the label is a partial refresh of
+just that corner ([eink_notice.h](eink_notice.h)). The display driver marks the whole screen as
+changed at start-up, so the header clears that mark first; it reaches a protected member of the
+driver to do so. If a future ESPHome renames it, the build fails rather than blanking the panel.
+
+The time comes from the clock, which survives deep sleep. After a power loss with no Wi-Fi the
+clock is unset, and the label reads `Last update failed` with no time.
+
 ## BMP or PNG
 
 `BMP` is the default: an 8-bit greyscale file is about 2.6 MB, and the firmware streams
@@ -90,6 +104,8 @@ matters, render earlier in each period than the device usually wakes.
 
 - The lookup finds the server (`Found '...' at ...` in the log) and the remembered address
   survives deep sleep. Try moving the server to another port to see it recover.
+- Unplug the Rust server and wake the device: the picture stays and the label appears in the
+  bottom-right, the right way round, with nothing else refreshed.
 - The image isn't mirrored (`mirror_x` is copied from Seeed's example).
 - A 1872x1404 GRAYSCALE `online_image` fits in memory alongside the framebuffer.
 - Greys look right with `dithering: false`.
