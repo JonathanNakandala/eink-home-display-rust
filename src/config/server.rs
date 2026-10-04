@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_DIRECTORY: &str = "served";
+const DEFAULT_INSTANCE_NAME: &str = "E-ink home display";
 
 /// The HTTP server that hands the latest rendered image to displays that fetch it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -16,6 +17,20 @@ pub struct ServerConfig {
     /// Where the image to serve is written. Relative paths are resolved against the working directory.
     #[serde(default = "default_directory")]
     pub directory: PathBuf,
+    /// Announce the server over mDNS / DNS-SD so it shows up in a scan of the network.
+    #[serde(default = "default_advertise")]
+    pub advertise: bool,
+    /// The name shown for the service in a scan, at most 63 bytes. The host name `<name>.local` is derived from it.
+    #[serde(default = "default_instance_name")]
+    pub instance_name: String,
+}
+
+fn default_advertise() -> bool {
+    true
+}
+
+fn default_instance_name() -> String {
+    DEFAULT_INSTANCE_NAME.to_owned()
 }
 
 fn default_bind() -> SocketAddr {
@@ -28,6 +43,11 @@ fn default_directory() -> PathBuf {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { bind: default_bind(), directory: default_directory() }
+        Self {
+            bind: default_bind(),
+            directory: default_directory(),
+            advertise: default_advertise(),
+            instance_name: default_instance_name(),
+        }
     }
 }

@@ -36,8 +36,10 @@
       "description": "Serves the rendered image to displays that fetch it, like the reTerminal E1003.",
       "$ref": "#/$defs/ServerConfig",
       "default": {
+        "advertise": true,
         "bind": "0.0.0.0:8080",
-        "directory": "served"
+        "directory": "served",
+        "instance_name": "E-ink home display"
       }
     },
     "weather": {
@@ -325,6 +327,11 @@
       "description": "The HTTP server that hands the latest rendered image to displays that fetch it.",
       "type": "object",
       "properties": {
+        "advertise": {
+          "description": "Announce the server over mDNS / DNS-SD so it shows up in a scan of the network.",
+          "type": "boolean",
+          "default": true
+        },
         "bind": {
           "description": "Address to listen on. The image is served at `/image`, with no authentication, so keep it on the LAN.",
           "type": "string",
@@ -334,6 +341,11 @@
           "description": "Where the image to serve is written. Relative paths are resolved against the working directory.",
           "type": "string",
           "default": "served"
+        },
+        "instance_name": {
+          "description": "The name shown for the service in a scan, at most 63 bytes. The host name `<name>.local` is derived from it.",
+          "type": "string",
+          "default": "E-ink home display"
         }
       }
     },

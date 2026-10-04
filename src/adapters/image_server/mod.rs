@@ -1,6 +1,8 @@
 //! Hands the latest rendered image to displays that fetch it over HTTP.
 //! The display adapter publishes into a directory; this serves what is there.
 
+mod advertise;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,6 +15,7 @@ use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
+use self::advertise::Advertisement;
 use crate::config::server::ServerConfig;
 use crate::domain::models::display::ImageFormat;
 
@@ -78,6 +81,16 @@ pub async fn serve(config: &ServerConfig, format: ImageFormat) -> anyhow::Result
         .await
         .with_context(|| format!("Failed to listen on {}", config.bind))?;
     log::info!("Serving the display image at http://{}/image", config.bind);
+    // Discovery is a convenience, so the server runs without it. Held until serving ends,
+    // which is when the goodbye goes out.
+    let _advertisement = config
+        .advertise
+        .then(|| Advertisement::start(config, listener.local_addr()?.port(), format))
+        .transpose()
+        .unwrap_or_else(|e| {
+            log::warn!("Not advertising over mDNS: {e:#}");
+            None
+        });
     axum::serve(listener, router(config.directory.clone(), format))
         .await
         .context("Image server stopped")
