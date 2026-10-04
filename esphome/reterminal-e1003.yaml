@@ -2,8 +2,11 @@
 # reTerminal E1003 - shows the image served by eink-home-display-rust
 # =============================================================================
 # Each wake: join Wi-Fi, download http://<server>:<port>/image, draw it, deep sleep.
+# The server's address and port are found over mDNS and remembered across sleeps; the
+# download only goes looking again when the remembered one stops working.
 # The server side is `[server]` and `[display]` in the Rust app's config; keep
-# `image_format` below in step with `display.image_format` there.
+# `image_format` below in step with `display.image_format` there (the format can't be
+# changed at run time, so a mismatch is only reported in the log).
 #
 # Requires ESPHome >= 2026.7.0 for the it8951 display platform.
 # Hardware pins are taken from reference/esphome.yaml (Seeed's full example).
@@ -14,8 +17,14 @@
 substitutions:
   device_name: reterminal-e1003
   friendly_name: "reTerminal_E1003"
-  # Where the Rust app serves the image (its [server] bind port; the host's address).
-  image_url: "http://192.168.1.50:8080/image"
+  # The server is found over mDNS, so nothing here needs to change when its address or
+  # port does. Used only until the first successful scan, or if a scan finds nothing:
+  fallback_url: "http://e-ink-home-display.local:8080/image"
+  # The path the Rust app serves the image at.
+  image_path: /image
+  # Pick a server by the name a scan shows (the Rust app's server.instance_name).
+  # Empty takes the first image server found.
+  server_name: ""
   # BMP (8-bit, uncompressed, ~2.6 MB, no decoder needed) or PNG (small, needs inflating).
   image_format: BMP
   # Match the Rust app's refresh schedule, e.g. --cron "*/10 * * * *".
@@ -26,6 +35,8 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  includes:
+    - eink_discovery.h
   on_boot:
     priority: -100
     then:
@@ -42,12 +53,16 @@ esphome:
           condition:
             wifi.connected:
           timeout: 30s
-      - component.update: dashboard
+      - script.execute: fetch_image
 
 esp32:
   board: seeed_xiao_esp32s3
   framework:
     type: esp-idf
+    advanced:
+      # Lets lwIP's resolver look up .local names (ESPHome's own mDNS only advertises).
+      # Some versions default it off to save flash, so set it explicitly.
+      enable_lwip_mdns_queries: true
 
 # OPI PSRAM holds the decoded image and the 16-level framebuffer.
 psram:
@@ -79,7 +94,7 @@ http_request:
 
 online_image:
   - id: dashboard
-    url: ${image_url}
+    url: ${fallback_url}
     format: ${image_format}
     type: GRAYSCALE
     update_interval: never
@@ -94,7 +109,71 @@ online_image:
           then:
             - deep_sleep.enter: deep_sleep_1
     on_error:
-      # Leave whatever is on the panel (e-paper keeps it) and try again next wake.
+      # The remembered server may have moved: look once per wake, then try again.
+      - if:
+          condition:
+            lambda: 'return !id(searched);'
+          then:
+            - script.execute: discover
+            - if:
+                condition:
+                  lambda: 'return id(server_found);'
+                then:
+                  - script.execute: fetch_image
+                else:
+                  - script.execute: give_up
+          else:
+            - script.execute: give_up
+
+globals:
+  # The server found last time. Kept across deep sleep; 0 means none yet.
+  - id: server_ip
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: server_port
+    type: uint16_t
+    restore_value: yes
+    initial_value: '0'
+  # This wake's state.
+  - id: searched
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: server_found
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+script:
+  # Downloads from the remembered server, or the fallback URL before one has been found.
+  - id: fetch_image
+    then:
+      - online_image.set_url:
+          id: dashboard
+          url: !lambda |-
+            if (id(server_ip) == 0 || id(server_port) == 0)
+              return "${fallback_url}";
+            return eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
+      - component.update: dashboard
+
+  # Asks the network where the server is, and remembers the answer.
+  - id: discover
+    then:
+      - lambda: |-
+          id(searched) = true;
+          eink_discovery::Server server;
+          id(server_found) = eink_discovery::find(server, "${server_name}");
+          if (!id(server_found))
+            return;
+          id(server_ip) = server.ip;
+          id(server_port) = server.port;
+          if (!server.format.empty() && server.format != "${image_format}" && strcasecmp(server.format.c_str(), "${image_format}") != 0)
+            ESP_LOGE("eink_discovery", "Server sends %s but this firmware decodes ${image_format}; set both to the same format", server.format.c_str());
+
+  # Nothing worked: leave the picture on the panel (e-paper keeps it) and try next wake.
+  - id: give_up
+    then:
       - logger.log: "Image download failed, sleeping"
       - if:
           condition:
