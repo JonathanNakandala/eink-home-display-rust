@@ -9,6 +9,7 @@ use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
+use eink_home_display_rust::adapters::image_server::serve;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
@@ -65,7 +66,15 @@ async fn main() -> Result<()> {
     };
     // Built once so the Chrome it launches is kept between runs.
     let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source)?;
-    run_periodically(schedule, !args.no_initial_run, shutdown_signal(), || app.run(location)).await
+    let periodic = run_periodically(schedule, !args.no_initial_run, shutdown_signal(), || app.run(location));
+    if !config.display.kind.fetches_image() {
+        return periodic.await;
+    }
+    // The display downloads its image, so serve it for as long as the refresh loop runs.
+    tokio::select! {
+        result = periodic => result,
+        result = serve(&config.server, config.display.image_format) => result,
+    }
 }
 
 fn initialize_logging() {
@@ -94,7 +103,7 @@ fn create_application(
     Ok(Application::new(
         setup_weather_service(&config.weather)?,
         ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source),
-        setup_display(&config.display),
+        setup_display(&config.display, &config.server.directory),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
     ))

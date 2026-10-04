@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_valid::Validate;
 
 use crate::config::cache::CacheConfig;
+use crate::config::server::ServerConfig;
 use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::weather::WeatherConfig;
-use crate::domain::models::display::Dither;
+use crate::domain::models::display::{Dither, ImageFormat};
 
 #[derive(Debug, Serialize, Deserialize, Validate, JsonSchema)]
 pub struct ApplicationConfig {
@@ -26,6 +27,9 @@ pub struct ApplicationConfig {
     #[serde(default)]
     pub cache: CacheConfig,
     pub display: DisplayConfig,
+    /// Serves the rendered image to displays that fetch it, like the reTerminal E1003.
+    #[serde(default)]
+    pub server: ServerConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -48,18 +52,26 @@ pub struct DisplayConfig {
     /// How greys are reduced to the panel's levels.
     #[serde(default)]
     pub dither: Dither,
+    /// File format served to the reTerminal E1003. Ignored by displays that are driven directly.
+    #[serde(default)]
+    pub image_format: ImageFormat,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub enum DisplayKind {
     /// Waveshare 7.5" V2, 800x480 black and white.
     WaveshareEpd7in5V2,
-    /// Seeed reTerminal E1003, 10.3" 1872x1404 with 16 greys. Rendering only for now.
+    /// Seeed reTerminal E1003, 10.3" 1872x1404 with 16 greys. Fetches its image from the `[server]`.
     ReTerminalE1003,
 }
 
 impl DisplayKind {
     pub const ALL: [DisplayKind; 2] = [DisplayKind::WaveshareEpd7in5V2, DisplayKind::ReTerminalE1003];
+
+    /// Whether the display pulls its image over HTTP instead of being driven directly.
+    pub fn fetches_image(self) -> bool {
+        matches!(self, Self::ReTerminalE1003)
+    }
 }
 
 impl ApplicationConfig {

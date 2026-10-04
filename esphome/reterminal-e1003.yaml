@@ -1,0 +1,188 @@
+# =============================================================================
+# reTerminal E1003 - shows the image served by eink-home-display-rust
+# =============================================================================
+# Each wake: join Wi-Fi, download http://<server>:<port>/image, draw it, deep sleep.
+# The server side is `[server]` and `[display]` in the Rust app's config; keep
+# `image_format` below in step with `display.image_format` there.
+#
+# Requires ESPHome >= 2026.7.0 for the it8951 display platform.
+# Hardware pins are taken from reference/esphome.yaml (Seeed's full example).
+#
+# Maintenance: hold the middle button (KEY1) while waking and the device stays
+# awake instead of sleeping, so it can be updated over the air.
+# =============================================================================
+substitutions:
+  device_name: reterminal-e1003
+  friendly_name: "reTerminal_E1003"
+  # Where the Rust app serves the image (its [server] bind port; the host's address).
+  image_url: "http://192.168.1.50:8080/image"
+  # BMP (8-bit, uncompressed, ~2.6 MB, no decoder needed) or PNG (small, needs inflating).
+  image_format: BMP
+  # Match the Rust app's refresh schedule, e.g. --cron "*/10 * * * *".
+  sleep_duration: 10min
+  # How long the panel needs to finish drawing before power is cut.
+  refresh_settle: 15s
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      # Battery measurement circuit
+      - output.turn_on: bsp_battery_enable
+      - delay: 200ms
+      - if:
+          condition:
+            binary_sensor.is_on: maintenance_button
+          then:
+            - logger.log: "Maintenance mode: staying awake"
+            - deep_sleep.prevent: deep_sleep_1
+      - wait_until:
+          condition:
+            wifi.connected:
+          timeout: 30s
+      - component.update: dashboard
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+
+# OPI PSRAM holds the decoded image and the 16-level framebuffer.
+psram:
+  mode: octal
+
+# The CH340K USB bridge is on UART0, not the default USB_CDC.
+logger:
+  hardware_uart: UART0
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # A fixed address makes the connection quicker, which is battery life.
+  # manual_ip:
+  #   static_ip: 192.168.1.60
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+  # Skip scanning for the strongest access point; use the first match.
+  fast_connect: true
+
+http_request:
+  # Plain HTTP on the LAN; TLS would cost a lot of RAM for nothing.
+  timeout: 20s
+  watchdog_timeout: 40s
+
+online_image:
+  - id: dashboard
+    url: ${image_url}
+    format: ${image_format}
+    type: GRAYSCALE
+    update_interval: never
+    # The panel is 1872x1404 and the image is rendered at that size, so no resize.
+    on_download_finished:
+      - logger.log: "Image downloaded, drawing"
+      - component.update: epaper_display
+      - delay: ${refresh_settle}
+      - if:
+          condition:
+            binary_sensor.is_off: maintenance_button
+          then:
+            - deep_sleep.enter: deep_sleep_1
+    on_error:
+      # Leave whatever is on the panel (e-paper keeps it) and try again next wake.
+      - logger.log: "Image download failed, sleeping"
+      - if:
+          condition:
+            binary_sensor.is_off: maintenance_button
+          then:
+            - deep_sleep.enter: deep_sleep_1
+
+spi:
+  id: epaper_spi_bus
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+  miso_pin: GPIO8
+
+display:
+  - platform: it8951
+    id: epaper_display
+    spi_id: epaper_spi_bus
+    model: seeed-reterminal-e1003
+    update_interval: never
+    grayscale: true
+    # The Rust app already reduced the image to 16 greys (display.dither there).
+    dithering: false
+    update_mode: GC16
+    transform:
+      mirror_x: true
+      mirror_y: false
+    lambda: |-
+      it.image(0, 0, id(dashboard));
+
+output:
+  # Battery measurement enable
+  - platform: gpio
+    pin: GPIO40
+    id: bsp_battery_enable
+
+sensor:
+  - platform: adc
+    pin: GPIO1
+    id: battery_voltage
+    name: "Battery Voltage"
+    attenuation: 12db
+    update_interval: 60s
+    filters:
+      # Onboard 1:2 voltage divider
+      - multiply: 2.0
+  - platform: template
+    id: battery_level
+    name: "Battery Level"
+    unit_of_measurement: "%"
+    device_class: battery
+    lambda: 'return id(battery_voltage).state;'
+    update_interval: 60s
+    filters:
+      - calibrate_linear:
+          - 4.15 -> 100.0
+          - 3.96 -> 90.0
+          - 3.91 -> 80.0
+          - 3.85 -> 70.0
+          - 3.80 -> 60.0
+          - 3.75 -> 50.0
+          - 3.68 -> 40.0
+          - 3.58 -> 30.0
+          - 3.49 -> 20.0
+          - 3.41 -> 10.0
+          - 3.30 -> 5.0
+          - 3.27 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+binary_sensor:
+  # KEY1, the middle button: held at wake to stay awake for updates.
+  - platform: gpio
+    pin:
+      number: GPIO4
+      mode: INPUT
+      inverted: true
+    id: maintenance_button
+    internal: true
+
+deep_sleep:
+  id: deep_sleep_1
+  # Safety net if the download or draw hangs; the normal exit is deep_sleep.enter above.
+  run_duration: 120s
+  sleep_duration: ${sleep_duration}
+  # KEY0, the right green button, wakes it early for an immediate refresh.
+  esp32_ext1_wakeup:
+    pins:
+      - number: GPIO3
+        mode: INPUT_PULLUP
+    mode: ANY_LOW

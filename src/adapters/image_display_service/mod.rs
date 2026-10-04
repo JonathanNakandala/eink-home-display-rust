@@ -2,6 +2,8 @@ pub mod eink_waveshare;
 pub mod quantise;
 pub mod reterminal_e1003;
 
+use std::path::Path;
+
 use async_trait::async_trait;
 
 use crate::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
@@ -33,11 +35,16 @@ impl ImageDisplayService for DisplayImpl {
     }
 }
 
-pub fn setup_display(config: &DisplayConfig) -> DisplayImpl {
+/// `publish_directory` is where displays that fetch their image have it written.
+pub fn setup_display(config: &DisplayConfig, publish_directory: &Path) -> DisplayImpl {
     match config.kind {
         DisplayKind::WaveshareEpd7in5V2 => {
             DisplayImpl::WaveshareEpd7in5V2(EinkWaveshareAdapter::new(config.dither))
         }
-        DisplayKind::ReTerminalE1003 => DisplayImpl::ReTerminalE1003(ReTerminalE1003Adapter::new()),
+        DisplayKind::ReTerminalE1003 => DisplayImpl::ReTerminalE1003(ReTerminalE1003Adapter::new(
+            config.dither,
+            config.image_format,
+            publish_directory.to_path_buf(),
+        )),
     }
 }
