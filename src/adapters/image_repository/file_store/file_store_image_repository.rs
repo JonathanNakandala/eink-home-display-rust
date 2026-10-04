@@ -24,6 +24,7 @@ impl ImageRepository for FileStoreImageRepository {
             .await
             .with_context(|| format!("Failed to create {}", output_path.display()))?;
         file.write_all(&image_data.data).await?;
+        file.flush().await?;
 
         Ok(())
     }
