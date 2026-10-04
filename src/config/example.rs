@@ -12,7 +12,8 @@ use crate::config::departures::{
     DepartureBoardConfig, DepartureSource, OpenLdbwsConfig, ProvidersConfig, TflConfig,
     DEFAULT_TFL_HOST_URL,
 };
-use crate::domain::models::display::Dither;
+use crate::config::server::ServerConfig;
+use crate::domain::models::display::{Dither, ImageFormat};
 use crate::config::weather::{OpenWeatherConfig, WeatherConfig, WeatherProvider};
 
 /// Header so editors with TOML schema support (taplo / "Even Better TOML")
@@ -65,7 +66,12 @@ impl ApplicationConfig {
             location: LocationConfig { latitude: 51.5, longitude: -0.12 },
             file_store: FileStoreConfig { save_directory: PathBuf::from("./output") },
             cache: CacheConfig { directory: PathBuf::from("./cache") },
-            display: DisplayConfig { kind: DisplayKind::WaveshareEpd7in5V2, dither: Dither::None },
+            display: DisplayConfig {
+                kind: DisplayKind::WaveshareEpd7in5V2,
+                dither: Dither::None,
+                image_format: ImageFormat::Bmp,
+            },
+            server: ServerConfig::default(),
         }
     }
 

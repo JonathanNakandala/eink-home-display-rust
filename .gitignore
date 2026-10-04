@@ -8,3 +8,7 @@ config/default.toml
 
 /output
 /cache
+
+# ESPHome
+/esphome/secrets.yaml
+/esphome/.esphome

@@ -1,3 +1,4 @@
+use std::path::Path;
 use anyhow::{Context, Result};
 use clap::Parser;
 use image::GrayImage;
@@ -70,7 +71,7 @@ async fn main() -> Result<()> {
 
     for kind in kinds {
         let name = file_name(kind);
-        let profile = setup_display(&DisplayConfig { kind, dither }).profile();
+        let profile = setup_display(&DisplayConfig { kind, dither, image_format: Default::default() }, Path::new("")).profile();
         log::info!("Rendering for {name} ({}x{}, {:?})", profile.width, profile.height, profile.palette);
 
         if args.html {

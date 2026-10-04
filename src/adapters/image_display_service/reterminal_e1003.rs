@@ -1,21 +1,116 @@
-use async_trait::async_trait;
+use std::io::Cursor;
+use std::path::PathBuf;
 
-use crate::domain::models::display::{DisplayProfile, Palette};
+use anyhow::{bail, Context};
+use async_trait::async_trait;
+use image::codecs::bmp::BmpEncoder;
+use image::codecs::png::PngEncoder;
+use image::{ExtendedColorType, ImageEncoder};
+
+use crate::adapters::image_display_service::quantise::quantise_grey;
+use crate::adapters::image_server::publish;
+use crate::domain::models::display::{Dither, DisplayProfile, ImageFormat, Palette};
 use crate::domain::models::image::ImageData;
 use crate::domain::services::image_display_service::ImageDisplayService;
 
-/// Seeed reTerminal E1003: 1872x1404, 16 greys. Only the size and colour depth
-/// are known so far, enough to render for it; sending to the device is not built yet.
+const WIDTH: u32 = 1872;
+const HEIGHT: u32 = 1404;
+const GREY_LEVELS: u8 = 16;
+
+/// Seeed reTerminal E1003: 1872x1404, 16 greys. It can't be driven from here, so the
+/// image is published for the device to download (see `adapters::image_server`)
+/// when it wakes.
 #[derive(derive_new::new)]
-pub struct ReTerminalE1003Adapter {}
+pub struct ReTerminalE1003Adapter {
+    dither: Dither,
+    format: ImageFormat,
+    publish_directory: PathBuf,
+}
 
 #[async_trait]
 impl ImageDisplayService for ReTerminalE1003Adapter {
     fn profile(&self) -> DisplayProfile {
-        DisplayProfile { width: 1872, height: 1404, palette: Palette::Grey(16) }
+        DisplayProfile { width: WIDTH, height: HEIGHT, palette: Palette::Grey(GREY_LEVELS) }
     }
 
-    async fn display(&self, _data: &ImageData) -> anyhow::Result<()> {
-        anyhow::bail!("Showing images on the reTerminal E1003 is not implemented yet")
+    async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
+        let encoded = data.data.clone();
+        let (dither, format) = (self.dither, self.format);
+        // Dithering a 2.6 megapixel image is too much work to do on the async threads.
+        let bytes = tokio::task::spawn_blocking(move || encode_for_panel(&encoded, dither, format)).await??;
+        publish(&self.publish_directory, format, &bytes).await
+    }
+}
+
+/// Decodes the rendered image and re-encodes it as 8-bit greyscale holding only the
+/// panel's 16 levels, so what the device draws matches what was previewed.
+fn encode_for_panel(encoded: &[u8], dither: Dither, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
+    let image = image::load_from_memory(encoded).context("Failed to decode display image")?;
+    if (image.width(), image.height()) != (WIDTH, HEIGHT) {
+        bail!("Image is {}x{}, but the panel is {WIDTH}x{HEIGHT}", image.width(), image.height());
+    }
+    let grey = quantise_grey(&image.to_luma8(), GREY_LEVELS, dither);
+
+    let mut out = Cursor::new(Vec::new());
+    match format {
+        ImageFormat::Bmp => BmpEncoder::new(&mut out).encode(grey.as_raw(), WIDTH, HEIGHT, ExtendedColorType::L8),
+        ImageFormat::Png => PngEncoder::new(&mut out).write_image(grey.as_raw(), WIDTH, HEIGHT, ExtendedColorType::L8),
+    }
+    .context("Failed to encode the display image")?;
+    Ok(out.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use image::{GrayImage, Luma};
+
+    use super::*;
+
+    fn rendered() -> Vec<u8> {
+        let img = GrayImage::from_fn(WIDTH, HEIGHT, |x, _| Luma([(x * 255 / WIDTH) as u8]));
+        let mut out = Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn both_formats_decode_back_to_sixteen_levels() {
+        for format in [ImageFormat::Bmp, ImageFormat::Png] {
+            let bytes = encode_for_panel(&rendered(), Dither::None, format).unwrap();
+            let decoded = image::load_from_memory(&bytes).unwrap().to_luma8();
+
+            assert_eq!(decoded.dimensions(), (WIDTH, HEIGHT));
+            let mut levels: Vec<u8> = decoded.pixels().map(|p| p[0]).collect();
+            levels.sort_unstable();
+            levels.dedup();
+            assert_eq!(levels.len(), GREY_LEVELS as usize, "{format:?}");
+            assert!(levels.iter().all(|l| l % 17 == 0), "{format:?}: {levels:?}");
+        }
+    }
+
+    #[test]
+    fn png_is_far_smaller_than_bmp() {
+        let bmp = encode_for_panel(&rendered(), Dither::None, ImageFormat::Bmp).unwrap();
+        let png = encode_for_panel(&rendered(), Dither::None, ImageFormat::Png).unwrap();
+        assert!(png.len() * 10 < bmp.len(), "png {} bmp {}", png.len(), bmp.len());
+    }
+
+    #[test]
+    fn rejects_an_image_of_the_wrong_size() {
+        let img = GrayImage::new(10, 10);
+        let mut out = Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        assert!(encode_for_panel(&out.into_inner(), Dither::None, ImageFormat::Bmp).is_err());
+    }
+
+    #[tokio::test]
+    async fn display_publishes_into_the_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let adapter = ReTerminalE1003Adapter::new(Dither::None, ImageFormat::Png, tmp.path().join("out"));
+
+        adapter.display(&ImageData::new(rendered())).await.unwrap();
+
+        let published = std::fs::read(tmp.path().join("out").join("image.png")).unwrap();
+        assert_eq!(image::load_from_memory(&published).unwrap().width(), WIDTH);
     }
 }

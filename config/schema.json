@@ -32,6 +32,14 @@
       "$ref": "#/$defs/ProvidersConfig",
       "default": {}
     },
+    "server": {
+      "description": "Serves the rendered image to displays that fetch it, like the reTerminal E1003.",
+      "$ref": "#/$defs/ServerConfig",
+      "default": {
+        "bind": "0.0.0.0:8080",
+        "directory": "served"
+      }
+    },
     "weather": {
       "$ref": "#/$defs/WeatherConfig"
     }
@@ -139,6 +147,11 @@
           "$ref": "#/$defs/Dither",
           "default": "None"
         },
+        "image_format": {
+          "description": "File format served to the reTerminal E1003. Ignored by displays that are driven directly.",
+          "$ref": "#/$defs/ImageFormat",
+          "default": "Bmp"
+        },
         "kind": {
           "description": "Which display to render for and drive. Its size and colour depth are fixed by the hardware.",
           "$ref": "#/$defs/DisplayKind"
@@ -156,7 +169,7 @@
           "const": "WaveshareEpd7in5V2"
         },
         {
-          "description": "Seeed reTerminal E1003, 10.3\" 1872x1404 with 16 greys. Rendering only for now.",
+          "description": "Seeed reTerminal E1003, 10.3\" 1872x1404 with 16 greys. Fetches its image from the `[server]`.",
           "type": "string",
           "const": "ReTerminalE1003"
         }
@@ -192,6 +205,21 @@
       },
       "required": [
         "save_directory"
+      ]
+    },
+    "ImageFormat": {
+      "description": "The file format the reTerminal E1003 downloads.",
+      "oneOf": [
+        {
+          "description": "8-bit greyscale, uncompressed (about 2.6 MB). The firmware needs no decoder for it.",
+          "type": "string",
+          "const": "Bmp"
+        },
+        {
+          "description": "8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.",
+          "type": "string",
+          "const": "Png"
+        }
       ]
     },
     "LocationConfig": {
@@ -290,6 +318,22 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "ServerConfig": {
+      "description": "The HTTP server that hands the latest rendered image to displays that fetch it.",
+      "type": "object",
+      "properties": {
+        "bind": {
+          "description": "Address to listen on. The image is served at `/image`, with no authentication, so keep it on the LAN.",
+          "type": "string",
+          "default": "0.0.0.0:8080"
+        },
+        "directory": {
+          "description": "Where the image to serve is written. Relative paths are resolved against the working directory.",
+          "type": "string",
+          "default": "served"
         }
       }
     },

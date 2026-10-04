@@ -34,3 +34,29 @@ pub enum Dither {
     /// 4x4 Bayer matrix: regular pattern, stable between refreshes.
     Ordered,
 }
+
+/// The file format the reTerminal E1003 downloads.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ImageFormat {
+    /// 8-bit greyscale, uncompressed (about 2.6 MB). The firmware needs no decoder for it.
+    #[default]
+    Bmp,
+    /// 8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.
+    Png,
+}
+
+impl ImageFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Bmp => "bmp",
+            Self::Png => "png",
+        }
+    }
+
+    pub fn content_type(self) -> &'static str {
+        match self {
+            Self::Bmp => "image/bmp",
+            Self::Png => "image/png",
+        }
+    }
+}
