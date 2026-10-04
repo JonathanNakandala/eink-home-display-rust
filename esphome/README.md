@@ -19,12 +19,31 @@ image_format = "Bmp"        # or "Png"; must match image_format in the yaml
 [server]
 bind = "0.0.0.0:8080"
 directory = "served"
+advertise = true                       # announce over mDNS, so a scan finds it
+instance_name = "E-ink home display"   # the name a scan shows; the host name is e-ink-home-display.local
 ```
 
 Run it with a schedule, since the server only runs in that mode:
 `cargo run --release --bin eink-home-display-rust -- -c config/default.toml --cron "*/10 * * * *"`
 
 Check it with `curl -o /dev/null -w '%{size_download}\n' http://<host>:8080/image`.
+
+## Finding the server
+
+The server announces itself over mDNS / DNS-SD as an ordinary `_http._tcp` service, with the
+subtype `_eink-display` and the TXT keys `path=/image`, `format` and `version`. Any scan sees it:
+
+```
+dns-sd -B _http._tcp,_eink-display local.          # macOS: just this server
+dns-sd -L "E-ink home display" _http._tcp local.   # its host, port and TXT record
+avahi-browse -rt _http._tcp                        # Linux
+```
+
+Phone apps such as Discovery or Bonjour Browser list it too. The line saying
+`can be reached at <host>.local.:<port>` gives the `image_url` to use. On the LAN that is
+`http://e-ink-home-display.local:8080/image`, provided the device can resolve `.local` names;
+if not, use the IP address. The announcement is withdrawn when the app stops. Two servers on
+one network need different `instance_name`s (a clash is resolved by adding a number).
 
 ## Device side
 

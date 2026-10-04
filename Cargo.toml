@@ -34,6 +34,7 @@ schemars = "1"
 toml = "1"
 croner = "4.0.0"
 humantime = "2.4.0"
+mdns-sd = "0.21.4"
 
 [dev-dependencies]
 httpmock = "0.8"
