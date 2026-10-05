@@ -375,7 +375,7 @@
                 <span class="countdown">{{this.countdown}}</span>
             </div>
             {{else}}
-            <div class="row none">{{#if this.unavailable}}Unavailable{{else}}No scheduled services{{/if}}</div>
+            <div class="row none">{{#if this.unavailable}}Unavailable{{#if this.reason}}: {{this.reason}}{{/if}}{{else}}No scheduled services{{/if}}</div>
             {{/each}}
         </section>
         {{/each}}
@@ -383,7 +383,7 @@
     {{/if}}
 
     {{#if weather_unavailable}}
-    <div class="weather"><div class="unavailable">Weather unavailable</div></div>
+    <div class="weather"><div class="unavailable">Weather unavailable{{#if weather_reason}}: {{weather_reason}}{{/if}}</div></div>
     {{/if}}
 
     {{#if weather_information}}

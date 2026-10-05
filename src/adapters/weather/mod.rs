@@ -7,6 +7,8 @@ use crate::adapters::weather::open_meteo::open_meteo_weather_service::OpenMeteoW
 use crate::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
 use anyhow::bail;
 
+use crate::domain::models::source_error::SourceError;
+
 use crate::config::weather::{WeatherConfig, WeatherProvider, DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL, DEFAULT_OPEN_METEO_HOST_URL};
 use crate::domain::models::location::Location;
 use crate::domain::models::weather::WeatherInformation;
@@ -22,7 +24,7 @@ impl WeatherService for WeatherServiceImpl {
     async fn get_weather_for_location(
         &self,
         location: Location,
-    ) -> anyhow::Result<Option<WeatherInformation>> {
+    ) -> Result<Option<WeatherInformation>, SourceError> {
         match self {
             WeatherServiceImpl::OpenWeather(service) => {
                 service.get_weather_for_location(location).await

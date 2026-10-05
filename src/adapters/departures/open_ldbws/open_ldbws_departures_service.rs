@@ -1,8 +1,8 @@
-use anyhow::Context;
 use chrono::{DateTime, Local};
 use reqwest::Client;
 
 use crate::adapters::http;
+use crate::domain::models::source_error::SourceError;
 use crate::adapters::departures::open_ldbws::response::{Service, StationBoard};
 use crate::domain::models::departures::{
     countdown, seconds_until, DepartureService, DepartureStatus, Departures,
@@ -33,7 +33,7 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
         &self,
         num_rows: u8,
         now: DateTime<Local>,
-    ) -> anyhow::Result<Departures> {
+    ) -> Result<Departures, SourceError> {
         let url = format!("{}/{}", self.host_url, self.from);
 
         let mut query = vec![
@@ -46,14 +46,9 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
             query.push(("timeOffset", self.travel_minutes.min(MAX_TIME_OFFSET).to_string()));
         }
 
-        let response = http::send(self.client.get(&url).header("x-apikey", &self.api_key).query(&query))
-            .await
-            .context("National Rail departure board request failed")?;
-
-        let station_board: StationBoard = response
-            .json()
-            .await
-            .context("Failed to parse departure board response")?;
+        let response =
+            http::send(self.client.get(&url).header("x-apikey", &self.api_key).query(&query)).await?;
+        let station_board: StationBoard = http::json(response, "departure board").await?;
 
         let services = station_board.train_services.unwrap_or_default();
 

@@ -3,8 +3,10 @@
 
 use std::time::Duration;
 
-use anyhow::Context;
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use serde::de::DeserializeOwned;
+
+use crate::domain::models::source_error::SourceError;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// For the whole request, including reading the body.
@@ -32,42 +34,67 @@ fn client_with_timeouts(connect: Duration, request: Duration) -> Client {
         .expect("an HTTP client with only timeouts set builds")
 }
 
-/// Sends the request, retrying on a timeout, a connection error, or a 408, 429 or 5xx answer.
-/// Any other failing status (a bad key, a wrong URL) is not retried. Returns the response only if
-/// its status is a success. Errors have the query string removed, since that is where keys go.
-pub async fn send(request: RequestBuilder) -> anyhow::Result<Response> {
+/// Sends the request, retrying on a transient failure (see `SourceError::is_transient`): a timeout,
+/// a connection error, a 408, 429 or 5xx answer. Any other failing status (a bad key, a wrong URL)
+/// is not retried. Returns the response only if its status is a success. Errors have the query string
+/// removed, since that is where keys go.
+pub async fn send(request: RequestBuilder) -> Result<Response, SourceError> {
     send_with(request, DEFAULT_RETRY).await
 }
 
-pub async fn send_with(request: RequestBuilder, policy: RetryPolicy) -> anyhow::Result<Response> {
+pub async fn send_with(request: RequestBuilder, policy: RetryPolicy) -> Result<Response, SourceError> {
     let mut attempt = 0;
     loop {
-        let this_try = request.try_clone().context("A request with a streaming body can't be retried")?;
-        let outcome = this_try.send().await.and_then(Response::error_for_status);
-        let error = match outcome {
+        // Every request made here is a plain GET, which can always be copied.
+        let this_try = request.try_clone().expect("provider requests have no streaming body");
+        let error = match this_try.send().await.and_then(Response::error_for_status) {
             Ok(response) => return Ok(response),
-            Err(error) => error,
+            Err(error) => classify(error),
         };
-        if attempt >= policy.retries || !is_transient(&error) {
-            return Err(strip_query(error).into());
+        if attempt >= policy.retries || !error.is_transient() {
+            return Err(error);
         }
         let wait = policy.backoff * 2u32.pow(attempt);
         attempt += 1;
-        log::warn!("Request failed ({}), retrying in {wait:?} ({attempt}/{})", strip_query(error), policy.retries);
+        log::warn!("Request failed ({error}), retrying in {wait:?} ({attempt}/{})", policy.retries);
         tokio::time::sleep(wait).await;
     }
 }
 
-fn is_transient(error: &reqwest::Error) -> bool {
-    if error.is_timeout() || error.is_connect() {
-        return true;
+/// Reads the body of a successful response as JSON. `what` names it for the error, e.g. "forecast".
+pub async fn json<T: DeserializeOwned>(response: Response, what: &str) -> Result<T, SourceError> {
+    response.json().await.map_err(|error| {
+        if error.is_decode() {
+            SourceError::bad_response_from(format!("could not read the {what}"), strip_query(error))
+        } else {
+            classify(error)
+        }
+    })
+}
+
+fn classify(error: reqwest::Error) -> SourceError {
+    let error = strip_query(error);
+    if error.is_timeout() {
+        return SourceError::Timeout;
     }
-    matches!(
-        error.status(),
-        Some(status) if status.is_server_error()
-            || status == StatusCode::TOO_MANY_REQUESTS
-            || status == StatusCode::REQUEST_TIMEOUT
-    )
+    if let Some(status) = error.status() {
+        return from_status(status);
+    }
+    if error.is_decode() {
+        return SourceError::bad_response_from("could not read the response", error);
+    }
+    SourceError::Unreachable(Box::new(error))
+}
+
+fn from_status(status: StatusCode) -> SourceError {
+    let code = status.as_u16();
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => SourceError::Unauthorized { status: code },
+        StatusCode::TOO_MANY_REQUESTS => SourceError::RateLimited,
+        StatusCode::REQUEST_TIMEOUT => SourceError::Timeout,
+        _ if status.is_server_error() => SourceError::Upstream { status: code },
+        _ => SourceError::Rejected { status: code },
+    }
 }
 
 fn strip_query(mut error: reqwest::Error) -> reqwest::Error {
@@ -124,15 +151,16 @@ mod tests {
         let (url, hits) = server(vec![500]).await;
         let error = send_with(Client::new().get(&url), FAST).await.unwrap_err();
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        let message = format!("{error:#}");
-        assert!(message.contains("500"), "{message}");
-        assert!(!message.contains("secret"), "{message}");
+        assert!(matches!(error, SourceError::Upstream { status: 500 }), "{error:?}");
+        assert!(!format!("{error:?}").contains("secret"), "{error:?}");
     }
 
     #[tokio::test]
     async fn a_client_error_is_not_retried() {
         let (url, hits) = server(vec![401]).await;
-        assert!(send_with(Client::new().get(&url), FAST).await.is_err());
+        let error = send_with(Client::new().get(&url), FAST).await.unwrap_err();
+        assert!(matches!(error, SourceError::Unauthorized { status: 401 }), "{error:?}");
+        assert!(error.needs_attention());
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
@@ -156,7 +184,7 @@ mod tests {
 
         assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
         assert_eq!(accepted.load(Ordering::SeqCst), 3);
-        assert!(format!("{error:#}").to_lowercase().contains("timed out"), "{error:#}");
+        assert!(matches!(error, SourceError::Timeout), "{error:?}");
     }
 
     #[tokio::test]
@@ -165,8 +193,35 @@ mod tests {
         let address = listener.local_addr().unwrap();
         drop(listener);
         let started = std::time::Instant::now();
-        assert!(send_with(Client::new().get(format!("http://{address}/")), FAST).await.is_err());
+        let error = send_with(Client::new().get(format!("http://{address}/")), FAST).await.unwrap_err();
+        assert!(matches!(error, SourceError::Unreachable(_)), "{error:?}");
         // Two backoffs of 5ms and 10ms happened.
         assert!(started.elapsed() >= Duration::from_millis(15));
+    }
+
+    #[tokio::test]
+    async fn statuses_are_classified_by_what_a_caller_can_do_about_them() {
+        for (status, retried, expected) in [
+            (403, false, "key rejected"),
+            (404, false, "request rejected"),
+            (429, true, "rate limited"),
+            (502, true, "service error"),
+        ] {
+            let (url, hits) = server(vec![status]).await;
+            let error = send_with(Client::new().get(&url), FAST).await.unwrap_err();
+            assert_eq!(error.reason(), expected, "{status}");
+            assert_eq!(hits.load(Ordering::SeqCst), if retried { 3 } else { 1 }, "{status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_that_is_not_the_expected_json_is_a_bad_response_and_is_not_retried() {
+        let (url, hits) = server(vec![200]).await; // answers "body", which isn't JSON
+        let response = send_with(Client::new().get(&url), FAST).await.unwrap();
+        let error = json::<serde_json::Value>(response, "forecast").await.unwrap_err();
+        assert!(matches!(error, SourceError::BadResponse { .. }), "{error:?}");
+        assert!(error.to_string().contains("could not read the forecast"), "{error}");
+        assert!(!error.is_transient());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 }

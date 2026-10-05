@@ -1,8 +1,8 @@
-use anyhow::Context;
 use chrono::{Duration, NaiveDateTime, Utc};
 use reqwest::Client;
 
 use crate::adapters::http;
+use crate::domain::models::source_error::SourceError;
 use crate::adapters::weather::open_meteo::response::{
     OpenMeteoAirQualityResponse, OpenMeteoDailyResponse, OpenMeteoMinutelyResponse, OpenMeteoResponse,
 };
@@ -32,7 +32,7 @@ impl WeatherService for OpenMeteoWeatherServiceAdapter {
     async fn get_weather_for_location(
         &self,
         location: Location,
-    ) -> anyhow::Result<Option<WeatherInformation>> {
+    ) -> Result<Option<WeatherInformation>, SourceError> {
         let (forecast, air_quality) = tokio::join!(
             self.get_forecast(&location),
             self.get_air_quality(&location)
@@ -50,7 +50,7 @@ impl OpenMeteoWeatherServiceAdapter {
     async fn get_air_quality(
         &self,
         location: &Location,
-    ) -> anyhow::Result<(Option<AirQuality>, Option<Pollen>)> {
+    ) -> Result<(Option<AirQuality>, Option<Pollen>), SourceError> {
         let mut variables = "european_aqi,european_aqi_pm2_5,european_aqi_pm10,\
                              european_aqi_nitrogen_dioxide,european_aqi_ozone,european_aqi_sulphur_dioxide"
             .to_owned();
@@ -59,7 +59,7 @@ impl OpenMeteoWeatherServiceAdapter {
                 ",alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen",
             );
         }
-        let body: OpenMeteoAirQualityResponse = http::send(
+        let response = http::send(
             self.client
                 .get(format!("{}/v1/air-quality", self.air_quality_host_url))
                 .query(&[
@@ -68,11 +68,8 @@ impl OpenMeteoWeatherServiceAdapter {
                     ("current", variables),
                 ]),
         )
-        .await
-        .context("Failed to fetch air quality data")?
-        .json()
-            .await
-            .context("Failed to parse air quality data")?;
+        .await?;
+        let body: OpenMeteoAirQualityResponse = http::json(response, "air quality data").await?;
         log::debug!("Air quality response body: {:#?}", &body);
 
         let current = body.current;
@@ -99,7 +96,7 @@ impl OpenMeteoWeatherServiceAdapter {
         Ok((air_quality, pollen.flatten()))
     }
 
-    async fn get_forecast(&self, location: &Location) -> anyhow::Result<Option<WeatherInformation>> {
+    async fn get_forecast(&self, location: &Location) -> Result<Option<WeatherInformation>, SourceError> {
         let response = http::send(
             self.client
                 .get(format!("{}/v1/forecast", self.host_url))
@@ -114,24 +111,20 @@ impl OpenMeteoWeatherServiceAdapter {
                 ("timezone", "auto".to_owned()),
             ]),
         )
-        .await
-        .context("Failed to fetch weather data")?;
-        let body: OpenMeteoResponse = response
-            .json()
-            .await
-            .context("Failed to parse weather data")?;
+        .await?;
+        let body: OpenMeteoResponse = http::json(response, "forecast").await?;
         log::debug!("Response body: {:#?}", &body);
 
         let max = body
             .daily
             .temperature_2m_max
             .first()
-            .context("Weather response had no daily maximum")?;
+            .ok_or_else(|| SourceError::bad_response("the forecast has no daily maximum"))?;
         let min = body
             .daily
             .temperature_2m_min
             .first()
-            .context("Weather response had no daily minimum")?;
+            .ok_or_else(|| SourceError::bad_response("the forecast has no daily minimum"))?;
         // Slot times are local to the location, so compare against its local time.
         let now = Utc::now().naive_utc() + Duration::seconds(body.utc_offset_seconds);
         let precipitation =

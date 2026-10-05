@@ -11,6 +11,7 @@ use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServi
 use crate::application::DepartureBoard;
 use crate::config::departures::{DepartureBoardConfig, DEFAULT_TFL_HOST_URL, DepartureSource, ProvidersConfig};
 use crate::domain::models::departures::Departures;
+use crate::domain::models::source_error::SourceError;
 use crate::domain::services::departures_service::DeparturesService;
 
 pub enum DeparturesServiceImpl {
@@ -23,7 +24,7 @@ impl DeparturesService for DeparturesServiceImpl {
         &self,
         num_rows: u8,
         now: DateTime<Local>,
-    ) -> anyhow::Result<Departures> {
+    ) -> Result<Departures, SourceError> {
         match self {
             DeparturesServiceImpl::OpenLdbws(service) => service.get_departures(num_rows, now).await,
             DeparturesServiceImpl::Tfl(service) => service.get_departures(num_rows, now).await,

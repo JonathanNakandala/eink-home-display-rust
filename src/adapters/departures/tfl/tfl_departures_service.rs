@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Local};
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::domain::models::arrival::Arrival;
 use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus, Departures};
+use crate::domain::models::source_error::SourceError;
 use crate::domain::services::arrivals_service::ArrivalsService;
 use crate::domain::services::departures_service::DeparturesService;
 
@@ -22,7 +23,7 @@ impl DeparturesService for TflDeparturesServiceAdapter {
         &self,
         num_rows: u8,
         now: DateTime<Local>,
-    ) -> anyhow::Result<Departures> {
+    ) -> Result<Departures, SourceError> {
         let arrivals = self.arrivals.get_arrivals(&self.stop_id).await?;
         let show_line = serves_several_lines(&arrivals);
         let station = arrivals
