@@ -8,6 +8,7 @@ use std::future::Future;
 use crate::domain::models::departures::Departures;
 use crate::domain::models::freshness::{Fetched, LastGood};
 use crate::domain::models::location::Location;
+use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
 use crate::domain::services::departures_service::DeparturesService;
@@ -47,11 +48,12 @@ impl Default for RenderLimits {
     }
 }
 
-/// Gives a source's answer, or an error if it takes longer than `limit`.
-async fn within<T>(limit: StdDuration, what: &str, work: impl Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
-    tokio::time::timeout(limit, work)
-        .await
-        .unwrap_or_else(|_| Err(anyhow!("{what} didn't answer within {limit:?}")))
+/// A source's answer, or `SourceError::Timeout` if it takes longer than `limit`.
+async fn within<T>(
+    limit: StdDuration,
+    work: impl Future<Output = Result<T, SourceError>>,
+) -> Result<T, SourceError> {
+    tokio::time::timeout(limit, work).await.unwrap_or(Err(SourceError::Timeout))
 }
 
 /// A titled list of departures from one configured source.
@@ -67,7 +69,7 @@ pub struct DepartureBoard<DS: DeparturesService> {
 
 impl<DS: DeparturesService> DepartureBoard<DS> {
     /// The source's answer as it is, or its error.
-    pub async fn fetch(&self, rows: u8, now: DateTime<Local>) -> anyhow::Result<Departures> {
+    pub async fn fetch(&self, rows: u8, now: DateTime<Local>) -> Result<Departures, SourceError> {
         self.service.get_departures(rows, now).await
     }
 
@@ -75,7 +77,7 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
     /// said (brought up to date, and labelled with its age) if that is recent enough.
     async fn for_display(&self, now: DateTime<Local>, max_age: Duration, timeout: StdDuration) -> DepartureBoardData {
         let source = format!("Departures for {}", self.name);
-        let result = within(timeout, &source, self.fetch(self.rows, now)).await;
+        let result = within(timeout, self.fetch(self.rows, now)).await;
         match self.last_good.resolve(result, now, max_age, &source) {
             Fetched::Fresh(departures) => {
                 DepartureBoardData::new(self.name.clone(), departures.station, departures.services)
@@ -84,7 +86,7 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
                 let departures = value.as_of(now);
                 DepartureBoardData::from_earlier(self.name.clone(), departures.station, departures.services, age)
             }
-            Fetched::Unavailable => DepartureBoardData::unavailable(self.name.clone()),
+            Fetched::Unavailable { reason } => DepartureBoardData::unavailable(self.name.clone(), reason),
         }
     }
 }
@@ -121,7 +123,10 @@ where
     /// is shown from its last good data if recent enough (labelled with the age), or as unavailable.
     /// The whole run is abandoned, with an error, if it takes longer than `limits.deadline`.
     pub async fn run(&self, location: Location) -> anyhow::Result<()> {
-        within(self.limits.deadline, "The render", self.render(location)).await
+        let deadline = self.limits.deadline;
+        tokio::time::timeout(deadline, self.render(location))
+            .await
+            .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))?
     }
 
     async fn render(&self, location: Location) -> anyhow::Result<()> {
@@ -131,7 +136,6 @@ where
             async {
                 let result = within(
                     self.limits.source_timeout,
-                    "Weather",
                     self.weather_service.get_weather_for_location(location),
                 )
                 .await;
@@ -146,7 +150,9 @@ where
         let glance_data = match weather {
             Fetched::Fresh(weather) => GlanceData::new(weather, departures, date),
             Fetched::Stale { value, age } => GlanceData::new(value, departures, date).with_weather_age(age),
-            Fetched::Unavailable => GlanceData::new(None, departures, date).with_weather_unavailable(),
+            Fetched::Unavailable { reason } => {
+                GlanceData::new(None, departures, date).with_weather_unavailable(reason)
+            }
         };
         let profile = self.image_viewing_service.profile();
         let image_data = self
@@ -164,7 +170,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use anyhow::anyhow;
     use async_trait::async_trait;
 
     use super::*;
@@ -177,9 +182,9 @@ mod tests {
 
     struct Weather(Flag);
     impl WeatherService for Weather {
-        async fn get_weather_for_location(&self, _: Location) -> anyhow::Result<Option<WeatherInformation>> {
+        async fn get_weather_for_location(&self, _: Location) -> Result<Option<WeatherInformation>, SourceError> {
             if self.0.load(Ordering::SeqCst) {
-                return Err(anyhow!("weather is down"));
+                return Err(SourceError::Unauthorized { status: 401 });
             }
             Ok(Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)))
         }
@@ -187,12 +192,12 @@ mod tests {
 
     struct Trains(Flag, Flag);
     impl DeparturesService for Trains {
-        async fn get_departures(&self, _: u8, now: DateTime<Local>) -> anyhow::Result<Departures> {
+        async fn get_departures(&self, _: u8, now: DateTime<Local>) -> Result<Departures, SourceError> {
             if self.1.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
             if self.0.load(Ordering::SeqCst) {
-                return Err(anyhow!("trains are down"));
+                return Err(SourceError::Upstream { status: 503 });
             }
             let at = |minutes: i64| (now + Duration::minutes(minutes)).format("%H:%M").to_string();
             let service = |minutes: i64| {
@@ -300,6 +305,7 @@ mod tests {
         let frame = rig.run().await;
         let board = &frame["departures"][0];
         assert_eq!(board["unavailable"], true);
+        assert_eq!(board["reason"], "service error");
         assert_eq!(board["name"], "NORTHBOUND");
         assert!(board["services"].as_array().unwrap().is_empty());
         assert!(frame["weather_information"].is_object());
@@ -328,6 +334,8 @@ mod tests {
         let frame = rig.run().await;
         assert_eq!(frame["weather_unavailable"], true);
         assert!(frame["weather_information"].is_null());
+        // A rejected key is said so, rather than a vague "unavailable".
+        assert_eq!(frame["weather_reason"], "key rejected");
     }
 
     #[tokio::test]
@@ -355,6 +363,7 @@ mod tests {
         let frame = rig.run().await;
         assert!(started.elapsed() < StdDuration::from_millis(350), "{:?}", started.elapsed());
         assert_eq!(frame["departures"][0]["unavailable"], true);
+        assert_eq!(frame["departures"][0]["reason"], "timed out");
         assert!(frame["weather_information"].is_object());
     }
 

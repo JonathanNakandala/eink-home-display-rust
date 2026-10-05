@@ -2,6 +2,7 @@ use anyhow::Context;
 use reqwest::Client;
 
 use crate::adapters::http;
+use crate::domain::models::source_error::SourceError;
 use crate::adapters::stop_points::tfl::response::{NearbyResponse, NearbyStop, SearchMatch, SearchResponse};
 use crate::domain::models::location::Location;
 use crate::domain::models::stop_point::{StopKind, StopPoint};
@@ -37,7 +38,7 @@ impl TflStopPointServiceAdapter {
         &self,
         path: &str,
         mut params: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<reqwest::Response> {
+    ) -> Result<reqwest::Response, SourceError> {
         if let Some(key) = &self.app_key {
             params.push(("app_key", key.clone()));
         }

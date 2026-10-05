@@ -16,6 +16,7 @@ pub mod display;
 pub mod freshness;
 pub mod location;
 pub mod pollen;
+pub mod source_error;
 pub mod stop_point;
 pub mod weather;
 
@@ -32,13 +33,15 @@ pub struct DepartureBoardData {
     age: String,
     /// Nothing could be fetched and nothing recent enough is remembered.
     unavailable: bool,
+    /// Why, in a few words (e.g. "timed out"), when unavailable.
+    reason: String,
 }
 
 impl DepartureBoardData {
     pub fn new(name: String, station: String, services: Vec<DepartureService>) -> Self {
         // A board already titled "Turnpike Lane" doesn't need the station repeated.
         let station = if station.eq_ignore_ascii_case(&name) { String::new() } else { station };
-        Self { name, station, services, age: String::new(), unavailable: false }
+        Self { name, station, services, age: String::new(), unavailable: false, reason: String::new() }
     }
 
     /// The board built from an earlier fetch, labelled with how old it is.
@@ -46,8 +49,8 @@ impl DepartureBoardData {
         Self { age: format_age(age), ..Self::new(name, station, services) }
     }
 
-    pub fn unavailable(name: String) -> Self {
-        Self { unavailable: true, ..Self::new(name, String::new(), Vec::new()) }
+    pub fn unavailable(name: String, reason: &str) -> Self {
+        Self { unavailable: true, reason: reason.to_owned(), ..Self::new(name, String::new(), Vec::new()) }
     }
 }
 
@@ -86,6 +89,8 @@ pub struct GlanceData {
     weather_age: String,
     /// The weather is switched on but couldn't be fetched, so say so instead of leaving a gap.
     weather_unavailable: bool,
+    /// Why, in a few words (e.g. "key rejected"), when unavailable.
+    weather_reason: String,
 }
 
 impl GlanceData {
@@ -105,6 +110,7 @@ impl GlanceData {
             date,
             weather_age: String::new(),
             weather_unavailable: false,
+            weather_reason: String::new(),
         }
     }
 
@@ -114,8 +120,9 @@ impl GlanceData {
         self
     }
 
-    pub fn with_weather_unavailable(mut self) -> Self {
+    pub fn with_weather_unavailable(mut self, reason: &str) -> Self {
         self.weather_unavailable = true;
+        self.weather_reason = reason.to_owned();
         self
     }
 
@@ -133,7 +140,7 @@ impl GlanceData {
             first.age = format_age(Duration::minutes(8));
         }
         if let Some(last) = data.departures.pop() {
-            data.departures.push(DepartureBoardData::unavailable(last.name));
+            data.departures.push(DepartureBoardData::unavailable(last.name, "service error"));
         }
         data.departure_lines = data.departures.iter().map(|board| 1 + board.services.len().max(1)).sum();
         data.with_weather_age(Duration::minutes(40))

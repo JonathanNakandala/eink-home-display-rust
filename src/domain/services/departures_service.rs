@@ -1,6 +1,7 @@
 use chrono::{DateTime, Local};
 
 use crate::domain::models::departures::Departures;
+use crate::domain::models::source_error::SourceError;
 
 /// A source of departures for one already-configured route or stop.
 #[allow(async_fn_in_trait)]
@@ -11,5 +12,5 @@ pub trait DeparturesService {
         &self,
         num_rows: u8,
         now: DateTime<Local>,
-    ) -> anyhow::Result<Departures>;
+    ) -> Result<Departures, SourceError>;
 }

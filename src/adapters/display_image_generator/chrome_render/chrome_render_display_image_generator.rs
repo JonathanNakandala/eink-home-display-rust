@@ -298,14 +298,14 @@ mod tests {
         let html = html_for(&GlanceData::sample_degraded(chrono::Local::now()));
         assert!(html.contains("8 min ago</span>"));
         assert!(html.contains("Updated 40 min ago"));
-        assert!(html.contains(">Unavailable</div>"));
+        assert!(html.contains(">Unavailable: service error</div>"));
     }
 
     #[test]
     fn unavailable_weather_keeps_its_column_and_says_so() {
-        let data = GlanceData::new(None, vec![], DateInfo::new(chrono::Local::now())).with_weather_unavailable();
+        let data = GlanceData::new(None, vec![], DateInfo::new(chrono::Local::now())).with_weather_unavailable("timed out");
         let html = html_for(&data);
-        assert!(html.contains("Weather unavailable"));
+        assert!(html.contains("Weather unavailable: timed out"));
         assert!(html.contains("container has-weather"));
 
         // Weather that is simply switched off leaves no column and no message.

@@ -6,14 +6,16 @@ use std::sync::Mutex;
 
 use chrono::{DateTime, Duration, Local};
 
+use crate::domain::models::source_error::SourceError;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fetched<T> {
     /// Just fetched.
     Fresh(T),
     /// The fetch failed; this is from `age` ago, within the limit for it.
     Stale { value: T, age: Duration },
-    /// The fetch failed and there is nothing recent enough to show.
-    Unavailable,
+    /// The fetch failed and there is nothing recent enough to show. `reason` is a few words for the display.
+    Unavailable { reason: &'static str },
 }
 
 pub struct LastGood<T> {
@@ -29,32 +31,48 @@ impl<T> Default for LastGood<T> {
 impl<T: Clone> LastGood<T> {
     /// Remembers a success, or falls back on the remembered one if it is no older than `max_age`.
     /// `source` names the data in the log.
-    pub fn resolve(&self, result: anyhow::Result<T>, now: DateTime<Local>, max_age: Duration, source: &str) -> Fetched<T> {
+    pub fn resolve(
+        &self,
+        result: Result<T, SourceError>,
+        now: DateTime<Local>,
+        max_age: Duration,
+        source: &str,
+    ) -> Fetched<T> {
         let mut slot = self.slot.lock().unwrap();
-        match result {
+        let error = match result {
             Ok(value) => {
                 *slot = Some((value.clone(), now));
-                Fetched::Fresh(value)
+                return Fetched::Fresh(value);
             }
-            Err(error) => match slot.as_ref() {
-                Some((value, fetched_at)) if now - *fetched_at <= max_age => {
-                    let age = (now - *fetched_at).max(Duration::zero());
-                    log::warn!("{source} failed, showing data from {} ago: {error:#}", format_age(age));
-                    Fetched::Stale { value: value.clone(), age }
-                }
-                Some((_, fetched_at)) => {
-                    log::warn!(
-                        "{source} failed and its last data is {} old, over the limit: {error:#}",
-                        format_age(now - *fetched_at)
-                    );
-                    Fetched::Unavailable
-                }
-                None => {
-                    log::warn!("{source} failed and there is no earlier data: {error:#}");
-                    Fetched::Unavailable
-                }
-            },
+            Err(error) => error,
+        };
+        let reason = error.reason();
+        match slot.as_ref() {
+            Some((value, fetched_at)) if now - *fetched_at <= max_age => {
+                let age = (now - *fetched_at).max(Duration::zero());
+                report(source, &error, &format!("showing data from {} ago", format_age(age)));
+                Fetched::Stale { value: value.clone(), age }
+            }
+            Some((_, fetched_at)) => {
+                let detail = format!("its last data is {} old, over the limit", format_age(now - *fetched_at));
+                report(source, &error, &detail);
+                Fetched::Unavailable { reason }
+            }
+            None => {
+                report(source, &error, "and there is no earlier data");
+                Fetched::Unavailable { reason }
+            }
         }
+    }
+}
+
+/// A failure that will probably clear is a warning; one that won't, because the key or the request
+/// is wrong, is an error, since waiting won't help.
+fn report(source: &str, error: &SourceError, consequence: &str) {
+    if error.needs_attention() {
+        log::error!("{source} failed and needs attention: {error:#}; {consequence}");
+    } else {
+        log::warn!("{source} failed: {error:#}; {consequence}");
     }
 }
 
@@ -70,7 +88,6 @@ pub fn format_age(age: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::anyhow;
     use chrono::TimeZone;
 
     use super::*;
@@ -81,12 +98,16 @@ mod tests {
 
     const LIMIT: Duration = Duration::minutes(15);
 
+    fn down() -> SourceError {
+        SourceError::Upstream { status: 503 }
+    }
+
     #[test]
     fn a_success_is_fresh_and_remembered() {
         let last = LastGood::default();
         assert_eq!(last.resolve(Ok(1), at(12, 0), LIMIT, "x"), Fetched::Fresh(1));
         assert_eq!(
-            last.resolve(Err(anyhow!("down")), at(12, 5), LIMIT, "x"),
+            last.resolve(Err(down()), at(12, 5), LIMIT, "x"),
             Fetched::Stale { value: 1, age: Duration::minutes(5) }
         );
     }
@@ -95,14 +116,25 @@ mod tests {
     fn data_older_than_the_limit_is_unavailable() {
         let last = LastGood::default();
         last.resolve(Ok(1), at(12, 0), LIMIT, "x");
-        assert_eq!(last.resolve(Err(anyhow!("down")), at(12, 15), LIMIT, "x"), Fetched::Stale { value: 1, age: LIMIT });
-        assert_eq!(last.resolve(Err(anyhow!("down")), at(12, 16), LIMIT, "x"), Fetched::Unavailable);
+        assert_eq!(last.resolve(Err(down()), at(12, 15), LIMIT, "x"), Fetched::Stale { value: 1, age: LIMIT });
+        assert_eq!(
+            last.resolve(Err(down()), at(12, 16), LIMIT, "x"),
+            Fetched::Unavailable { reason: "service error" }
+        );
     }
 
     #[test]
     fn a_failure_with_nothing_remembered_is_unavailable() {
         let last: LastGood<i32> = LastGood::default();
-        assert_eq!(last.resolve(Err(anyhow!("down")), at(12, 0), LIMIT, "x"), Fetched::Unavailable);
+        assert_eq!(last.resolve(Err(down()), at(12, 0), LIMIT, "x"), Fetched::Unavailable { reason: "service error" });
+    }
+
+    #[test]
+    fn the_reason_comes_from_the_kind_of_failure() {
+        let last: LastGood<i32> = LastGood::default();
+        let unavailable = |error| last.resolve(Err(error), at(12, 0), LIMIT, "x");
+        assert_eq!(unavailable(SourceError::Unauthorized { status: 401 }), Fetched::Unavailable { reason: "key rejected" });
+        assert_eq!(unavailable(SourceError::Timeout), Fetched::Unavailable { reason: "timed out" });
     }
 
     #[test]
@@ -111,7 +143,7 @@ mod tests {
         last.resolve(Ok(1), at(12, 0), LIMIT, "x");
         last.resolve(Ok(2), at(12, 10), LIMIT, "x");
         assert_eq!(
-            last.resolve(Err(anyhow!("down")), at(12, 20), LIMIT, "x"),
+            last.resolve(Err(down()), at(12, 20), LIMIT, "x"),
             Fetched::Stale { value: 2, age: Duration::minutes(10) }
         );
     }
