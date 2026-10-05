@@ -988,6 +988,7 @@ dependencies = [
  "httpmock",
  "humantime",
  "image",
+ "libc",
  "linux-embedded-hal",
  "log",
  "mdns-sd",

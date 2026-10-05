@@ -35,6 +35,20 @@ RestartSec=30s
 RestartSteps=8
 RestartMaxDelaySec=30min
 TimeoutStopSec=20s
+# Chrome's temporary profile and each render's page go in /tmp. Private to this service, they are
+# removed whenever it stops, including after a crash or a kill, which would otherwise leave a Chrome
+# profile (tens of MB) behind each time. So keep `server.directory` and `cache.directory` out of /tmp.
+PrivateTmp=yes
+# The whole service counts, Chrome included. While a render is running, Chrome with its helper
+# processes measured about 1 GB on macOS (which counts shared pages, so Linux should be lower). Above
+# MemoryHigh the kernel reclaims aggressively; at MemoryMax it kills the largest process, which is
+# Chrome. OOMPolicy=continue keeps the service up when that happens (the default would stop all of it):
+# that render fails, and the next one starts a fresh Chrome. Don't go below about 600M without
+# measuring: after a day, `systemctl show eink-home-display -p MemoryPeak` says what it really used, and
+# twice that is a sound limit. On a host with little RAM, set both under what the host has.
+MemoryHigh=1000M
+MemoryMax=1300M
+OOMPolicy=continue
 
 [Install]
 WantedBy=multi-user.target
