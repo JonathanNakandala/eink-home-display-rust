@@ -75,7 +75,8 @@ schedule. The device asks it on every wake.
 
 1. Joins Wi-Fi and asks `/plan?have=<version it is showing>` (the version is remembered in flash).
 2. `changed: false`: skips the download and the refresh. `changed: true`: downloads the image, draws it,
-   and remembers its `version`.
+   and, once the panel has finished refreshing, remembers its `version`. If the device resets mid-refresh the
+   old version is still recorded, so the next wake downloads the image again.
 3. `stale: true`: also writes `Out of date: rendered 3 h 20 min ago` in the bottom-right corner.
 4. Sleeps for `next_seconds` (limited to between 1 minute and 1 day). `sleep_duration` is only the
    fallback when the server never answered.
