@@ -4,6 +4,7 @@
 mod advertise;
 mod health;
 mod image;
+mod listen;
 mod metrics;
 mod negotiate;
 mod plan;
@@ -17,10 +18,10 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
+use self::listen::Bound;
 use crate::application::devices::DeviceBoard;
 use crate::application::plan::PlanTiming;
 use crate::application::refresh::RefreshControl;
@@ -96,15 +97,15 @@ pub async fn serve(
     handles: Handles,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(settings.bind)
-        .await
-        .with_context(|| format!("Failed to listen on {}", settings.bind))?;
-    log::info!("Serving the display image at http://{}/image", settings.bind);
-    // Discovery is a convenience, so the server runs without it. Held until serving ends,
-    // which is when the goodbye goes out.
+    let Bound { listener, families } = listen::bind(settings.bind)?;
+    let port = listener.local_addr()?.port();
+    log::info!("Serving the display image at http://{}/image ({families})", settings.bind);
+    // Discovery is a convenience, so the server runs without it. It announces the IP versions the
+    // socket really accepts, which isn't always what the configured address says (see `listen`).
+    // Held until serving ends, which is when the goodbye goes out.
     let _advertisement = settings
         .advertise
-        .then(|| Advertisement::start(settings, listener.local_addr()?.port(), format))
+        .then(|| Advertisement::start(settings, port, format, families))
         .transpose()
         .unwrap_or_else(|e| {
             log::warn!("Not advertising over mDNS: {e:#}");

@@ -17,7 +17,7 @@ dither = "FloydSteinberg"   # or "Ordered"; the device does no dithering of its 
 image_format = "Bmp"        # or "Png": sent when the display has no preference; both are published
 
 [server]
-bind = "0.0.0.0:8080"
+bind = "[::]:8080"                     # IPv4 and IPv6; "0.0.0.0:8080" is IPv4 only
 directory = "served"
 advertise = true                       # announce over mDNS, so a scan finds it
 instance_name = "E-ink home display"   # the name a scan shows; the host name is e-ink-home-display.local
