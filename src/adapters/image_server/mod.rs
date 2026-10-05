@@ -4,6 +4,7 @@
 mod advertise;
 mod plan;
 mod refresh;
+mod status;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use tower_http::trace::TraceLayer;
 use self::advertise::Advertisement;
 pub use self::plan::{render_due, PlanTiming};
 pub use self::refresh::RefreshControl;
+pub use self::status::StatusBoard;
 use self::refresh::RefreshOutcome;
 use self::plan::compute;
 use crate::config::server::ServerConfig;
@@ -55,7 +57,16 @@ struct Published {
     format: ImageFormat,
     schedule: Schedule,
     timing: PlanTiming,
-    refresh: Arc<RefreshControl>,
+    handles: Handles,
+}
+
+/// What the render loop shares with the server.
+#[derive(Clone)]
+pub struct Handles {
+    /// Lets a display's button trigger a render.
+    pub refresh: Arc<RefreshControl>,
+    /// The render history, for `/status` and `/healthz`.
+    pub status: Arc<StatusBoard>,
 }
 
 /// How long a button press waits for its render: a cold Chrome start can take a while.
@@ -72,15 +83,16 @@ pub fn router(
     format: ImageFormat,
     schedule: Schedule,
     timing: PlanTiming,
-    refresh: Arc<RefreshControl>,
+    handles: Handles,
 ) -> Router {
     Router::new()
         .route("/image", get(image))
         .route("/plan", get(plan))
         .route("/refresh", post(refresh_now))
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/status", get(status))
+        .route("/healthz", get(healthz))
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published { directory, format, schedule, timing, refresh }))
+        .with_state(Arc::new(Published { directory, format, schedule, timing, handles }))
 }
 
 #[derive(Deserialize)]
@@ -98,7 +110,7 @@ async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQ
 /// like `/plan` for the image that results. A refused or failed render still answers, with the
 /// image there is.
 async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
-    match published.refresh.request(REFRESH_TIMEOUT).await {
+    match published.handles.refresh.request(REFRESH_TIMEOUT).await {
         RefreshOutcome::Rendered => log::info!("Rendered on request"),
         RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
         RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
@@ -106,16 +118,47 @@ async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Quer
     plan_response(&published, query.have).await
 }
 
-async fn plan_response(published: &Published, have: Option<u32>) -> Response {
+/// When the served image was written; None before the first render.
+async fn image_written_at(published: &Published) -> std::io::Result<Option<DateTime<Local>>> {
     let path = published_path(&published.directory, published.format);
-    let modified = match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
-        Ok(modified) => modified,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
+    match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
+        Ok(modified) => Ok(Some(DateTime::<Local>::from(modified))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// How the service is doing: the render history, the sources' state, and the image's age.
+async fn status(State(published): State<Arc<Published>>) -> Response {
+    match current_status(&published).await {
+        Ok(status) => ([(header::CACHE_CONTROL, "no-store")], Json(status)).into_response(),
+        Err(e) => server_error("report", e),
+    }
+}
+
+/// A pass or fail for monitors: 200 unless the image is stale, then 503, with a line saying why.
+async fn healthz(State(published): State<Arc<Published>>) -> Response {
+    match current_status(&published).await {
+        Ok(status) => {
+            let code = if status.is_healthy() { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+            (code, [(header::CACHE_CONTROL, "no-store")], status.summary()).into_response()
         }
+        Err(e) => server_error("check", e),
+    }
+}
+
+async fn current_status(published: &Published) -> anyhow::Result<status::Status> {
+    let rendered_at = image_written_at(published).await?;
+    published.handles.status.status(Local::now(), rendered_at, &published.schedule, published.timing)
+}
+
+async fn plan_response(published: &Published, have: Option<u32>) -> Response {
+    let rendered_at = match image_written_at(published).await {
+        Ok(Some(rendered_at)) => rendered_at,
+        Ok(None) => return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response(),
         Err(e) => return server_error("inspect", e),
     };
-    match compute(Local::now(), DateTime::<Local>::from(modified), &published.schedule, published.timing, have) {
+    match compute(Local::now(), rendered_at, &published.schedule, published.timing, have) {
         Ok(plan) => ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response(),
         Err(e) => server_error("plan", e),
     }
@@ -152,7 +195,7 @@ pub async fn serve(
     config: &ServerConfig,
     format: ImageFormat,
     schedule: Schedule,
-    refresh: Arc<RefreshControl>,
+    handles: Handles,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind)
         .await
@@ -168,7 +211,7 @@ pub async fn serve(
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(config.directory.clone(), format, schedule, PlanTiming::from(config), refresh))
+    axum::serve(listener, router(config.directory.clone(), format, schedule, PlanTiming::from(config), handles))
         .await
         .context("Image server stopped")
 }
@@ -178,13 +221,19 @@ mod tests {
     use super::*;
 
     async fn start(directory: PathBuf, format: ImageFormat) -> String {
+        start_with_status(directory, format).await.0
+    }
+
+    /// Also hands back the status board, to play the render loop's part.
+    async fn start_with_status(directory: PathBuf, format: ImageFormat) -> (String, Arc<StatusBoard>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let timing = PlanTiming::from(&ServerConfig::default());
         let schedule = Schedule::parse_every("1h").unwrap();
-        let refresh = RefreshControl::new(Duration::from_secs(30));
-        tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing, refresh)).await });
-        format!("http://{address}")
+        let status = StatusBoard::new(Local::now());
+        let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status) };
+        tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing, handles)).await });
+        (format!("http://{address}"), status)
     }
 
     #[tokio::test]
@@ -213,6 +262,86 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
         assert_eq!(reqwest::get(format!("{base}/healthz")).await.unwrap().status(), 200);
+    }
+
+    async fn healthz(base: &str) -> (u16, String) {
+        let response = reqwest::get(format!("{base}/healthz")).await.unwrap();
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        (response.status().as_u16(), response.text().await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn healthz_fails_when_the_image_is_stale_and_recovers_with_a_render() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+
+        // Just started, nothing rendered yet: not a failure.
+        assert_eq!(healthz(&base).await, (200, "starting".to_owned()));
+
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+        assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
+
+        // An hourly schedule, and the image is three hours old: two renders are missing.
+        set_age(tmp.path(), 3 * 3600);
+        let (code, text) = healthz(&base).await;
+        assert_eq!((code, text.as_str()), (503, "stale: the image is 3 h 0 min old"));
+
+        publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
+        status.render_succeeded(Local::now(), Default::default());
+        assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn a_source_that_is_down_is_degraded_but_the_check_still_passes() {
+        use crate::domain::models::render_report::{RenderReport, SourceReport, SourceState};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+        status.render_succeeded(
+            Local::now(),
+            RenderReport {
+                sources: vec![SourceReport {
+                    name: "weather".into(),
+                    state: SourceState::Unavailable { reason: "key rejected".into() },
+                }],
+            },
+        );
+
+        assert_eq!(healthz(&base).await, (200, "degraded".to_owned()));
+        let body: serde_json::Value = reqwest::get(format!("{base}/status")).await.unwrap().json().await.unwrap();
+        assert_eq!(body["state"], "degraded");
+        assert_eq!(body["sources"][0]["name"], "weather");
+        assert_eq!(body["sources"][0]["state"], "unavailable");
+        assert_eq!(body["sources"][0]["reason"], "key rejected");
+    }
+
+    #[tokio::test]
+    async fn status_reports_the_history_the_image_and_the_next_render() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+
+        let before: serde_json::Value = reqwest::get(format!("{base}/status")).await.unwrap().json().await.unwrap();
+        assert_eq!(before["state"], "starting");
+        assert!(before["image"].is_null());
+        assert!(before["last_success"].is_null());
+        assert_eq!(before["consecutive_failures"], 0);
+
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+        status.render_started();
+        status.render_failed(Local::now(), &anyhow::anyhow!("Chrome did not start"));
+        let after = reqwest::get(format!("{base}/status")).await.unwrap();
+        assert_eq!(after.headers()["cache-control"], "no-store");
+        let after: serde_json::Value = after.json().await.unwrap();
+
+        assert_eq!(after["state"], "failing");
+        assert_eq!(after["rendering"], false);
+        assert_eq!(after["consecutive_failures"], 1);
+        assert_eq!(after["last_failure"]["error"], "Chrome did not start");
+        assert!(after["image"]["age_seconds"].as_u64().unwrap() < 5);
+        assert!(after["image"]["version"].as_u64().unwrap() > 0);
+        assert!(after["next_render"].as_str().unwrap().contains('T'));
+        assert_eq!(after["version"], env!("CARGO_PKG_VERSION"));
     }
 
     fn set_age(directory: &Path, seconds: u64) {

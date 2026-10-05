@@ -9,7 +9,7 @@ use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
-use eink_home_display_rust::adapters::image_server::{serve, RefreshControl};
+use eink_home_display_rust::adapters::image_server::{serve, Handles, RefreshControl, StatusBoard};
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
@@ -63,7 +63,10 @@ async fn main() -> Result<()> {
     let chrome_source = ChromeSource::from(args.bundled_chrome);
 
     let Some(schedule) = args.schedule() else {
-        return create_application(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source)?.run(location).await;
+        return create_application(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source)?
+            .run(location)
+            .await
+            .map(|_| ());
     };
     // Built once so the Chrome it launches is kept between runs.
     let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source)?;
@@ -85,15 +88,28 @@ async fn main() -> Result<()> {
         None => {}
     }
     let refresh = RefreshControl::new(Duration::from_secs(config.server.refresh_cooldown_seconds.into()));
+    let status = StatusBoard::new(now);
     let periodic = run_periodically_from(schedule, first, refresh.wake(), shutdown_signal(), || {
         launch::record_attempt(&marker);
         refresh.render_started();
+        status.render_started();
         let run = app.run(location);
-        let refresh = &refresh;
+        let (refresh, status) = (&refresh, &status);
         async move {
             let result = run.await;
+            let finished = chrono::Local::now();
+            let outcome = match result {
+                Ok(report) => {
+                    status.render_succeeded(finished, report);
+                    Ok(())
+                }
+                Err(error) => {
+                    status.render_failed(finished, &error);
+                    Err(error)
+                }
+            };
             refresh.render_finished();
-            result
+            outcome
         }
     });
     if !config.display.kind.fetches_image() {
@@ -102,7 +118,7 @@ async fn main() -> Result<()> {
     // The display downloads its image, so serve it for as long as the refresh loop runs.
     tokio::select! {
         result = periodic => result,
-        result = serve(&config.server, config.display.image_format, schedule.clone(), refresh.clone()) => result,
+        result = serve(&config.server, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone() }) => result,
     }
 }
 
