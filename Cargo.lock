@@ -984,6 +984,7 @@ dependencies = [
  "futures-util",
  "handlebars",
  "headless_chrome",
+ "httpdate",
  "httpmock",
  "humantime",
  "image",
