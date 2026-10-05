@@ -4,4 +4,5 @@ pub mod adapters;
 pub mod config;
 pub mod cli;
 pub mod scheduler;
+pub mod launch;
 pub mod quiet_times;

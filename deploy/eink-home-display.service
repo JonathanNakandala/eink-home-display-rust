@@ -1,0 +1,36 @@
+# Install: copy to /etc/systemd/system/, adjust the paths and user, then
+#   systemctl daemon-reload && systemctl enable --now eink-home-display
+[Unit]
+Description=E-ink home display: renders the dashboard and serves it to the display
+Wants=network-online.target
+After=network-online.target
+# Never give up: with a limit, systemd would leave the unit failed until someone ran
+# `systemctl reset-failed`. The backoff below keeps a persistent failure to one start every
+# 30 minutes, so there is no need for one.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=eink
+WorkingDirectory=/opt/eink-home-display
+Environment=RUST_LOG=info
+# --restart-cooldown is a second line of defence that holds under any supervisor: after a
+# restart, no render starts until this long after the previous attempt.
+ExecStart=/opt/eink-home-display/eink-home-display-rust \
+    --config-file /opt/eink-home-display/config.toml \
+    --cron "*/10 * * * *" \
+    --restart-cooldown 2m
+# Only a crash restarts it (a clean stop on SIGTERM exits 0). A render that fails is logged
+# and retried at the next slot without ending the process.
+Restart=on-failure
+RestartSec=30s
+# systemd 254 or newer: each consecutive restart waits longer, from 30s up to 30 minutes
+# (about 30s, 1m, 2m, 3m, 6m, 10m, 17m, 30m, then 30m for as long as it keeps failing). A transient
+# problem is therefore picked up again within 30 minutes of being fixed.
+# Older systemd ignores these lines with a warning; with it, use a longer RestartSec instead.
+RestartSteps=8
+RestartMaxDelaySec=30min
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=multi-user.target

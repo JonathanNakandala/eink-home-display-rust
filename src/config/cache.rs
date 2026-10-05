@@ -44,6 +44,11 @@ impl CachePaths {
         self.root.join("chrome")
     }
 
+    /// Touched whenever a render starts, so a restarted process knows how recently one was attempted.
+    pub fn render_attempt(&self) -> PathBuf {
+        self.root.join("last_render_attempt")
+    }
+
     /// Creates the cache directory and its sub-folders if missing.
     pub fn ensure_exists(&self) -> anyhow::Result<()> {
         for dir in [self.chrome()] {
