@@ -130,11 +130,14 @@ online_image:
     # The panel is 1872x1404 and the image is rendered at that size, so no resize.
     on_download_finished:
       - logger.log: "Image downloaded, drawing"
+      - component.update: epaper_display
+      - delay: ${refresh_settle}
+      # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
+      # refresh would leave the device believing it shows an image it doesn't, and the next wake would
+      # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.
       - lambda: |-
           id(shown_version) = id(plan_version);
           id(notice_on_panel) = false;
-      - component.update: epaper_display
-      - delay: ${refresh_settle}
       - script.execute: after_image
     on_error:
       # /plan has just answered from this address, so the server is where it should be: looking for it
