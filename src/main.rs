@@ -14,11 +14,11 @@ use eink_home_display_rust::adapters::image_server::{serve, Handles, ServerSetti
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
 use eink_home_display_rust::bootstrap::setup_weather_service;
 use eink_home_display_rust::application::devices::DeviceBoard;
+use eink_home_display_rust::application::launch;
 use eink_home_display_rust::application::refresh::RefreshControl;
 use eink_home_display_rust::application::status::StatusBoard;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
-use eink_home_display_rust::launch;
 use eink_home_display_rust::scheduler::{run_periodically_from, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::cache::CachePaths;
