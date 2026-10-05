@@ -164,7 +164,9 @@ and the log line `Failure N in a row (reason)` names the stage.
 ### Battery
 
 The voltage is read once at the start of every wake, before the radio or the panel are used, so it
-isn't pulled down by their load. Three states, with hysteresis so the label doesn't flap:
+isn't pulled down by their load. Wi-Fi is left off at boot (`enable_on_boot: false`) and switched on
+afterwards, so a flat battery never starts it. Holding KEY1 switches it on at once, so an update over
+the air works whatever the battery says. Three states, with hysteresis so the label doesn't flap:
 
 | Voltage (percent) | What the device does |
 |---|---|
