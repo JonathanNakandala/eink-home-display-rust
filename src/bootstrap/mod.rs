@@ -1,10 +1,18 @@
 //! The composition root: reads the configuration and builds the adapters it asks for.
 //! Adapters take plain values; only this module knows both the config and the adapters.
+//! The programs in `src/bin` and `main` are thin: they parse their arguments, call into here,
+//! and run.
 
+mod application;
 mod departures;
 mod display;
+mod load;
+mod logging;
 mod weather;
 
+pub use self::application::{assemble, from_config};
 pub use self::departures::setup_departure_boards;
 pub use self::display::setup_display;
+pub use self::load::{load_application_config, load_quiet_times_config};
+pub use self::logging::init_logging;
 pub use self::weather::setup_weather_service;
