@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let config = bootstrap::load_application_config(&args.config_file)?;
+    let config = bootstrap::load_valid_application_config(&args.config_file)?;
 
     log::info!("Settings loaded successfully: {:?}", config);
 

@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use config::{Config, ConfigError, Environment, File};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_valid::Validate;
 
 use crate::config::cache::CacheConfig;
 use crate::config::server::ServerConfig;
@@ -11,9 +10,8 @@ use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::weather::WeatherConfig;
 use crate::domain::models::display::{Dither, ImageFormat};
 
-#[derive(Debug, Serialize, Deserialize, Validate, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ApplicationConfig {
-    #[validate]
     pub weather: WeatherConfig,
     /// Departure boards shown on the display, in order. Each picks its own provider.
     #[serde(default)]
@@ -213,6 +211,12 @@ impl DisplayKind {
 }
 
 impl ApplicationConfig {
+    /// Checks the rules of everything in use (see `WeatherConfig::validate_in_use`). A program that
+    /// uses only part of the configuration can check just that part instead.
+    pub fn validate(&self) -> Result<(), serde_valid::validation::Errors> {
+        self.weather.validate_in_use()
+    }
+
     pub fn new(file_path: &Path) -> Result<Self, ConfigError> {
         let s = Config::builder()
             .add_source(File::from(file_path))
