@@ -41,6 +41,8 @@ substitutions:
   sleep_duration_ms: "600000"
   # After repeated failures the sleep doubles each time, up to this.
   max_backoff_ms: "3600000"
+  # The board halves the cell voltage before the ADC pin (two equal resistors); this undoes it.
+  battery_divider: "2.0"
   # Battery thresholds, in volts (see the README). Below `low` a label says so on every picture;
   # below `empty` the device stops refreshing and sleeps `battery_halt_sleep_ms` between checks;
   # it starts again, and clears both, only once the voltage is back above `resume`.
@@ -97,12 +99,6 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  # A fixed address makes the connection quicker, which is battery life.
-  # manual_ip:
-  #   static_ip: 192.168.1.60
-  #   gateway: 192.168.1.1
-  #   subnet: 255.255.255.0
-  # Skip scanning for the strongest access point; use the first match.
   fast_connect: true
 
 http_request:
@@ -262,7 +258,8 @@ script:
   - id: battery_gate
     then:
       - lambda: |-
-          float v = id(battery_voltage).sample();
+          // sample() is the voltage at the pin, before the sensor's filters, so undo the divider here.
+          float v = id(battery_voltage).sample() * ${battery_divider}f;
           id(battery_known) = eink_battery::plausible(v);
           id(battery_action) = 0;
           if (!id(battery_known)) {
@@ -609,7 +606,7 @@ sensor:
     update_interval: 60s
     filters:
       # Onboard 1:2 voltage divider
-      - multiply: 2.0
+      - multiply: ${battery_divider}
   - platform: template
     id: battery_level
     name: "Battery Level"
