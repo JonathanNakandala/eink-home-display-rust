@@ -557,7 +557,7 @@ font:
   - file: ../templates/fonts/Overpass/Overpass-SemiBold.ttf
     id: notice_font
     size: 36
-    glyphs: " :@-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    glyphs: " :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 spi:
   id: epaper_spi_bus
