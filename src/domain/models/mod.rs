@@ -16,6 +16,7 @@ pub mod display;
 pub mod freshness;
 pub mod location;
 pub mod pollen;
+pub mod render_report;
 pub mod source_error;
 pub mod stop_point;
 pub mod weather;

@@ -8,6 +8,7 @@ use std::future::Future;
 use crate::domain::models::departures::Departures;
 use crate::domain::models::freshness::{Fetched, LastGood};
 use crate::domain::models::location::Location;
+use crate::domain::models::render_report::{RenderReport, SourceReport, SourceState};
 use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
@@ -56,6 +57,10 @@ async fn within<T>(
     tokio::time::timeout(limit, work).await.unwrap_or(Err(SourceError::Timeout))
 }
 
+fn age_seconds(age: Duration) -> u64 {
+    age.num_seconds().max(0).unsigned_abs()
+}
+
 /// A titled list of departures from one configured source.
 #[derive(derive_new::new)]
 pub struct DepartureBoard<DS: DeparturesService> {
@@ -75,19 +80,32 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
 
     /// The board as it should be shown: fresh if the source answered, otherwise what it last
     /// said (brought up to date, and labelled with its age) if that is recent enough.
-    async fn for_display(&self, now: DateTime<Local>, max_age: Duration, timeout: StdDuration) -> DepartureBoardData {
+    async fn for_display(
+        &self,
+        now: DateTime<Local>,
+        max_age: Duration,
+        timeout: StdDuration,
+    ) -> (DepartureBoardData, SourceReport) {
         let source = format!("Departures for {}", self.name);
         let result = within(timeout, self.fetch(self.rows, now)).await;
-        match self.last_good.resolve(result, now, max_age, &source) {
-            Fetched::Fresh(departures) => {
-                DepartureBoardData::new(self.name.clone(), departures.station, departures.services)
-            }
+        let (board, state) = match self.last_good.resolve(result, now, max_age, &source) {
+            Fetched::Fresh(departures) => (
+                DepartureBoardData::new(self.name.clone(), departures.station, departures.services),
+                SourceState::Fresh,
+            ),
             Fetched::Stale { value, age } => {
                 let departures = value.as_of(now);
-                DepartureBoardData::from_earlier(self.name.clone(), departures.station, departures.services, age)
+                (
+                    DepartureBoardData::from_earlier(self.name.clone(), departures.station, departures.services, age),
+                    SourceState::Stale { age_seconds: age_seconds(age) },
+                )
             }
-            Fetched::Unavailable { reason } => DepartureBoardData::unavailable(self.name.clone(), reason),
-        }
+            Fetched::Unavailable { reason } => (
+                DepartureBoardData::unavailable(self.name.clone(), reason),
+                SourceState::Unavailable { reason: reason.to_owned() },
+            ),
+        };
+        (board, SourceReport { name: self.name.clone(), state })
     }
 }
 
@@ -122,17 +140,18 @@ where
     /// Renders and shows the dashboard. A source that fails or is too slow doesn't stop it: that part
     /// is shown from its last good data if recent enough (labelled with the age), or as unavailable.
     /// The whole run is abandoned, with an error, if it takes longer than `limits.deadline`.
-    pub async fn run(&self, location: Location) -> anyhow::Result<()> {
+    /// On success, says how healthy each source was.
+    pub async fn run(&self, location: Location) -> anyhow::Result<RenderReport> {
         let deadline = self.limits.deadline;
         tokio::time::timeout(deadline, self.render(location))
             .await
             .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))?
     }
 
-    async fn render(&self, location: Location) -> anyhow::Result<()> {
+    async fn render(&self, location: Location) -> anyhow::Result<RenderReport> {
         // One instant for the whole frame, so the clock and the countdowns agree.
         let now = chrono::Local::now();
-        let (weather, departures) = tokio::join!(
+        let (weather, boards) = tokio::join!(
             async {
                 let result = within(
                     self.limits.source_timeout,
@@ -147,13 +166,21 @@ where
         );
 
         let date = DateInfo::new(now);
-        let glance_data = match weather {
-            Fetched::Fresh(weather) => GlanceData::new(weather, departures, date),
-            Fetched::Stale { value, age } => GlanceData::new(value, departures, date).with_weather_age(age),
-            Fetched::Unavailable { reason } => {
-                GlanceData::new(None, departures, date).with_weather_unavailable(reason)
-            }
+        let (departures, mut sources): (Vec<_>, Vec<_>) = boards.into_iter().unzip();
+        let (glance_data, weather_state) = match weather {
+            // Switched off, so there is nothing to report on.
+            Fetched::Fresh(None) => (GlanceData::new(None, departures, date), None),
+            Fetched::Fresh(weather) => (GlanceData::new(weather, departures, date), Some(SourceState::Fresh)),
+            Fetched::Stale { value, age } => (
+                GlanceData::new(value, departures, date).with_weather_age(age),
+                Some(SourceState::Stale { age_seconds: age_seconds(age) }),
+            ),
+            Fetched::Unavailable { reason } => (
+                GlanceData::new(None, departures, date).with_weather_unavailable(reason),
+                Some(SourceState::Unavailable { reason: reason.to_owned() }),
+            ),
         };
+        sources.splice(0..0, weather_state.map(|state| SourceReport { name: "weather".to_owned(), state }));
         let profile = self.image_viewing_service.profile();
         let image_data = self
             .display_image_generator
@@ -161,7 +188,7 @@ where
             .await?;
         self.image_repository.store(&image_data).await?;
         self.image_viewing_service.display(&image_data).await?;
-        Ok(())
+        Ok(RenderReport { sources })
     }
 }
 
@@ -268,6 +295,33 @@ mod tests {
             self.app.run(Location::new(0.0, 0.0)).await.expect("a failing source doesn't fail the render");
             self.frames.lock().unwrap().last().unwrap().clone()
         }
+    }
+
+    #[tokio::test]
+    async fn the_report_says_how_each_source_did() {
+        use crate::domain::models::render_report::SourceState;
+
+        let fresh = rig();
+        let rig = rig();
+        let report = rig.app.run(Location::new(0.0, 0.0)).await.unwrap();
+        assert!(!report.is_degraded());
+        let names: Vec<_> = report.sources.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["weather", "NORTHBOUND"]);
+
+        rig.trains_down.store(true, Ordering::SeqCst);
+        rig.weather_down.store(true, Ordering::SeqCst);
+        let report = rig.app.run(Location::new(0.0, 0.0)).await.unwrap();
+        assert!(report.is_degraded());
+        // The weather had worked, so it is stale; the board too.
+        assert!(matches!(report.sources[0].state, SourceState::Stale { .. }));
+        assert!(matches!(report.sources[1].state, SourceState::Stale { .. }));
+
+        fresh.weather_down.store(true, Ordering::SeqCst);
+        let report = fresh.app.run(Location::new(0.0, 0.0)).await.unwrap();
+        assert_eq!(
+            report.sources[0].state,
+            SourceState::Unavailable { reason: "key rejected".to_owned() }
+        );
     }
 
     #[tokio::test]

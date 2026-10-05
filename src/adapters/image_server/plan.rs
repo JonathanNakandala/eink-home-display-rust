@@ -54,6 +54,17 @@ pub fn render_due(now: DateTime<Local>, rendered_at: DateTime<Local>, schedule: 
     Ok(now >= schedule.next_after(rendered_at)?)
 }
 
+/// Whether a render that was due after `rendered_at` is more than `grace` late.
+pub fn is_stale(
+    now: DateTime<Local>,
+    rendered_at: DateTime<Local>,
+    schedule: &Schedule,
+    grace: Duration,
+) -> anyhow::Result<bool> {
+    let due = schedule.next_after(rendered_at)?;
+    Ok(now >= due && (now - due).to_std().unwrap_or_default() > grace)
+}
+
 /// `rendered_at` is when the served image was written; `have` is the version the display reports.
 pub fn compute(
     now: DateTime<Local>,
@@ -109,6 +120,18 @@ mod tests {
         let first = version_of(at(15, 12, 0, 8));
         assert_eq!(i64::from(first), at(15, 12, 0, 8).timestamp());
         assert_eq!(version_of(at(15, 12, 10, 8)), first + 600);
+    }
+
+    #[test]
+    fn staleness_agrees_with_what_the_plan_reports() {
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let rendered = at(15, 12, 0, 8);
+        for seconds in (0..40 * 60).step_by(7) {
+            let now = rendered + chrono::Duration::seconds(seconds);
+            let plan = compute(now, rendered, &schedule, TIMING, None).unwrap();
+            let stale = is_stale(now, rendered, &schedule, TIMING.stale_grace).unwrap();
+            assert_eq!(plan.stale, stale, "{seconds}s after the render");
+        }
     }
 
     #[test]
