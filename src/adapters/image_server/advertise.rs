@@ -72,10 +72,14 @@ fn service_info(config: &ServerConfig, port: u16, format: ImageFormat) -> anyhow
     }
     let host = format!("{}.local.", host_label(name));
     // txtvers first, as RFC 6763 section 6.7 recommends; keys are kept short and lowercase.
+    // `format` is what is served now, and `formats` everything it can serve (set by display.image_format),
+    // for whoever is looking at a scan. The display doesn't use either: it decodes by Content-Type.
+    let formats = ImageFormat::ALL.map(ImageFormat::extension).join(",");
     let txt = [
         ("txtvers", "1"),
         ("path", "/image"),
         ("format", format.extension()),
+        ("formats", formats.as_str()),
         ("version", env!("CARGO_PKG_VERSION")),
     ];
 
@@ -137,6 +141,7 @@ mod tests {
         assert_eq!(info.get_property_val_str("txtvers"), Some("1"));
         assert_eq!(info.get_property_val_str("path"), Some("/image"));
         assert_eq!(info.get_property_val_str("format"), Some("png"));
+        assert_eq!(info.get_property_val_str("formats"), Some("bmp,png"));
     }
 
     #[test]

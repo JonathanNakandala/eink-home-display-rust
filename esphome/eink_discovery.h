@@ -1,5 +1,6 @@
 // Finds the eink-home-display-rust image server on the LAN with an mDNS / DNS-SD query.
-// The server announces itself as `_http._tcp` with the TXT keys txtvers, path and format
+// The server announces itself as `_http._tcp` with the TXT keys txtvers, path, format (served now)
+// and formats (all it can serve)
 // (see src/adapters/image_server/advertise.rs in the Rust app).
 #pragma once
 
@@ -18,7 +19,7 @@ static const char *const TAG = "eink_discovery";
 struct Server {
   uint32_t ip = 0;  // IPv4, in the byte order lwIP stores it (first octet in the lowest byte)
   uint16_t port = 0;
-  std::string format;  // "bmp" or "png", as announced
+  std::string format;  // "bmp" or "png", as announced; for the log only, the image is decoded by Content-Type
 };
 
 inline std::string txt_value(const mdns_result_t *result, const char *key) {

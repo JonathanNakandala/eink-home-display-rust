@@ -170,7 +170,7 @@
           "default": "None"
         },
         "image_format": {
-          "description": "File format served to the reTerminal E1003. Ignored by displays that are driven directly.",
+          "description": "The format the reTerminal E1003 is sent when it has no preference. Every format is published, and the\ndisplay can ask for another with its `Accept` header. Ignored by displays driven directly.",
           "$ref": "#/$defs/ImageFormat",
           "default": "Bmp"
         },
@@ -233,7 +233,7 @@
       "description": "The file format the reTerminal E1003 downloads.",
       "oneOf": [
         {
-          "description": "8-bit greyscale, uncompressed (about 2.6 MB). The firmware needs no decoder for it.",
+          "description": "8-bit greyscale, uncompressed (about 2.6 MB). The simplest for the firmware to decode.",
           "type": "string",
           "const": "Bmp"
         },

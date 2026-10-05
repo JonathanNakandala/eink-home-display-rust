@@ -5,9 +5,9 @@
 # only if it changed, then sleep for as long as the server says.
 # The server's address and port are found over mDNS and remembered across sleeps; the
 # download only goes looking again when the remembered one stops working.
-# The server side is `[server]` and `[display]` in the Rust app's config; keep
-# `image_format` below in step with `display.image_format` there (the format can't be
-# changed at run time, so a mismatch is only reported in the log).
+# The server side is `[server]` and `[display]` in the Rust app's config.
+# The device says which formats it can decode (`accept_formats`), the server picks one it has, and the
+# response's Content-Type tells the decoder which it is, so nothing here needs to match the server.
 #
 # Requires ESPHome >= 2026.7.0 for the it8951 display platform.
 # Hardware pins are taken from reference/esphome.yaml (Seeed's full example).
@@ -24,6 +24,9 @@ substitutions:
   # The panel's size: the decoded image buffer is this many bytes (checked against PSRAM before a download).
   image_width: "1872"
   image_height: "1404"
+  # What the device can decode, as an Accept header: the server sends one of these, preferring its own
+  # choice (display.image_format) among equals. Weight one to rank it, e.g. "image/png, image/bmp;q=0.5".
+  accept_formats: "image/bmp, image/png"
   # The paths the Rust app serves the image and its plan at.
   image_path: /image
   plan_path: /plan
@@ -33,8 +36,6 @@ substitutions:
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
   # Empty takes the first image server found.
   server_name: ""
-  # BMP (8-bit, uncompressed, ~2.6 MB, no decoder needed) or PNG (small, needs inflating).
-  image_format: BMP
   # Only used when the server can't be reached; normally the server's /plan says when to wake.
   sleep_duration: 10min
   sleep_duration_ms: "600000"
@@ -115,7 +116,10 @@ json:
 online_image:
   - id: dashboard
     url: ${fallback_base}${image_path}
-    format: ${image_format}
+    # Decoded by the response's Content-Type (image/bmp or image/png), so the server decides which to send.
+    format: AUTO
+    request_headers:
+      Accept: ${accept_formats}
     type: GRAYSCALE
     update_interval: never
     # The panel is 1872x1404 and the image is rendered at that size, so no resize.
@@ -502,8 +506,6 @@ script:
             return;
           id(server_ip) = server.ip;
           id(server_port) = server.port;
-          if (!server.format.empty() && server.format != "${image_format}" && strcasecmp(server.format.c_str(), "${image_format}") != 0)
-            ESP_LOGE("eink_discovery", "Server sends %s but this firmware decodes ${image_format}; set both to the same format", server.format.c_str());
 
   # Nothing worked: the picture stays on the panel (e-paper keeps it). The first failure in a row
   # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time

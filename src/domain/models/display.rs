@@ -38,7 +38,7 @@ pub enum Dither {
 /// The file format the reTerminal E1003 downloads.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ImageFormat {
-    /// 8-bit greyscale, uncompressed (about 2.6 MB). The firmware needs no decoder for it.
+    /// 8-bit greyscale, uncompressed (about 2.6 MB). The simplest for the firmware to decode.
     #[default]
     Bmp,
     /// 8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.
@@ -46,6 +46,9 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
+    /// Every format the server can produce, for announcing what it is able to serve.
+    pub const ALL: [ImageFormat; 2] = [Self::Bmp, Self::Png];
+
     pub fn extension(self) -> &'static str {
         match self {
             Self::Bmp => "bmp",
