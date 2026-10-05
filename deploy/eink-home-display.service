@@ -2,8 +2,12 @@
 #   systemctl daemon-reload && systemctl enable --now eink-home-display
 [Unit]
 Description=E-ink home display: renders the dashboard and serves it to the display
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+# The schedule, the staleness checks and the restart cooldown all read the clock. A machine with no
+# real-time clock (a Raspberry Pi) starts with the time it last saved, so starting before the clock is
+# set would plan the first renders from the wrong time. time-sync.target is reached once a time service
+# (systemd-timesyncd, or chrony with chrony-wait.service) has set it; with none enabled it is reached at once.
 # Never give up: with a limit, systemd would leave the unit failed until someone ran
 # `systemctl reset-failed`. The backoff below keeps a persistent failure to one start every
 # 30 minutes, so there is no need for one.

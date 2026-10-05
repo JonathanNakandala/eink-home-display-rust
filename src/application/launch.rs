@@ -31,7 +31,12 @@ pub fn first_render_at(
     if skip || image_is_current {
         return None;
     }
-    let earliest = last_attempt.and_then(|at| chrono::Duration::from_std(cooldown).ok().map(|c| at + c));
+    // An attempt later than now can't be real: the clock was ahead when it was written (or has been
+    // corrected since). Counted from there, the cooldown would hold off every render until then, so it
+    // is counted from now instead.
+    let earliest = last_attempt.and_then(|at| {
+        chrono::Duration::from_std(cooldown).ok().and_then(|c| at.min(now).checked_add_signed(c))
+    });
     Some(earliest.map_or(now, |earliest| earliest.max(now)))
 }
 
@@ -104,6 +109,19 @@ mod tests {
     fn waits_out_the_cooldown_after_a_recent_attempt() {
         let recent = Some(at(11, 59, 30));
         assert_eq!(first_render_at(at(12, 0, 0), false, false, recent, COOLDOWN), Some(at(12, 1, 30)));
+    }
+
+    #[test]
+    fn an_attempt_in_the_future_counts_from_now_not_from_then() {
+        // Written while the clock was a day ahead: the render must not wait a day for it.
+        let future = Some(at(12, 0, 0) + chrono::Duration::days(1));
+        assert_eq!(first_render_at(at(12, 0, 0), false, false, future, COOLDOWN), Some(at(12, 2, 0)));
+    }
+
+    #[test]
+    fn a_cooldown_too_large_to_add_is_ignored_not_a_panic() {
+        let huge = Duration::from_secs(u64::MAX / 2);
+        assert_eq!(first_render_at(at(12, 0, 0), false, false, Some(at(11, 59, 0)), huge), Some(at(12, 0, 0)));
     }
 
     #[test]
