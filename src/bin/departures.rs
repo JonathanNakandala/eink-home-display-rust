@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::adapters::departures::setup_departure_boards;
+use eink_home_display_rust::bootstrap::setup_departure_boards;
 use eink_home_display_rust::cli::DeparturesArgs;
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::domain::models::departures::{DepartureStatus, Departures};
