@@ -34,7 +34,10 @@ impl Schedule {
             Self::Cron(cron) => cron
                 .find_next_occurrence(&after, false)
                 .map_err(|e| anyhow!("No next run time: {e}")),
-            Self::Every(period) => Ok(after + *period),
+            Self::Every(period) => chrono::Duration::from_std(*period)
+                .ok()
+                .and_then(|period| after.checked_add_signed(period))
+                .ok_or_else(|| anyhow!("The interval {period:?} is too long to schedule")),
         }
     }
 }
@@ -61,6 +64,13 @@ mod tests {
     fn every_adds_the_period() {
         let schedule = Schedule::parse_every("90s").unwrap();
         assert_eq!(schedule.next_after(at(8, 0, 0)).unwrap(), at(8, 1, 30));
+    }
+
+    #[test]
+    fn an_interval_too_long_to_add_is_an_error_not_a_panic() {
+        let schedule = Schedule::parse_every("999999999y").unwrap();
+        assert!(schedule.next_after(at(8, 0, 0)).is_err());
+        assert!(Schedule::Every(Duration::MAX).next_after(at(8, 0, 0)).is_err());
     }
 
     #[test]

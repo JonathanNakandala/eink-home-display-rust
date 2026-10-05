@@ -4,7 +4,7 @@
 //! start and end here. A request is refused while a render was started recently, so a held
 //! or repeated button press can't turn into a stream of API calls.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
@@ -48,7 +48,7 @@ impl RefreshControl {
     /// Triggers a render and waits for it, unless one started within the cooldown.
     pub async fn request(&self, timeout: Duration) -> RefreshOutcome {
         {
-            let mut last = self.last_started.lock().unwrap();
+            let mut last = self.last_started.lock().unwrap_or_else(PoisonError::into_inner);
             let now = Instant::now();
             if last.is_some_and(|started| now.duration_since(started) < self.cooldown) {
                 return RefreshOutcome::Throttled;
@@ -68,7 +68,7 @@ impl RefreshControl {
 
 impl RenderObserver for RefreshControl {
     fn render_started(&self) {
-        *self.last_started.lock().unwrap() = Some(Instant::now());
+        *self.last_started.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
     }
 
     fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {

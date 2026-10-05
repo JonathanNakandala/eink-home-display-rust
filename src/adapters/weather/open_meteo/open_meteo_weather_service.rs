@@ -126,7 +126,7 @@ impl OpenMeteoWeatherServiceAdapter {
             .first()
             .ok_or_else(|| SourceError::bad_response("the forecast has no daily minimum"))?;
         // Slot times are local to the location, so compare against its local time.
-        let now = Utc::now().naive_utc() + Duration::seconds(body.utc_offset_seconds);
+        let now = local_now(Utc::now().naive_utc(), body.utc_offset_seconds)?;
         let precipitation =
             PrecipitationOutlook::from_slots(&precipitation_slots(&body.minutely_15), now);
         Ok(Some(
@@ -142,6 +142,13 @@ impl OpenMeteoWeatherServiceAdapter {
             .with_uv_index(body.daily.uv_index_max.first().copied().flatten().map(UvIndex::new)),
         ))
     }
+}
+
+/// The location's local time, from UTC and the offset the API gave. A nonsense offset is a bad answer, not a panic.
+fn local_now(utc: NaiveDateTime, utc_offset_seconds: i64) -> Result<NaiveDateTime, SourceError> {
+    Duration::try_seconds(utc_offset_seconds)
+        .and_then(|offset| utc.checked_add_signed(offset))
+        .ok_or_else(|| SourceError::bad_response("the forecast has an impossible UTC offset"))
 }
 
 /// `None` unless both times are present and readable, since half a pair isn't worth showing.
@@ -199,5 +206,27 @@ fn condition_from_wmo_code(code: u8) -> WeatherCondition {
         95..=99 => WeatherCondition::Thunderstorm,
         // Cloud cover, and fog (45, 48), which has no icon of its own.
         _ => WeatherCondition::Clouds,
+    }
+}
+
+#[cfg(test)]
+mod local_time_tests {
+    use chrono::NaiveDate;
+
+    use super::*;
+
+    #[test]
+    fn the_offset_is_added_to_utc() {
+        let utc = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap().and_hms_opt(23, 30, 0).unwrap();
+        let local = local_now(utc, 3600).unwrap();
+        assert_eq!(local.to_string(), "2026-06-16 00:30:00");
+    }
+
+    #[test]
+    fn an_impossible_offset_is_a_bad_response_not_a_panic() {
+        let utc = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap().and_hms_opt(12, 0, 0).unwrap();
+        for offset in [i64::MAX, i64::MIN, i64::MAX / 1000] {
+            assert!(local_now(utc, offset).is_err(), "{offset}");
+        }
     }
 }
