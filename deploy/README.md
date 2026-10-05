@@ -35,6 +35,26 @@ image, and the error text can name the failing source, so keep the port on the L
 `/status` keeps its history in memory, so a restart starts it again at `starting`. The sources list is
 from the last render that succeeded.
 
+## IPv4 and IPv6
+
+`server.bind` defaults to `[::]:8080`, one socket that takes IPv4 and IPv6 clients. The server sets that up
+explicitly (whether `[::]` also accepts IPv4 is otherwise a system setting) and announces over mDNS
+exactly the IP versions it accepts: both address records for `[::]`, only the A record for `0.0.0.0`,
+only the AAAA records for a specific IPv6 address. The log line at start-up says which:
+`Serving the display image at http://[::]:8080/image (IPv4 and IPv6)`.
+
+- **No IPv6 on the host** (disabled in the kernel, or a container without IPv6): the server falls back to
+  `0.0.0.0` and says so (`listening on IPv4 only`), and announces only IPv4. A port that is already taken is
+  an error, not a fallback.
+- **Firewall:** allow TCP 8080 and UDP 5353 (mDNS) for IPv6 as well as IPv4. `ufw` does both when its
+  `IPV6=yes`; with `nftables` use the `inet` table, with `ip6tables` add the rules separately.
+- **What is announced:** each address only on its own interface, never loopback, so a client is not
+  pointed at an address it can't reach. IPv6 privacy (temporary) addresses are still announced when the host has
+  them, and they rotate: prefer a stable address (a DHCPv6 reservation, or a ULA) for anything that remembers
+  the server's address. Check with `dns-sd -G v4v6 <instance-name>.local` (macOS) or
+  `avahi-resolve -n <instance-name>.local` (Linux).
+- Clients may log IPv4 peers as `::ffff:192.168.0.5`; that is the same address.
+
 ## Watching the displays
 
 Each display reports itself on its normal check-in (query parameters on `/plan` and `/refresh`, so no

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_BIND: &str = "0.0.0.0:8080";
+const DEFAULT_BIND: &str = "[::]:8080";
 const DEFAULT_DIRECTORY: &str = "served";
 const DEFAULT_INSTANCE_NAME: &str = "E-ink home display";
 const DEFAULT_WAKE_DELAY_SECONDS: u32 = 30;
@@ -16,6 +16,9 @@ const DEFAULT_DEVICE_OVERDUE_GRACE_SECONDS: u32 = 900;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ServerConfig {
     /// Address to listen on. The image is served at `/image`, with no authentication, so keep it on the LAN.
+    /// `[::]:8080` takes IPv4 and IPv6 clients on one socket, and the server announces both over mDNS; a host
+    /// without IPv6 falls back to IPv4. `0.0.0.0:8080` is IPv4 only, and `[::]` with a specific address is that
+    /// address only.
     #[serde(default = "default_bind")]
     pub bind: SocketAddr,
     /// Where the image to serve is written. Relative paths are resolved against the working directory.
