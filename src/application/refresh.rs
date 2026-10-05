@@ -7,7 +7,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Local};
 use tokio::sync::{watch, Notify};
+
+use crate::domain::models::render_report::RenderReport;
+use crate::domain::services::render_observer::RenderObserver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshOutcome {
@@ -36,12 +40,8 @@ impl RefreshControl {
         &self.wake
     }
 
-    pub fn render_started(&self) {
-        *self.last_started.lock().unwrap() = Some(Instant::now());
-    }
-
     /// Called when a render ends, whether or not it worked.
-    pub fn render_finished(&self) {
+    fn render_finished(&self) {
         self.finished.send_modify(|count| *count += 1);
     }
 
@@ -63,6 +63,20 @@ impl RefreshControl {
             Ok(Ok(_)) => RefreshOutcome::Rendered,
             _ => RefreshOutcome::TimedOut,
         }
+    }
+}
+
+impl RenderObserver for RefreshControl {
+    fn render_started(&self) {
+        *self.last_started.lock().unwrap() = Some(Instant::now());
+    }
+
+    fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {
+        self.render_finished();
+    }
+
+    fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {
+        self.render_finished();
     }
 }
 

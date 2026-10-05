@@ -6,14 +6,17 @@
 //! render was attempted. The attempt is recorded in a file, so the cooldown holds across
 //! restarts. Failed renders never end the process, so only a crash can restart it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
 
-use crate::adapters::image_server::{rendered_at, render_due};
+use crate::application::plan::render_due;
 use crate::domain::models::display::ImageFormat;
-use crate::scheduler::Schedule;
+use crate::domain::models::render_report::RenderReport;
+use crate::domain::models::schedule::Schedule;
+use crate::domain::services::published_images::PublishedImages;
+use crate::domain::services::render_observer::RenderObserver;
 
 /// When to make the first render, or None to wait for the first scheduled slot.
 pub fn first_render_at(
@@ -31,13 +34,17 @@ pub fn first_render_at(
 }
 
 /// Whether the image being served has no render due yet, so it needn't be redone at start-up.
-pub fn served_image_is_current(
-    directory: &Path,
+pub async fn served_image_is_current(
+    images: &dyn PublishedImages,
     format: ImageFormat,
     schedule: &Schedule,
     now: DateTime<Local>,
 ) -> bool {
-    rendered_at(directory, format)
+    images
+        .published_at(format)
+        .await
+        .ok()
+        .flatten()
         .and_then(|rendered| render_due(now, rendered, schedule).ok())
         .is_some_and(|due| !due)
 }
@@ -49,6 +56,25 @@ pub fn record_attempt(marker: &Path) {
     }
 }
 
+/// Records each render's start in a file, for `first_render_at`'s cooldown after a restart.
+pub struct AttemptMarker(PathBuf);
+
+impl AttemptMarker {
+    pub fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+}
+
+impl RenderObserver for AttemptMarker {
+    fn render_started(&self) {
+        record_attempt(&self.0);
+    }
+
+    fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {}
+
+    fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {}
+}
+
 pub fn last_attempt(marker: &Path) -> Option<DateTime<Local>> {
     std::fs::metadata(marker).ok()?.modified().ok().map(DateTime::<Local>::from)
 }
@@ -58,6 +84,7 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
+    use crate::adapters::published_images::DirectoryImages;
 
     const COOLDOWN: Duration = Duration::from_secs(120);
 
@@ -99,15 +126,16 @@ mod tests {
         assert!((Local::now() - seen).num_seconds().abs() < 5);
     }
 
-    #[test]
-    fn an_image_is_current_until_its_next_slot() {
+    #[tokio::test]
+    async fn an_image_is_current_until_its_next_slot() {
         let tmp = tempfile::tempdir().unwrap();
+        let images = DirectoryImages::new(tmp.path());
         let schedule = Schedule::parse_every("1h").unwrap();
         let now = Local::now();
-        assert!(!served_image_is_current(tmp.path(), ImageFormat::Bmp, &schedule, now));
+        assert!(!served_image_is_current(&images, ImageFormat::Bmp, &schedule, now).await);
 
-        std::fs::write(tmp.path().join("image.bmp"), b"x").unwrap();
-        assert!(served_image_is_current(tmp.path(), ImageFormat::Bmp, &schedule, now));
-        assert!(!served_image_is_current(tmp.path(), ImageFormat::Bmp, &schedule, now + chrono::Duration::hours(2)));
+        images.publish(ImageFormat::Bmp, b"x").await.unwrap();
+        assert!(served_image_is_current(&images, ImageFormat::Bmp, &schedule, now).await);
+        assert!(!served_image_is_current(&images, ImageFormat::Bmp, &schedule, now + chrono::Duration::hours(2)).await);
     }
 }

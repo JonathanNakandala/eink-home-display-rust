@@ -1,3 +1,9 @@
+pub mod devices;
+pub mod plan;
+pub mod refresh;
+pub mod status;
+
+use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use anyhow::anyhow;
@@ -15,6 +21,7 @@ use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
 use crate::domain::services::departures_service::DeparturesService;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
+use crate::domain::services::render_observer::RenderObserver;
 use crate::domain::services::weather_service::WeatherService;
 use crate::domain::services::ImageDisplayService;
 
@@ -127,6 +134,9 @@ where
     limits: RenderLimits,
     #[new(default)]
     last_weather: LastGood<Option<WeatherInformation>>,
+    /// Told how each run goes; see `with_observer`.
+    #[new(default)]
+    observers: Vec<Arc<dyn RenderObserver>>,
 }
 
 impl<WS, DIG, IDS, IR, DS> Application<WS, DIG, IDS, IR, DS>
@@ -137,15 +147,33 @@ where
     IR: ImageRepository,
     DS: DeparturesService,
 {
+    /// Has `observer` told when each run starts and how it ends.
+    pub fn with_observer(mut self, observer: Arc<dyn RenderObserver>) -> Self {
+        self.observers.push(observer);
+        self
+    }
+
     /// Renders and shows the dashboard. A source that fails or is too slow doesn't stop it: that part
     /// is shown from its last good data if recent enough (labelled with the age), or as unavailable.
     /// The whole run is abandoned, with an error, if it takes longer than `limits.deadline`.
-    /// On success, says how healthy each source was.
+    /// On success, says how healthy each source was. The observers hear of the outcome either way.
     pub async fn run(&self, location: Location) -> anyhow::Result<RenderReport> {
+        for observer in &self.observers {
+            observer.render_started();
+        }
         let deadline = self.limits.deadline;
-        tokio::time::timeout(deadline, self.render(location))
+        let result = tokio::time::timeout(deadline, self.render(location))
             .await
-            .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))?
+            .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))
+            .and_then(|rendered| rendered);
+        let finished = Local::now();
+        for observer in &self.observers {
+            match &result {
+                Ok(report) => observer.render_succeeded(finished, report),
+                Err(error) => observer.render_failed(finished, error),
+            }
+        }
+        result
     }
 
     async fn render(&self, location: Location) -> anyhow::Result<RenderReport> {
@@ -445,5 +473,35 @@ mod tests {
         // The next run is unaffected.
         rig.render_hang.store(false, Ordering::SeqCst);
         rig.run().await;
+    }
+
+    #[derive(Default)]
+    struct Events(Mutex<Vec<&'static str>>);
+
+    impl RenderObserver for Events {
+        fn render_started(&self) {
+            self.0.lock().unwrap().push("started");
+        }
+        fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {
+            self.0.lock().unwrap().push("succeeded");
+        }
+        fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {
+            self.0.lock().unwrap().push("failed");
+        }
+    }
+
+    #[tokio::test]
+    async fn observers_hear_how_each_run_starts_and_ends() {
+        let events = Arc::new(Events::default());
+        let rig = rig();
+        let app = rig.app.with_observer(events.clone());
+
+        app.run(Location::new(0.0, 0.0)).await.unwrap();
+        assert_eq!(*events.0.lock().unwrap(), ["started", "succeeded"]);
+
+        // A run abandoned at its deadline is a failure too.
+        rig.render_hang.store(true, Ordering::SeqCst);
+        app.run(Location::new(0.0, 0.0)).await.unwrap_err();
+        assert_eq!(*events.0.lock().unwrap(), ["started", "succeeded", "started", "failed"]);
     }
 }

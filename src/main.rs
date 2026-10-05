@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -9,8 +10,12 @@ use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
-use eink_home_display_rust::adapters::image_server::{serve, DeviceBoard, Handles, RefreshControl, StatusBoard};
+use eink_home_display_rust::adapters::image_server::{serve, Handles};
+use eink_home_display_rust::adapters::published_images::DirectoryImages;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
+use eink_home_display_rust::application::devices::DeviceBoard;
+use eink_home_display_rust::application::refresh::RefreshControl;
+use eink_home_display_rust::application::status::StatusBoard;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
 use eink_home_display_rust::launch;
@@ -21,6 +26,7 @@ use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::departures_service::DeparturesService;
 use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
 use eink_home_display_rust::domain::services::image_repository::ImageRepository;
+use eink_home_display_rust::domain::services::published_images::PublishedImages;
 use eink_home_display_rust::domain::services::weather_service::WeatherService;
 use eink_home_display_rust::domain::services::ImageDisplayService;
 
@@ -63,17 +69,16 @@ async fn main() -> Result<()> {
     let chrome_source = ChromeSource::from(args.bundled_chrome);
 
     let Some(schedule) = args.schedule() else {
-        return create_application(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source)?
+        return create_application(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source, Arc::new(DirectoryImages::new(config.server.directory.clone())))?
             .run(location)
             .await
             .map(|_| ());
     };
-    // Built once so the Chrome it launches is kept between runs.
-    let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source)?;
     let now = chrono::Local::now();
+    let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
-        && launch::served_image_is_current(&config.server.directory, config.display.image_format, schedule, now);
+        && launch::served_image_is_current(images.as_ref(), config.display.image_format, schedule, now).await;
     let first = launch::first_render_at(
         now,
         args.no_initial_run,
@@ -90,28 +95,14 @@ async fn main() -> Result<()> {
     let refresh = RefreshControl::new(Duration::from_secs(config.server.refresh_cooldown_seconds.into()));
     let status = StatusBoard::new(now);
     let devices = DeviceBoard::new(Duration::from_secs(config.server.device_overdue_grace_seconds.into()));
+    // Built once so the Chrome it launches is kept between runs.
+    let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source, images.clone())?
+        .with_observer(Arc::new(launch::AttemptMarker::new(marker)))
+        .with_observer(refresh.clone())
+        .with_observer(status.clone());
     let periodic = run_periodically_from(schedule, first, refresh.wake(), shutdown_signal(), || {
-        launch::record_attempt(&marker);
-        refresh.render_started();
-        status.render_started();
         let run = app.run(location);
-        let (refresh, status) = (&refresh, &status);
-        async move {
-            let result = run.await;
-            let finished = chrono::Local::now();
-            let outcome = match result {
-                Ok(report) => {
-                    status.render_succeeded(finished, report);
-                    Ok(())
-                }
-                Err(error) => {
-                    status.render_failed(finished, &error);
-                    Err(error)
-                }
-            };
-            refresh.render_finished();
-            outcome
-        }
+        async move { run.await.map(|_| ()) }
     });
     if !config.display.kind.fetches_image() {
         return periodic.await;
@@ -119,7 +110,7 @@ async fn main() -> Result<()> {
     // The display downloads its image, so serve it for as long as the refresh loop runs.
     tokio::select! {
         result = periodic => result,
-        result = serve(&config.server, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
+        result = serve(&config.server, images, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
     }
 }
 
@@ -137,6 +128,7 @@ fn create_application(
     cache: &CachePaths,
     chrome_idle_timeout: Duration,
     chrome_source: ChromeSource,
+    images: Arc<dyn PublishedImages>,
 ) -> Result<
     Application<
         impl WeatherService,
@@ -149,7 +141,7 @@ fn create_application(
     Ok(Application::new(
         setup_weather_service(&config.weather)?,
         ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source),
-        setup_display(&config.display, &config.server.directory),
+        setup_display(&config.display, images),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
         (&config.stale_data).into(),
