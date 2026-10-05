@@ -2,39 +2,39 @@
 //! The display adapter publishes into a directory; this serves what is there.
 
 mod advertise;
+mod health;
+mod image;
 mod metrics;
 mod negotiate;
+mod plan;
+#[cfg(test)]
+mod testing;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
-use chrono::{DateTime, Local};
-use serde::Deserialize;
-use axum::extract::{Query, State};
-use axum::http::HeaderMap;
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
-use crate::application::devices::{DeviceBoard, RawTelemetry, Telemetry};
-use crate::application::plan::{compute, PlanTiming};
-use crate::application::refresh::{RefreshControl, RefreshOutcome};
-use crate::application::status::{Status, StatusBoard};
+use crate::application::devices::DeviceBoard;
+use crate::application::plan::PlanTiming;
+use crate::application::refresh::RefreshControl;
+use crate::application::status::StatusBoard;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::published_images::PublishedImages;
 
-struct Published {
-    images: Arc<dyn PublishedImages>,
-    format: ImageFormat,
-    schedule: Schedule,
-    timing: PlanTiming,
-    handles: Handles,
+pub(super) struct Published {
+    pub(super) images: Arc<dyn PublishedImages>,
+    pub(super) format: ImageFormat,
+    pub(super) schedule: Schedule,
+    pub(super) timing: PlanTiming,
+    pub(super) handles: Handles,
 }
 
 /// How the server listens and announces itself.
@@ -61,9 +61,6 @@ pub struct Handles {
     pub devices: Arc<DeviceBoard>,
 }
 
-/// How long a button press waits for its render: a cold Chrome start can take a while.
-const REFRESH_TIMEOUT: Duration = Duration::from_secs(40);
-
 pub fn router(
     images: Arc<dyn PublishedImages>,
     format: ImageFormat,
@@ -72,169 +69,29 @@ pub fn router(
     handles: Handles,
 ) -> Router {
     Router::new()
-        .route("/image", get(image))
-        .route("/plan", get(plan))
-        .route("/refresh", post(refresh_now))
-        .route("/status", get(status))
-        .route("/healthz", get(healthz))
-        .route("/metrics", get(metrics))
+        .route("/image", get(image::image))
+        .route("/plan", get(plan::plan))
+        .route("/refresh", post(plan::refresh_now))
+        .route("/status", get(health::status))
+        .route("/healthz", get(health::healthz))
+        .route("/metrics", get(health::metrics))
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(Published { images, format, schedule, timing, handles }))
 }
 
-#[derive(Deserialize)]
-struct PlanQuery {
-    /// The version of the image the display already shows.
-    have: Option<u32>,
-    // What the display reports about itself. Text, so a malformed value can't fail the request;
-    // see `RawTelemetry`.
-    device: Option<String>,
-    battery_mv: Option<String>,
-    battery_pct: Option<String>,
-    battery_state: Option<String>,
-    failed_wakes: Option<String>,
-}
 
-impl PlanQuery {
-    fn telemetry(&self) -> Option<Telemetry> {
-        RawTelemetry {
-            device: self.device.clone(),
-            battery_mv: self.battery_mv.clone(),
-            battery_pct: self.battery_pct.clone(),
-            battery_state: self.battery_state.clone(),
-            failed_wakes: self.failed_wakes.clone(),
-        }
-        .parse()
-    }
-}
 
-/// Tells a display which render the image is, whether it is stale, and when to ask again.
-async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
-    plan_response(&published, query.have, query.telemetry()).await
-}
 
-/// Renders now if the display's button asked for it (and one hasn't just run), then answers
-/// like `/plan` for the image that results. A refused or failed render still answers, with the
-/// image there is.
-async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
-    match published.handles.refresh.request(REFRESH_TIMEOUT).await {
-        RefreshOutcome::Rendered => log::info!("Rendered on request"),
-        RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
-        RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
-    }
-    plan_response(&published, query.have, query.telemetry()).await
-}
 
-/// When the served image was written; None before the first render.
-async fn image_written_at(published: &Published) -> anyhow::Result<Option<DateTime<Local>>> {
-    published.images.published_at(published.format).await
-}
 
-/// How the service is doing: the render history, the sources' state, and the image's age.
-async fn status(State(published): State<Arc<Published>>) -> Response {
-    match current_status(&published).await {
-        Ok(status) => ([(header::CACHE_CONTROL, "no-store")], Json(status)).into_response(),
-        Err(e) => server_error("report", e),
-    }
-}
 
-/// A pass or fail for monitors: 200 unless the image is stale, then 503, with a line saying why.
-async fn healthz(State(published): State<Arc<Published>>) -> Response {
-    match current_status(&published).await {
-        Ok(status) => {
-            let code = if status.is_healthy() { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
-            (code, [(header::CACHE_CONTROL, "no-store")], status.summary()).into_response()
-        }
-        Err(e) => server_error("check", e),
-    }
-}
 
-async fn current_status(published: &Published) -> anyhow::Result<Status> {
-    let rendered_at = image_written_at(published).await?;
-    let now = Local::now();
-    let mut status = published.handles.status.status(now, rendered_at, &published.schedule, published.timing)?;
-    status.devices = published.handles.devices.snapshot(now);
-    Ok(status)
-}
 
-/// The same facts as `/status`, in the Prometheus text format, for a scraper.
-async fn metrics(State(published): State<Arc<Published>>) -> Response {
-    match current_status(&published).await {
-        Ok(status) => (
-            [(header::CONTENT_TYPE, metrics::CONTENT_TYPE), (header::CACHE_CONTROL, "no-store")],
-            metrics::render(&status),
-        )
-            .into_response(),
-        Err(e) => server_error("report", e),
-    }
-}
-
-async fn plan_response(published: &Published, have: Option<u32>, telemetry: Option<Telemetry>) -> Response {
-    let rendered_at = match image_written_at(published).await {
-        Ok(Some(rendered_at)) => rendered_at,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response(),
-        Err(e) => return server_error("inspect", e),
-    };
-    let now = Local::now();
-    match compute(now, rendered_at, &published.schedule, published.timing, have) {
-        Ok(plan) => {
-            if let Some(telemetry) = telemetry {
-                published.handles.devices.record(now, telemetry, plan.next_seconds);
-            }
-            ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response()
-        }
-        Err(e) => server_error("plan", e),
-    }
-}
-
-fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
+pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
     log::error!("Failed to {action} the published image: {e}");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
-/// Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can
-/// decode, the server's preferred one if it has no preference. 406 if it can decode none of them.
-async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> Response {
-    let mut available = Vec::new();
-    for format in ImageFormat::ALL {
-        match published.images.published_at(format).await {
-            Ok(Some(_)) => available.push(format),
-            Ok(None) => {}
-            Err(e) => return server_error("inspect", e),
-        }
-    }
-    if available.is_empty() {
-        return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
-    }
-    let accept = headers.get(header::ACCEPT).and_then(|value| value.to_str().ok());
-    let candidates = negotiate::acceptable(accept, published.format, &available);
-    if candidates.is_empty() {
-        let offered: Vec<_> = available.iter().map(|format| format.content_type()).collect();
-        let body = format!("No acceptable format. Available: {}", offered.join(", "));
-        return (StatusCode::NOT_ACCEPTABLE, [(header::VARY, "Accept")], body).into_response();
-    }
-    // The file could have been replaced between the check and the read, so fall through to the next.
-    for format in candidates {
-        match published.images.read(format).await {
-            Ok(Some(bytes)) => {
-                return (
-                    [
-                        (header::CONTENT_TYPE, format.content_type()),
-                        // The picture changes every refresh, so nothing may reuse an old one.
-                        (header::CACHE_CONTROL, "no-store"),
-                        // The reply depends on the request's Accept, which a cache must know.
-                        (header::VARY, "Accept"),
-                    ],
-                    bytes,
-                )
-                    .into_response();
-            }
-            Ok(None) => continue,
-            Err(e) => return server_error("read", e),
-        }
-    }
-    (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response()
-}
 
 /// Serves until the future is dropped, or fails at once if the address can't be bound.
 pub async fn serve(
@@ -261,298 +118,4 @@ pub async fn serve(
     axum::serve(listener, router(images, format, schedule, settings.timing, handles))
         .await
         .context("Image server stopped")
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::{Path, PathBuf};
-
-    use super::*;
-    use crate::adapters::published_images::DirectoryImages;
-    use crate::domain::services::render_observer::RenderObserver;
-
-    async fn publish(directory: &Path, format: ImageFormat, bytes: &[u8]) -> anyhow::Result<()> {
-        DirectoryImages::new(directory).publish(format, bytes).await
-    }
-
-    async fn start(directory: PathBuf, format: ImageFormat) -> String {
-        start_with_status(directory, format).await.0
-    }
-
-    /// Also hands back the status board, to play the render loop's part.
-    async fn start_with_status(directory: PathBuf, format: ImageFormat) -> (String, Arc<StatusBoard>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let timing = PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
-        let schedule = Schedule::parse_every("1h").unwrap();
-        let status = StatusBoard::new(Local::now());
-        let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };
-        tokio::spawn(async move { axum::serve(listener, router(Arc::new(DirectoryImages::new(directory)), format, schedule, timing, handles)).await });
-        (format!("http://{address}"), status)
-    }
-
-    #[tokio::test]
-    async fn serves_the_published_image_with_its_content_type() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-
-        assert_eq!(reqwest::get(format!("{base}/image")).await.unwrap().status(), 404);
-
-        publish(tmp.path(), ImageFormat::Bmp, &[1, 2, 3]).await.unwrap();
-        let response = reqwest::get(format!("{base}/image")).await.unwrap();
-        assert_eq!(response.status(), 200);
-        assert_eq!(response.headers()["content-type"], "image/bmp");
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        assert_eq!(response.bytes().await.unwrap().as_ref(), [1, 2, 3]);
-
-        // A new publish replaces it and leaves no staging file behind.
-        publish(tmp.path(), ImageFormat::Bmp, &[9]).await.unwrap();
-        let response = reqwest::get(format!("{base}/image")).await.unwrap();
-        assert_eq!(response.bytes().await.unwrap().as_ref(), [9]);
-        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
-    }
-
-    #[tokio::test]
-    async fn healthz_answers_without_an_image() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
-        assert_eq!(reqwest::get(format!("{base}/healthz")).await.unwrap().status(), 200);
-    }
-
-    async fn healthz(base: &str) -> (u16, String) {
-        let response = reqwest::get(format!("{base}/healthz")).await.unwrap();
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        (response.status().as_u16(), response.text().await.unwrap())
-    }
-
-    #[tokio::test]
-    async fn healthz_fails_when_the_image_is_stale_and_recovers_with_a_render() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-
-        // Just started, nothing rendered yet: not a failure.
-        assert_eq!(healthz(&base).await, (200, "starting".to_owned()));
-
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-        assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
-
-        // An hourly schedule, and the image is three hours old: two renders are missing.
-        set_age(tmp.path(), 3 * 3600);
-        let (code, text) = healthz(&base).await;
-        assert_eq!((code, text.as_str()), (503, "stale: the image is 3 h 0 min old"));
-
-        publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
-        status.render_succeeded(Local::now(), &Default::default());
-        assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
-    }
-
-    #[tokio::test]
-    async fn a_source_that_is_down_is_degraded_but_the_check_still_passes() {
-        use crate::domain::models::render_report::{RenderReport, SourceReport, SourceState};
-
-        let tmp = tempfile::tempdir().unwrap();
-        let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-        status.render_succeeded(
-            Local::now(),
-            &RenderReport {
-                sources: vec![SourceReport {
-                    name: "weather".into(),
-                    state: SourceState::Unavailable { reason: "key rejected".into() },
-                }],
-            },
-        );
-
-        assert_eq!(healthz(&base).await, (200, "degraded".to_owned()));
-        let body: serde_json::Value = reqwest::get(format!("{base}/status")).await.unwrap().json().await.unwrap();
-        assert_eq!(body["state"], "degraded");
-        assert_eq!(body["sources"][0]["name"], "weather");
-        assert_eq!(body["sources"][0]["state"], "unavailable");
-        assert_eq!(body["sources"][0]["reason"], "key rejected");
-    }
-
-    #[tokio::test]
-    async fn status_reports_the_history_the_image_and_the_next_render() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-
-        let before: serde_json::Value = reqwest::get(format!("{base}/status")).await.unwrap().json().await.unwrap();
-        assert_eq!(before["state"], "starting");
-        assert!(before["image"].is_null());
-        assert!(before["last_success"].is_null());
-        assert_eq!(before["consecutive_failures"], 0);
-
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-        status.render_started();
-        status.render_failed(Local::now(), &anyhow::anyhow!("Chrome did not start"));
-        let after = reqwest::get(format!("{base}/status")).await.unwrap();
-        assert_eq!(after.headers()["cache-control"], "no-store");
-        let after: serde_json::Value = after.json().await.unwrap();
-
-        assert_eq!(after["state"], "failing");
-        assert_eq!(after["rendering"], false);
-        assert_eq!(after["consecutive_failures"], 1);
-        assert_eq!(after["last_failure"]["error"], "Chrome did not start");
-        assert!(after["image"]["age_seconds"].as_u64().unwrap() < 5);
-        assert!(after["image"]["version"].as_u64().unwrap() > 0);
-        assert!(after["next_render"].as_str().unwrap().contains('T'));
-        assert_eq!(after["version"], env!("CARGO_PKG_VERSION"));
-    }
-
-    fn set_age(directory: &Path, seconds: u64) {
-        let file = std::fs::File::options().write(true).open(directory.join("image.bmp")).unwrap();
-        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds)).unwrap();
-    }
-
-    #[tokio::test]
-    async fn plan_reports_the_version_and_when_to_come_back() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        assert_eq!(reqwest::get(format!("{base}/plan")).await.unwrap().status(), 404);
-
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-        set_age(tmp.path(), 100);
-        let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
-        let version = plan["version"].as_u64().unwrap();
-        let expected =
-            DirectoryImages::new(tmp.path()).published_at(ImageFormat::Bmp).await.unwrap().unwrap().timestamp() as u64;
-        assert_eq!(version, expected);
-        assert_eq!(plan["changed"], true);
-        assert_eq!(plan["stale"], false);
-        // An hour after the render, less the 100 seconds already gone, plus the 30 second delay.
-        let next = plan["next_seconds"].as_u64().unwrap();
-        assert!((3525..=3535).contains(&next), "{next}");
-
-        let same: serde_json::Value =
-            reqwest::get(format!("{base}/plan?have={version}")).await.unwrap().json().await.unwrap();
-        assert_eq!(same["changed"], false);
-        let other: serde_json::Value = reqwest::get(format!("{base}/plan?have=1")).await.unwrap().json().await.unwrap();
-        assert_eq!(other["changed"], true);
-
-        // A newer render is a larger version.
-        publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
-        let newer: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
-        assert!(newer["version"].as_u64().unwrap() >= version + 99);
-    }
-
-    #[tokio::test]
-    async fn an_old_image_is_reported_stale() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-        set_age(tmp.path(), 3 * 3600);
-
-        let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
-        assert_eq!(plan["stale"], true);
-        assert!(plan["age_seconds"].as_u64().unwrap() >= 3 * 3600);
-    }
-
-    #[tokio::test]
-    async fn a_check_in_shows_up_in_status_and_metrics() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-
-        let status = || async {
-            reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap()
-        };
-        assert_eq!(status().await["devices"], serde_json::json!([]));
-
-        let url = format!(
-            "{base}/plan?have=1&device=kitchen&battery_mv=3350&battery_pct=8&battery_state=low&failed_wakes=0"
-        );
-        assert_eq!(reqwest::get(url).await.unwrap().status(), 200);
-
-        let devices = status().await["devices"].clone();
-        assert_eq!(devices[0]["name"], "kitchen");
-        assert_eq!(devices[0]["battery_millivolts"], 3350);
-        assert_eq!(devices[0]["battery_state"], "low");
-        assert_eq!(devices[0]["overdue"], false);
-
-        let response = reqwest::get(format!("{base}/metrics")).await.unwrap();
-        assert!(response.headers()["content-type"].to_str().unwrap().starts_with("text/plain; version=0.0.4"));
-        let text = response.text().await.unwrap();
-        assert!(text.contains("eink_device_battery_volts{device=\"kitchen\"} 3.35"), "{text}");
-        assert!(text.contains("eink_device_battery_state{device=\"kitchen\",state=\"low\"} 1"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn bad_telemetry_never_stops_the_plan() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-
-        let url = format!("{base}/plan?device=%22bad%0A&battery_mv=lots&battery_pct=-1&failed_wakes=x");
-        assert_eq!(reqwest::get(url).await.unwrap().status(), 200);
-        let devices = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
-        assert_eq!(devices["devices"], serde_json::json!([]));
-    }
-
-    async fn fetch(base: &str, accept: Option<&str>) -> reqwest::Response {
-        let request = reqwest::Client::new().get(format!("{base}/image"));
-        match accept {
-            Some(accept) => request.header("Accept", accept),
-            None => request,
-        }
-        .send()
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn image_follows_the_accept_header() {
-        let tmp = tempfile::tempdir().unwrap();
-        // The server prefers PNG, and has both.
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
-        publish(tmp.path(), ImageFormat::Png, b"png-bytes").await.unwrap();
-
-        for (accept, content_type, body) in [
-            (None, "image/png", "png-bytes"),
-            (Some("*/*"), "image/png", "png-bytes"),
-            (Some("image/bmp"), "image/bmp", "bmp-bytes"),
-            (Some("image/png"), "image/png", "png-bytes"),
-            (Some("image/bmp, image/png;q=0.5"), "image/bmp", "bmp-bytes"),
-            // What ESPHome's format AUTO sends: no preference, so the server's wins.
-            (Some("image/*,*/*;q=0.8"), "image/png", "png-bytes"),
-        ] {
-            let response = fetch(&base, accept).await;
-            assert_eq!(response.status(), 200, "{accept:?}");
-            assert_eq!(response.headers()["content-type"], content_type, "{accept:?}");
-            assert_eq!(response.headers()["vary"], "Accept", "{accept:?}");
-            assert_eq!(response.headers()["cache-control"], "no-store", "{accept:?}");
-            assert_eq!(response.text().await.unwrap(), body, "{accept:?}");
-        }
-    }
-
-    #[tokio::test]
-    async fn an_unacceptable_accept_header_is_a_406_that_lists_what_there_is() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"x").await.unwrap();
-        publish(tmp.path(), ImageFormat::Png, b"y").await.unwrap();
-
-        for accept in ["image/gif", "text/html", "image/bmp;q=0, image/png;q=0"] {
-            let response = fetch(&base, Some(accept)).await;
-            assert_eq!(response.status(), 406, "{accept}");
-            assert_eq!(response.headers()["vary"], "Accept");
-            let body = response.text().await.unwrap();
-            assert!(body.contains("image/bmp") && body.contains("image/png"), "{body}");
-        }
-    }
-
-    #[tokio::test]
-    async fn only_the_formats_that_exist_are_offered() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
-        assert_eq!(fetch(&base, None).await.status(), 404);
-
-        // Only a BMP exists, though PNG is preferred: wildcards get it, and asking for PNG is a 406.
-        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
-        let response = fetch(&base, Some("*/*")).await;
-        assert_eq!(response.headers()["content-type"], "image/bmp");
-        let refused = fetch(&base, Some("image/png")).await;
-        assert_eq!(refused.status(), 406);
-        assert!(refused.text().await.unwrap().ends_with("image/bmp"));
-    }
 }
