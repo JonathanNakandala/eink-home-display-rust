@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus};
+use crate::domain::models::freshness::format_age;
 use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, SunTimes, UvIndex,
     WeatherCondition, WeatherInformation,
@@ -12,6 +13,7 @@ pub mod air_quality;
 pub mod arrival;
 pub mod departures;
 pub mod display;
+pub mod freshness;
 pub mod location;
 pub mod pollen;
 pub mod stop_point;
@@ -26,13 +28,26 @@ pub struct DepartureBoardData {
     /// The station's own name, shown beside the heading; empty when it adds nothing.
     station: String,
     services: Vec<DepartureService>,
+    /// How old the services are when they are from an earlier fetch (e.g. "8 min"); empty when fresh.
+    age: String,
+    /// Nothing could be fetched and nothing recent enough is remembered.
+    unavailable: bool,
 }
 
 impl DepartureBoardData {
     pub fn new(name: String, station: String, services: Vec<DepartureService>) -> Self {
         // A board already titled "Turnpike Lane" doesn't need the station repeated.
         let station = if station.eq_ignore_ascii_case(&name) { String::new() } else { station };
-        Self { name, station, services }
+        Self { name, station, services, age: String::new(), unavailable: false }
+    }
+
+    /// The board built from an earlier fetch, labelled with how old it is.
+    pub fn from_earlier(name: String, station: String, services: Vec<DepartureService>, age: Duration) -> Self {
+        Self { age: format_age(age), ..Self::new(name, station, services) }
+    }
+
+    pub fn unavailable(name: String) -> Self {
+        Self { unavailable: true, ..Self::new(name, String::new(), Vec::new()) }
     }
 }
 
@@ -67,6 +82,10 @@ pub struct GlanceData {
     /// so the template can size the text to fill the space.
     departure_lines: usize,
     date: DateInfo,
+    /// How old the weather is when it is from an earlier fetch (e.g. "40 min"); empty when fresh.
+    weather_age: String,
+    /// The weather is switched on but couldn't be fetched, so say so instead of leaving a gap.
+    weather_unavailable: bool,
 }
 
 impl GlanceData {
@@ -79,7 +98,25 @@ impl GlanceData {
             .iter()
             .map(|board| 1 + board.services.len().max(1))
             .sum();
-        Self { weather_information, departures, departure_lines, date }
+        Self {
+            weather_information,
+            departures,
+            departure_lines,
+            date,
+            weather_age: String::new(),
+            weather_unavailable: false,
+        }
+    }
+
+    /// The weather is from `age` ago.
+    pub fn with_weather_age(mut self, age: Duration) -> Self {
+        self.weather_age = format_age(age);
+        self
+    }
+
+    pub fn with_weather_unavailable(mut self) -> Self {
+        self.weather_unavailable = true;
+        self
     }
 
     pub fn weather_information(&self) -> Option<&WeatherInformation> {
@@ -88,6 +125,20 @@ impl GlanceData {
 }
 
 impl GlanceData {
+    /// The sample with some sources failed, to preview how that looks: the first board and the
+    /// weather are from earlier fetches, and the last board is unavailable.
+    pub fn sample_degraded(now: DateTime<Local>) -> Self {
+        let mut data = Self::sample(now);
+        if let Some(first) = data.departures.first_mut() {
+            first.age = format_age(Duration::minutes(8));
+        }
+        if let Some(last) = data.departures.pop() {
+            data.departures.push(DepartureBoardData::unavailable(last.name));
+        }
+        data.departure_lines = data.departures.iter().map(|board| 1 + board.services.len().max(1)).sum();
+        data.with_weather_age(Duration::minutes(40))
+    }
+
     /// Made-up but representative data (on time, delayed, cancelled and live
     /// services), timed relative to `now`, for previewing the layout offline.
     /// The first service on each board leaves after the journey to it: 5 minutes

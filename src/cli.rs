@@ -178,6 +178,10 @@ pub struct RenderArgs {
     #[arg(long)]
     pub live: bool,
 
+    /// Preview the sample with some sources failed: stale boards and weather, and an unavailable board
+    #[arg(long)]
+    pub degraded: bool,
+
     /// Also write each display's HTML and fonts to <output-dir>/page_<display>/, to open in a browser
     #[arg(long)]
     pub html: bool,

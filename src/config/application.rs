@@ -27,9 +27,49 @@ pub struct ApplicationConfig {
     #[serde(default)]
     pub cache: CacheConfig,
     pub display: DisplayConfig,
+    /// How long an earlier result stands in for a source that has failed.
+    #[serde(default)]
+    pub stale_data: StaleDataConfig,
     /// Serves the rendered image to displays that fetch it, like the reTerminal E1003.
     #[serde(default)]
     pub server: ServerConfig,
+}
+
+/// When a source fails, the dashboard shows what it said last time, labelled with its age, until it
+/// is older than this; after that the part is shown as unavailable.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StaleDataConfig {
+    /// Departures go out of date quickly, so this is short.
+    #[serde(default = "default_departures_max_age")]
+    pub departures_max_age_minutes: u32,
+    #[serde(default = "default_weather_max_age")]
+    pub weather_max_age_minutes: u32,
+}
+
+fn default_departures_max_age() -> u32 {
+    15
+}
+
+fn default_weather_max_age() -> u32 {
+    180
+}
+
+impl Default for StaleDataConfig {
+    fn default() -> Self {
+        Self {
+            departures_max_age_minutes: default_departures_max_age(),
+            weather_max_age_minutes: default_weather_max_age(),
+        }
+    }
+}
+
+impl From<&StaleDataConfig> for crate::application::MaxAge {
+    fn from(config: &StaleDataConfig) -> Self {
+        Self {
+            departures: chrono::Duration::minutes(config.departures_max_age_minutes.into()),
+            weather: chrono::Duration::minutes(config.weather_max_age_minutes.into()),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

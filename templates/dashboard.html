@@ -128,6 +128,15 @@
             letter-spacing: 0;
         }
 
+        /* Shown when the board is from an earlier fetch, because its source failed. */
+        .departures .board h2 .age {
+            margin-left: 0.6em;
+            font-size: 0.7em;
+            font-weight: 300;
+            letter-spacing: 0;
+            font-style: italic;
+        }
+
         .departures .board:first-child h2 {
             padding-top: 0;
         }
@@ -164,6 +173,13 @@
         /* The scheduled time stays as is; the new time beside it is what to go by. */
         .departures .row.delayed .expected {
             font-weight: 600;
+        }
+
+        .weather .stale-note,
+        .weather .unavailable {
+            font-size: 1.7vw;
+            font-weight: 300;
+            font-style: italic;
         }
 
         .weather {
@@ -328,7 +344,7 @@
     </style>
 </head>
 <body>
-<div class="container{{#if weather_information}} has-weather{{/if}}">
+<div class="container{{#if weather_information}} has-weather{{else}}{{#if weather_unavailable}} has-weather{{/if}}{{/if}}">
     <div class="header">
         <div class="time">{{date.currentTime}}</div>
         {{#with weather_information.sun}}
@@ -350,7 +366,7 @@
     <div class="departures" style="--lines: {{departure_lines}}">
         {{#each departures}}
         <section class="board">
-            <h2>{{this.name}}{{#if this.station}} <span class="station">{{this.station}}</span>{{/if}}</h2>
+            <h2>{{this.name}}{{#if this.station}} <span class="station">{{this.station}}</span>{{/if}}{{#if this.age}}<span class="age">{{this.age}} ago</span>{{/if}}</h2>
             {{#each this.services}}
             <div class="row {{this.status}}">
                 <span class="time">{{this.time}}</span>
@@ -359,11 +375,15 @@
                 <span class="countdown">{{this.countdown}}</span>
             </div>
             {{else}}
-            <div class="row none">No scheduled services</div>
+            <div class="row none">{{#if this.unavailable}}Unavailable{{else}}No scheduled services{{/if}}</div>
             {{/each}}
         </section>
         {{/each}}
     </div>
+    {{/if}}
+
+    {{#if weather_unavailable}}
+    <div class="weather"><div class="unavailable">Weather unavailable</div></div>
     {{/if}}
 
     {{#if weather_information}}
@@ -416,6 +436,7 @@
             {{/each}}
         </div>
         {{/with}}
+        {{#if weather_age}}<div class="stale-note">Updated {{weather_age}} ago</div>{{/if}}
     </div>
     {{/if}}
 </div>

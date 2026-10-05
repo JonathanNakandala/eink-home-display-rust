@@ -58,6 +58,10 @@ kind = "WaveshareEpd7in5V2"
 dither = "None"
 image_format = "Bmp"
 
+[stale_data]
+departures_max_age_minutes = 15
+weather_max_age_minutes = 180
+
 [server]
 bind = "0.0.0.0:8080"
 directory = "served"
