@@ -120,6 +120,23 @@ finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 The image format can't be found out at run time (`online_image` fixes it at compile time). The
 server announces its format, and the log reports an error if it differs from `image_format`.
 
+### Which failure it was
+
+ESPHome gives no error type: `online_image` calls `on_error` with no arguments, and the cause is only
+in the log. So the device records the stage that failed, in `fail_reason`, and each stage takes the
+right path:
+
+| Stage | `fail_reason` | What happens |
+|---|---|---|
+| Wi-Fi didn't connect in 30 s | `wifi` | Straight to the failure path: no `/plan`, no lookup. Notice: `No Wi-Fi @ 14:32` |
+| `/plan` didn't answer, or answered badly | `server` | Look for the server once, then ask again. Notice: `Last update failed @ ...` |
+| Not enough PSRAM for the image | `memory` | Checked before the download ([eink_health.h](eink_health.h)); no lookup. Notice: `Out of memory @ ...` |
+| The download or decode failed after `/plan` answered | `download` | No lookup, since the server just answered. Notice: `Last update failed @ ...` |
+
+The memory check compares the largest free PSRAM block with the decoded image (1872 x 1404 bytes) plus
+96 KB, and the log says what was needed and what was free. Each failure counts towards the backoff below,
+and the log line `Failure N in a row (reason)` names the stage.
+
 ### When the download fails
 
 The old picture stays on the panel. What happens next depends on how many wakes in a row have failed
@@ -159,6 +176,9 @@ The device sleeps for the `next_seconds` the server reports: the next scheduled 
 `*/10 6-22 * * *`, keeps it asleep overnight.
 
 ## Verify on first flash
+
+- The first boot log shows no `Not enough PSRAM` line. If it does, the figures in it say how much was
+  free; check that PSRAM is detected (about 8 MB) before anything else.
 
 - Stop the server and wake the device a few times: the label appears once, and the log shows
   `Failure 2 in a row; sleeping 1200 s`, then 2400 s. Start the server again: the next wake redraws
