@@ -25,7 +25,6 @@ use crate::application::devices::{DeviceBoard, RawTelemetry, Telemetry};
 use crate::application::plan::{compute, PlanTiming};
 use crate::application::refresh::{RefreshControl, RefreshOutcome};
 use crate::application::status::{Status, StatusBoard};
-use crate::config::server::ServerConfig;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::published_images::PublishedImages;
@@ -36,6 +35,19 @@ struct Published {
     schedule: Schedule,
     timing: PlanTiming,
     handles: Handles,
+}
+
+/// How the server listens and announces itself.
+#[derive(Debug, Clone)]
+pub struct ServerSettings {
+    /// Address to listen on.
+    pub bind: std::net::SocketAddr,
+    /// Announce the server over mDNS / DNS-SD.
+    pub advertise: bool,
+    /// The name shown for the service in a scan.
+    pub instance_name: String,
+    /// What `/plan` tells a display about when to come back.
+    pub timing: PlanTiming,
 }
 
 /// What the render loop shares with the server.
@@ -226,27 +238,27 @@ async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> R
 
 /// Serves until the future is dropped, or fails at once if the address can't be bound.
 pub async fn serve(
-    config: &ServerConfig,
+    settings: &ServerSettings,
     images: Arc<dyn PublishedImages>,
     format: ImageFormat,
     schedule: Schedule,
     handles: Handles,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(config.bind)
+    let listener = TcpListener::bind(settings.bind)
         .await
-        .with_context(|| format!("Failed to listen on {}", config.bind))?;
-    log::info!("Serving the display image at http://{}/image", config.bind);
+        .with_context(|| format!("Failed to listen on {}", settings.bind))?;
+    log::info!("Serving the display image at http://{}/image", settings.bind);
     // Discovery is a convenience, so the server runs without it. Held until serving ends,
     // which is when the goodbye goes out.
-    let _advertisement = config
+    let _advertisement = settings
         .advertise
-        .then(|| Advertisement::start(config, listener.local_addr()?.port(), format))
+        .then(|| Advertisement::start(settings, listener.local_addr()?.port(), format))
         .transpose()
         .unwrap_or_else(|e| {
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(images, format, schedule, PlanTiming::from(config), handles))
+    axum::serve(listener, router(images, format, schedule, settings.timing, handles))
         .await
         .context("Image server stopped")
 }
@@ -271,7 +283,7 @@ mod tests {
     async fn start_with_status(directory: PathBuf, format: ImageFormat) -> (String, Arc<StatusBoard>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let timing = PlanTiming::from(&ServerConfig::default());
+        let timing = PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
         let schedule = Schedule::parse_every("1h").unwrap();
         let status = StatusBoard::new(Local::now());
         let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };

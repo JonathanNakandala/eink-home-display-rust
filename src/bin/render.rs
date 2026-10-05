@@ -5,12 +5,12 @@ use clap::Parser;
 use image::GrayImage;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::adapters::departures::setup_departure_boards;
+use eink_home_display_rust::bootstrap::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
-use eink_home_display_rust::adapters::image_display_service::setup_display;
+use eink_home_display_rust::bootstrap::setup_display;
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
-use eink_home_display_rust::adapters::weather::setup_weather_service;
+use eink_home_display_rust::bootstrap::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli::RenderArgs;
 use eink_home_display_rust::config::cache::{CacheConfig, CachePaths};

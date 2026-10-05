@@ -6,13 +6,13 @@ use clap::Parser;
 use serde_valid::Validate;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::adapters::departures::setup_departure_boards;
+use eink_home_display_rust::bootstrap::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
-use eink_home_display_rust::adapters::image_display_service::setup_display;
+use eink_home_display_rust::bootstrap::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
-use eink_home_display_rust::adapters::image_server::{serve, Handles};
+use eink_home_display_rust::adapters::image_server::{serve, Handles, ServerSettings};
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
-use eink_home_display_rust::adapters::weather::setup_weather_service;
+use eink_home_display_rust::bootstrap::setup_weather_service;
 use eink_home_display_rust::application::devices::DeviceBoard;
 use eink_home_display_rust::application::refresh::RefreshControl;
 use eink_home_display_rust::application::status::StatusBoard;
@@ -108,9 +108,10 @@ async fn main() -> Result<()> {
         return periodic.await;
     }
     // The display downloads its image, so serve it for as long as the refresh loop runs.
+    let settings = ServerSettings::from(&config.server);
     tokio::select! {
         result = periodic => result,
-        result = serve(&config.server, images, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
+        result = serve(&settings, images, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
     }
 }
 

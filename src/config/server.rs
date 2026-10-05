@@ -99,3 +99,14 @@ impl From<&ServerConfig> for crate::application::plan::PlanTiming {
         }
     }
 }
+
+impl From<&ServerConfig> for crate::adapters::image_server::ServerSettings {
+    fn from(config: &ServerConfig) -> Self {
+        Self {
+            bind: config.bind,
+            advertise: config.advertise,
+            instance_name: config.instance_name.clone(),
+            timing: config.into(),
+        }
+    }
+}

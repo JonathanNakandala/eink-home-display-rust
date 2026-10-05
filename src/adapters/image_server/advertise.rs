@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use mdns_sd::{DaemonEvent, IfKind, ServiceDaemon, ServiceInfo};
 
-use crate::config::server::ServerConfig;
+use super::ServerSettings;
 use crate::domain::models::display::ImageFormat;
 
 const SERVICE_SUBTYPE: &str = "_eink-display._sub._http._tcp.local.";
@@ -27,8 +27,8 @@ pub struct Advertisement {
 }
 
 impl Advertisement {
-    pub fn start(config: &ServerConfig, port: u16, format: ImageFormat) -> anyhow::Result<Self> {
-        let info = service_info(config, port, format)?;
+    pub fn start(settings: &ServerSettings, port: u16, format: ImageFormat) -> anyhow::Result<Self> {
+        let info = service_info(settings, port, format)?;
         let fullname = info.get_fullname().to_owned();
         let daemon = ServiceDaemon::new().context("Failed to start the mDNS responder")?;
         let this = Self { daemon, fullname };
@@ -65,10 +65,10 @@ impl Drop for Advertisement {
     }
 }
 
-fn service_info(config: &ServerConfig, port: u16, format: ImageFormat) -> anyhow::Result<ServiceInfo> {
-    let name = config.instance_name.trim();
+fn service_info(settings: &ServerSettings, port: u16, format: ImageFormat) -> anyhow::Result<ServiceInfo> {
+    let name = settings.instance_name.trim();
     if name.is_empty() || name.len() > MAX_LABEL_BYTES {
-        bail!("server.instance_name must be 1 to {MAX_LABEL_BYTES} bytes, not {:?}", config.instance_name);
+        bail!("the instance name must be 1 to {MAX_LABEL_BYTES} bytes, not {:?}", settings.instance_name);
     }
     let host = format!("{}.local.", host_label(name));
     // txtvers first, as RFC 6763 section 6.7 recommends; keys are kept short and lowercase.
@@ -83,7 +83,7 @@ fn service_info(config: &ServerConfig, port: u16, format: ImageFormat) -> anyhow
         ("version", env!("CARGO_PKG_VERSION")),
     ];
 
-    let ip = config.bind.ip();
+    let ip = settings.bind.ip();
     let mut info = if ip.is_unspecified() {
         // Listening everywhere, so announce every address the host has, and follow it when they change.
         ServiceInfo::new(SERVICE_SUBTYPE, name, &host, "", port, &txt[..])?.enable_addr_auto()
@@ -118,6 +118,16 @@ mod tests {
     use mdns_sd::ServiceEvent;
 
     use super::*;
+    use crate::application::plan::PlanTiming;
+
+    fn settings() -> ServerSettings {
+        ServerSettings {
+            bind: "0.0.0.0:8080".parse().unwrap(),
+            advertise: true,
+            instance_name: "E-ink home display".to_owned(),
+            timing: PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) },
+        }
+    }
 
     #[test]
     fn host_labels_are_valid_dns_labels() {
@@ -129,7 +139,7 @@ mod tests {
 
     #[test]
     fn describes_an_http_service_with_a_subtype_and_a_path() {
-        let config = ServerConfig::default();
+        let config = settings();
         let info = service_info(&config, 8080, ImageFormat::Png).unwrap();
 
         assert_eq!(info.get_fullname(), "E-ink home display._http._tcp.local.");
@@ -146,7 +156,7 @@ mod tests {
 
     #[test]
     fn a_specific_bind_address_is_announced_as_is() {
-        let config = ServerConfig { bind: "192.168.1.5:9000".parse().unwrap(), ..Default::default() };
+        let config = ServerSettings { bind: "192.168.1.5:9000".parse().unwrap(), ..settings() };
         let info = service_info(&config, 9000, ImageFormat::Bmp).unwrap();
 
         assert!(!info.is_addr_auto());
@@ -156,7 +166,7 @@ mod tests {
     #[test]
     fn rejects_unusable_instance_names() {
         for name in ["", "   ", &"x".repeat(64)] {
-            let config = ServerConfig { instance_name: name.to_owned(), ..Default::default() };
+            let config = ServerSettings { instance_name: name.to_owned(), ..settings() };
             assert!(service_info(&config, 80, ImageFormat::Bmp).is_err(), "{name:?}");
         }
     }
@@ -166,7 +176,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs multicast networking"]
     async fn advertised_service_is_found_by_a_scan() {
-        let config = ServerConfig { instance_name: "Eink test".to_owned(), ..Default::default() };
+        let config = ServerSettings { instance_name: "Eink test".to_owned(), ..settings() };
         let advertisement = Advertisement::start(&config, 18080, ImageFormat::Bmp).unwrap();
 
         let scanner = ServiceDaemon::new().unwrap();
