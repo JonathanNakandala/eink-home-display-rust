@@ -2,6 +2,7 @@ use anyhow::Context;
 use chrono::{DateTime, Local};
 use reqwest::Client;
 
+use crate::adapters::http;
 use crate::adapters::departures::open_ldbws::response::{Service, StationBoard};
 use crate::domain::models::departures::{
     countdown, seconds_until, DepartureService, DepartureStatus, Departures,
@@ -45,14 +46,8 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
             query.push(("timeOffset", self.travel_minutes.min(MAX_TIME_OFFSET).to_string()));
         }
 
-        let response = self
-            .client
-            .get(&url)
-            .header("x-apikey", &self.api_key)
-            .query(&query)
-            .send()
-            .await?
-            .error_for_status()
+        let response = http::send(self.client.get(&url).header("x-apikey", &self.api_key).query(&query))
+            .await
             .context("National Rail departure board request failed")?;
 
         let station_board: StationBoard = response

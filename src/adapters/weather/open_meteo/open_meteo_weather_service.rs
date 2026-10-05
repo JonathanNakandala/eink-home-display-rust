@@ -2,6 +2,7 @@ use anyhow::Context;
 use chrono::{Duration, NaiveDateTime, Utc};
 use reqwest::Client;
 
+use crate::adapters::http;
 use crate::adapters::weather::open_meteo::response::{
     OpenMeteoAirQualityResponse, OpenMeteoDailyResponse, OpenMeteoMinutelyResponse, OpenMeteoResponse,
 };
@@ -58,19 +59,18 @@ impl OpenMeteoWeatherServiceAdapter {
                 ",alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen",
             );
         }
-        let body: OpenMeteoAirQualityResponse = self
-            .client
-            .get(format!("{}/v1/air-quality", self.air_quality_host_url))
-            .query(&[
-                ("latitude", location.latitude.to_string()),
-                ("longitude", location.longitude.to_string()),
-                ("current", variables),
-            ])
-            .send()
-            .await?
-            .error_for_status()
-            .context("Failed to fetch air quality data")?
-            .json()
+        let body: OpenMeteoAirQualityResponse = http::send(
+            self.client
+                .get(format!("{}/v1/air-quality", self.air_quality_host_url))
+                .query(&[
+                    ("latitude", location.latitude.to_string()),
+                    ("longitude", location.longitude.to_string()),
+                    ("current", variables),
+                ]),
+        )
+        .await
+        .context("Failed to fetch air quality data")?
+        .json()
             .await
             .context("Failed to parse air quality data")?;
         log::debug!("Air quality response body: {:#?}", &body);
@@ -100,10 +100,10 @@ impl OpenMeteoWeatherServiceAdapter {
     }
 
     async fn get_forecast(&self, location: &Location) -> anyhow::Result<Option<WeatherInformation>> {
-        let response = self
-            .client
-            .get(format!("{}/v1/forecast", self.host_url))
-            .query(&[
+        let response = http::send(
+            self.client
+                .get(format!("{}/v1/forecast", self.host_url))
+                .query(&[
                 ("latitude", location.latitude.to_string()),
                 ("longitude", location.longitude.to_string()),
                 ("current", "temperature_2m,apparent_temperature,weather_code".to_owned()),
@@ -112,11 +112,10 @@ impl OpenMeteoWeatherServiceAdapter {
                 ("forecast_minutely_15", FORECAST_SLOTS.to_string()),
                 ("forecast_days", "1".to_owned()),
                 ("timezone", "auto".to_owned()),
-            ])
-            .send()
-            .await?
-            .error_for_status()
-            .context("Failed to fetch weather data")?;
+            ]),
+        )
+        .await
+        .context("Failed to fetch weather data")?;
         let body: OpenMeteoResponse = response
             .json()
             .await

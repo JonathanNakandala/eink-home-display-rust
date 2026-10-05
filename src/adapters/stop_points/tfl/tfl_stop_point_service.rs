@@ -1,6 +1,7 @@
 use anyhow::Context;
 use reqwest::Client;
 
+use crate::adapters::http;
 use crate::adapters::stop_points::tfl::response::{NearbyResponse, NearbyStop, SearchMatch, SearchResponse};
 use crate::domain::models::location::Location;
 use crate::domain::models::stop_point::{StopKind, StopPoint};
@@ -40,13 +41,7 @@ impl TflStopPointServiceAdapter {
         if let Some(key) = &self.app_key {
             params.push(("app_key", key.clone()));
         }
-        Ok(self
-            .client
-            .get(format!("{}/{}", self.host_url, path))
-            .query(&params)
-            .send()
-            .await?
-            .error_for_status()?)
+        http::send(self.client.get(format!("{}/{}", self.host_url, path)).query(&params)).await
     }
 }
 

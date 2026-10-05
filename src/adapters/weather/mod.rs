@@ -48,7 +48,7 @@ pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherSe
                 OpenWeatherWeatherServiceAdapter::new(
                     open_weather.host_url.clone(),
                     open_weather.api_key.clone(),
-                    reqwest::Client::new(),
+                    crate::adapters::http::client(),
                 ),
             ))
         }
@@ -66,7 +66,7 @@ pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherSe
                 host_url,
                 air_quality_host_url,
                 pollen,
-                reqwest::Client::new(),
+                crate::adapters::http::client(),
             )))
         }
     }
