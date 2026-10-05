@@ -7,8 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, Local};
 use serde::Serialize;
 
-use crate::config::server::ServerConfig;
-use crate::scheduler::Schedule;
+use crate::domain::models::schedule::Schedule;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlanTiming {
@@ -16,15 +15,6 @@ pub struct PlanTiming {
     pub wake_delay: Duration,
     /// How late a scheduled render may be before the image counts as stale.
     pub stale_grace: Duration,
-}
-
-impl From<&ServerConfig> for PlanTiming {
-    fn from(config: &ServerConfig) -> Self {
-        Self {
-            wake_delay: Duration::from_secs(config.wake_delay_seconds.into()),
-            stale_grace: Duration::from_secs(config.stale_grace_seconds.into()),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

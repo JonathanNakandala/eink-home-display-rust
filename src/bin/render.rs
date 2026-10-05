@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use image::GrayImage;
@@ -8,6 +9,7 @@ use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
 use eink_home_display_rust::adapters::image_display_service::setup_display;
+use eink_home_display_rust::adapters::published_images::DirectoryImages;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli::RenderArgs;
@@ -72,7 +74,7 @@ async fn main() -> Result<()> {
 
     for kind in kinds {
         let name = file_name(kind);
-        let profile = setup_display(&DisplayConfig { kind, dither, image_format: Default::default() }, Path::new("")).profile();
+        let profile = setup_display(&DisplayConfig { kind, dither, image_format: Default::default() }, Arc::new(DirectoryImages::new(""))).profile();
         log::info!("Rendering for {name} ({}x{}, {:?})", profile.width, profile.height, profile.palette);
 
         if args.html {

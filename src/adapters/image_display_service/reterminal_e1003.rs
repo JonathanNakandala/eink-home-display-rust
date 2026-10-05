@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -8,10 +8,10 @@ use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 
 use crate::adapters::image_display_service::quantise::quantise_grey;
-use crate::adapters::image_server::publish;
 use crate::domain::models::display::{Dither, DisplayProfile, ImageFormat, Palette};
 use crate::domain::models::image::ImageData;
 use crate::domain::services::image_display_service::ImageDisplayService;
+use crate::domain::services::published_images::PublishedImages;
 
 const WIDTH: u32 = 1872;
 const HEIGHT: u32 = 1404;
@@ -25,7 +25,7 @@ const GREY_LEVELS: u8 = 16;
 pub struct ReTerminalE1003Adapter {
     dither: Dither,
     format: ImageFormat,
-    publish_directory: PathBuf,
+    images: Arc<dyn PublishedImages>,
 }
 
 #[async_trait]
@@ -40,7 +40,7 @@ impl ImageDisplayService for ReTerminalE1003Adapter {
         // Dithering a 2.6 megapixel image is too much work to do on the async threads.
         let files = tokio::task::spawn_blocking(move || encode_all(&encoded, dither, preferred)).await??;
         for (format, bytes) in files {
-            publish(&self.publish_directory, format, &bytes).await?;
+            self.images.publish(format, &bytes).await?;
         }
         Ok(())
     }
@@ -80,6 +80,7 @@ mod tests {
     use image::{GrayImage, Luma};
 
     use super::*;
+    use crate::adapters::published_images::DirectoryImages;
 
     fn encode_for_panel(encoded: &[u8], dither: Dither, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
         encode(&quantise_for_panel(encoded, dither)?, format)
@@ -125,7 +126,8 @@ mod tests {
     #[tokio::test]
     async fn display_publishes_into_the_directory() {
         let tmp = tempfile::tempdir().unwrap();
-        let adapter = ReTerminalE1003Adapter::new(Dither::None, ImageFormat::Png, tmp.path().join("out"));
+        let images = Arc::new(DirectoryImages::new(tmp.path().join("out")));
+        let adapter = ReTerminalE1003Adapter::new(Dither::None, ImageFormat::Png, images);
 
         adapter.display(&ImageData::new(rendered())).await.unwrap();
 

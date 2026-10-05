@@ -9,8 +9,8 @@
 
 use std::fmt::Write;
 
-use super::devices::BatteryState;
-use super::status::{Health, Status};
+use crate::application::devices::BatteryState;
+use crate::application::status::{Health, Status};
 use crate::domain::models::render_report::SourceState;
 
 pub const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
@@ -130,8 +130,8 @@ mod tests {
     use chrono::{Local, TimeZone};
 
     use super::*;
-    use crate::adapters::image_server::devices::DeviceStatus;
-    use crate::adapters::image_server::status::ImageStatus;
+    use crate::application::devices::DeviceStatus;
+    use crate::application::status::ImageStatus;
     use crate::domain::models::render_report::SourceReport;
 
     fn at() -> chrono::DateTime<Local> {

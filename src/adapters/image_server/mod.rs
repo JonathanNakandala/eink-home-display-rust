@@ -2,14 +2,9 @@
 //! The display adapter publishes into a directory; this serves what is there.
 
 mod advertise;
-mod devices;
 mod metrics;
 mod negotiate;
-mod plan;
-mod refresh;
-mod status;
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,40 +21,17 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
-pub use self::plan::{render_due, PlanTiming};
-pub use self::devices::DeviceBoard;
-pub use self::refresh::RefreshControl;
-pub use self::status::StatusBoard;
-use self::devices::{RawTelemetry, Telemetry};
-use self::refresh::RefreshOutcome;
-use self::plan::compute;
+use crate::application::devices::{DeviceBoard, RawTelemetry, Telemetry};
+use crate::application::plan::{compute, PlanTiming};
+use crate::application::refresh::{RefreshControl, RefreshOutcome};
+use crate::application::status::{Status, StatusBoard};
 use crate::config::server::ServerConfig;
 use crate::domain::models::display::ImageFormat;
-use crate::scheduler::Schedule;
-
-fn published_path(directory: &Path, format: ImageFormat) -> PathBuf {
-    directory.join(format!("image.{}", format.extension()))
-}
-
-/// Makes `bytes` the image that is served. Written beside the target and renamed into
-/// place, so a download in progress never sees half a file.
-pub async fn publish(directory: &Path, format: ImageFormat, bytes: &[u8]) -> anyhow::Result<()> {
-    tokio::fs::create_dir_all(directory)
-        .await
-        .with_context(|| format!("Failed to create {}", directory.display()))?;
-    let target = published_path(directory, format);
-    let staging = target.with_extension(format!("{}.tmp", format.extension()));
-    tokio::fs::write(&staging, bytes)
-        .await
-        .with_context(|| format!("Failed to write {}", staging.display()))?;
-    tokio::fs::rename(&staging, &target)
-        .await
-        .with_context(|| format!("Failed to move the image into {}", target.display()))?;
-    Ok(())
-}
+use crate::domain::models::schedule::Schedule;
+use crate::domain::services::published_images::PublishedImages;
 
 struct Published {
-    directory: PathBuf,
+    images: Arc<dyn PublishedImages>,
     format: ImageFormat,
     schedule: Schedule,
     timing: PlanTiming,
@@ -80,14 +52,8 @@ pub struct Handles {
 /// How long a button press waits for its render: a cold Chrome start can take a while.
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(40);
 
-/// When the image being served was rendered, or None if there isn't one yet.
-pub fn rendered_at(directory: &Path, format: ImageFormat) -> Option<DateTime<Local>> {
-    let modified = std::fs::metadata(published_path(directory, format)).ok()?.modified().ok()?;
-    Some(DateTime::<Local>::from(modified))
-}
-
 pub fn router(
-    directory: PathBuf,
+    images: Arc<dyn PublishedImages>,
     format: ImageFormat,
     schedule: Schedule,
     timing: PlanTiming,
@@ -101,7 +67,7 @@ pub fn router(
         .route("/healthz", get(healthz))
         .route("/metrics", get(metrics))
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published { directory, format, schedule, timing, handles }))
+        .with_state(Arc::new(Published { images, format, schedule, timing, handles }))
 }
 
 #[derive(Deserialize)]
@@ -148,13 +114,8 @@ async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Quer
 }
 
 /// When the served image was written; None before the first render.
-async fn image_written_at(published: &Published) -> std::io::Result<Option<DateTime<Local>>> {
-    let path = published_path(&published.directory, published.format);
-    match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
-        Ok(modified) => Ok(Some(DateTime::<Local>::from(modified))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
-    }
+async fn image_written_at(published: &Published) -> anyhow::Result<Option<DateTime<Local>>> {
+    published.images.published_at(published.format).await
 }
 
 /// How the service is doing: the render history, the sources' state, and the image's age.
@@ -176,7 +137,7 @@ async fn healthz(State(published): State<Arc<Published>>) -> Response {
     }
 }
 
-async fn current_status(published: &Published) -> anyhow::Result<status::Status> {
+async fn current_status(published: &Published) -> anyhow::Result<Status> {
     let rendered_at = image_written_at(published).await?;
     let now = Local::now();
     let mut status = published.handles.status.status(now, rendered_at, &published.schedule, published.timing)?;
@@ -224,8 +185,10 @@ fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
 async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> Response {
     let mut available = Vec::new();
     for format in ImageFormat::ALL {
-        if tokio::fs::try_exists(published_path(&published.directory, format)).await.unwrap_or(false) {
-            available.push(format);
+        match published.images.published_at(format).await {
+            Ok(Some(_)) => available.push(format),
+            Ok(None) => {}
+            Err(e) => return server_error("inspect", e),
         }
     }
     if available.is_empty() {
@@ -240,8 +203,8 @@ async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> R
     }
     // The file could have been replaced between the check and the read, so fall through to the next.
     for format in candidates {
-        match tokio::fs::read(published_path(&published.directory, format)).await {
-            Ok(bytes) => {
+        match published.images.read(format).await {
+            Ok(Some(bytes)) => {
                 return (
                     [
                         (header::CONTENT_TYPE, format.content_type()),
@@ -254,7 +217,7 @@ async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> R
                 )
                     .into_response();
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Ok(None) => continue,
             Err(e) => return server_error("read", e),
         }
     }
@@ -264,6 +227,7 @@ async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> R
 /// Serves until the future is dropped, or fails at once if the address can't be bound.
 pub async fn serve(
     config: &ServerConfig,
+    images: Arc<dyn PublishedImages>,
     format: ImageFormat,
     schedule: Schedule,
     handles: Handles,
@@ -282,14 +246,22 @@ pub async fn serve(
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(config.directory.clone(), format, schedule, PlanTiming::from(config), handles))
+    axum::serve(listener, router(images, format, schedule, PlanTiming::from(config), handles))
         .await
         .context("Image server stopped")
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::*;
+    use crate::adapters::published_images::DirectoryImages;
+    use crate::domain::services::render_observer::RenderObserver;
+
+    async fn publish(directory: &Path, format: ImageFormat, bytes: &[u8]) -> anyhow::Result<()> {
+        DirectoryImages::new(directory).publish(format, bytes).await
+    }
 
     async fn start(directory: PathBuf, format: ImageFormat) -> String {
         start_with_status(directory, format).await.0
@@ -303,7 +275,7 @@ mod tests {
         let schedule = Schedule::parse_every("1h").unwrap();
         let status = StatusBoard::new(Local::now());
         let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };
-        tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing, handles)).await });
+        tokio::spawn(async move { axum::serve(listener, router(Arc::new(DirectoryImages::new(directory)), format, schedule, timing, handles)).await });
         (format!("http://{address}"), status)
     }
 
@@ -358,7 +330,7 @@ mod tests {
         assert_eq!((code, text.as_str()), (503, "stale: the image is 3 h 0 min old"));
 
         publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
-        status.render_succeeded(Local::now(), Default::default());
+        status.render_succeeded(Local::now(), &Default::default());
         assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
     }
 
@@ -371,7 +343,7 @@ mod tests {
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         status.render_succeeded(
             Local::now(),
-            RenderReport {
+            &RenderReport {
                 sources: vec![SourceReport {
                     name: "weather".into(),
                     state: SourceState::Unavailable { reason: "key rejected".into() },
@@ -430,7 +402,8 @@ mod tests {
         set_age(tmp.path(), 100);
         let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
         let version = plan["version"].as_u64().unwrap();
-        let expected = rendered_at(tmp.path(), ImageFormat::Bmp).unwrap().timestamp() as u64;
+        let expected =
+            DirectoryImages::new(tmp.path()).published_at(ImageFormat::Bmp).await.unwrap().unwrap().timestamp() as u64;
         assert_eq!(version, expected);
         assert_eq!(plan["changed"], true);
         assert_eq!(plan["stale"], false);

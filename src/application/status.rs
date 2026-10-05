@@ -15,7 +15,8 @@ use super::devices::DeviceStatus;
 use super::plan::{is_stale, version_of, PlanTiming};
 use crate::domain::models::freshness::format_age;
 use crate::domain::models::render_report::{RenderReport, SourceReport};
-use crate::scheduler::Schedule;
+use crate::domain::models::schedule::Schedule;
+use crate::domain::services::render_observer::RenderObserver;
 
 /// Long enough for a render error to be recognisable, short enough for a one-line log or a page.
 const MAX_ERROR_CHARS: usize = 300;
@@ -130,24 +131,6 @@ impl StatusBoard {
         self.record.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn render_started(&self) {
-        self.record().rendering = true;
-    }
-
-    pub fn render_succeeded(&self, at: DateTime<Local>, report: RenderReport) {
-        let mut record = self.record();
-        record.rendering = false;
-        record.consecutive_failures = 0;
-        record.last_success = Some(Success { at, report });
-    }
-
-    pub fn render_failed(&self, at: DateTime<Local>, error: &anyhow::Error) {
-        let mut record = self.record();
-        record.rendering = false;
-        record.consecutive_failures = record.consecutive_failures.saturating_add(1);
-        record.last_failure = Some(Failure { at, error: one_line(&format!("{error:#}")) });
-    }
-
     /// The status as of `now`. `rendered_at` is when the image being served was written, if there is one.
     pub fn status(
         &self,
@@ -190,6 +173,26 @@ impl StatusBoard {
             uptime_seconds: uptime.num_seconds().unsigned_abs(),
             version: env!("CARGO_PKG_VERSION"),
         })
+    }
+}
+
+impl RenderObserver for StatusBoard {
+    fn render_started(&self) {
+        self.record().rendering = true;
+    }
+
+    fn render_succeeded(&self, at: DateTime<Local>, report: &RenderReport) {
+        let mut record = self.record();
+        record.rendering = false;
+        record.consecutive_failures = 0;
+        record.last_success = Some(Success { at, report: report.clone() });
+    }
+
+    fn render_failed(&self, at: DateTime<Local>, error: &anyhow::Error) {
+        let mut record = self.record();
+        record.rendering = false;
+        record.consecutive_failures = record.consecutive_failures.saturating_add(1);
+        record.last_failure = Some(Failure { at, error: one_line(&format!("{error:#}")) });
     }
 }
 
@@ -243,14 +246,14 @@ mod tests {
     fn a_current_image_after_clean_renders_is_ok() {
         let board = StatusBoard::new(at(11, 0, 0));
         board.render_started();
-        board.render_succeeded(at(12, 0, 5), report(SourceState::Fresh));
+        board.render_succeeded(at(12, 0, 5), &report(SourceState::Fresh));
         assert_eq!(health(&board, at(12, 4, 0), Some(at(12, 0, 5))), Health::Ok);
     }
 
     #[test]
     fn a_source_that_is_down_makes_it_degraded_but_still_healthy() {
         let board = StatusBoard::new(at(11, 0, 0));
-        board.render_succeeded(at(12, 0, 5), report(SourceState::Unavailable { reason: "key rejected".into() }));
+        board.render_succeeded(at(12, 0, 5), &report(SourceState::Unavailable { reason: "key rejected".into() }));
 
         let status = board.status(at(12, 4, 0), Some(at(12, 0, 5)), &schedule(), TIMING).unwrap();
         assert_eq!(status.state, Health::Degraded);
@@ -262,7 +265,7 @@ mod tests {
     #[test]
     fn a_failed_render_is_failing_until_the_image_is_stale_and_a_success_clears_it() {
         let board = StatusBoard::new(at(11, 0, 0));
-        board.render_succeeded(at(12, 0, 5), report(SourceState::Fresh));
+        board.render_succeeded(at(12, 0, 5), &report(SourceState::Fresh));
         board.render_failed(at(12, 10, 20), &anyhow!("Chrome did not start"));
 
         // 12:10 was due and failed; at 12:12 the image is late but within the grace.
@@ -275,7 +278,7 @@ mod tests {
         assert_eq!(stale.consecutive_failures, 1);
         assert_eq!(stale.last_failure.as_ref().unwrap().error, "Chrome did not start");
 
-        board.render_succeeded(at(12, 20, 3), report(SourceState::Fresh));
+        board.render_succeeded(at(12, 20, 3), &report(SourceState::Fresh));
         let ok = board.status(at(12, 21, 0), Some(at(12, 20, 3)), &schedule(), TIMING).unwrap();
         assert_eq!(ok.state, Health::Ok);
         assert_eq!(ok.consecutive_failures, 0);
@@ -297,7 +300,7 @@ mod tests {
     #[test]
     fn the_status_reports_ages_the_next_render_and_the_image_version() {
         let board = StatusBoard::new(at(11, 0, 0));
-        board.render_succeeded(at(12, 0, 5), report(SourceState::Fresh));
+        board.render_succeeded(at(12, 0, 5), &report(SourceState::Fresh));
         let status = board.status(at(12, 4, 5), Some(at(12, 0, 5)), &schedule(), TIMING).unwrap();
 
         assert_eq!(status.image.as_ref().unwrap().age_seconds, 240);
@@ -327,7 +330,7 @@ mod tests {
         })
         .join();
 
-        board.render_succeeded(at(12, 0, 0), RenderReport::default());
+        board.render_succeeded(at(12, 0, 0), &RenderReport::default());
         assert!(board.status(at(12, 1, 0), Some(at(12, 0, 0)), &schedule(), TIMING).unwrap().is_healthy());
     }
 }

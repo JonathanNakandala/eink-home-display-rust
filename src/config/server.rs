@@ -90,3 +90,12 @@ impl Default for ServerConfig {
         }
     }
 }
+
+impl From<&ServerConfig> for crate::application::plan::PlanTiming {
+    fn from(config: &ServerConfig) -> Self {
+        Self {
+            wake_delay: std::time::Duration::from_secs(config.wake_delay_seconds.into()),
+            stale_grace: std::time::Duration::from_secs(config.stale_grace_seconds.into()),
+        }
+    }
+}
