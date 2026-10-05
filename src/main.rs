@@ -13,7 +13,8 @@ use eink_home_display_rust::adapters::image_server::serve;
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
-use eink_home_display_rust::scheduler::{run_periodically, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
+use eink_home_display_rust::launch;
+use eink_home_display_rust::scheduler::{run_periodically_from, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
 use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::config::cache::CachePaths;
 use eink_home_display_rust::domain::models::location::Location;
@@ -66,7 +67,27 @@ async fn main() -> Result<()> {
     };
     // Built once so the Chrome it launches is kept between runs.
     let app = create_application(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source)?;
-    let periodic = run_periodically(schedule, !args.no_initial_run, shutdown_signal(), || app.run(location));
+    let now = chrono::Local::now();
+    let marker = cache.render_attempt();
+    let image_is_current = config.display.kind.fetches_image()
+        && launch::served_image_is_current(&config.server.directory, config.display.image_format, schedule, now);
+    let first = launch::first_render_at(
+        now,
+        args.no_initial_run,
+        image_is_current,
+        launch::last_attempt(&marker),
+        args.restart_cooldown,
+    );
+    match first {
+        Some(at) if at > now => log::info!("Holding the first render until {} (restart cooldown)", at.format("%H:%M:%S")),
+        Some(_) => log::info!("Rendering now"),
+        None if image_is_current => log::info!("The served image is current; waiting for the next slot"),
+        None => {}
+    }
+    let periodic = run_periodically_from(schedule, first, shutdown_signal(), || {
+        launch::record_attempt(&marker);
+        app.run(location)
+    });
     if !config.display.kind.fetches_image() {
         return periodic.await;
     }

@@ -51,6 +51,21 @@ pub async fn run_periodically<F, Fut>(
     schedule: &Schedule,
     run_now: bool,
     shutdown: impl Future<Output = ()>,
+    tick: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    run_periodically_from(schedule, run_now.then(Local::now), shutdown, tick).await
+}
+
+/// Like `run_periodically`, but the first run is at `first` (immediately if that is already
+/// past), or at the first scheduled slot when it is None.
+pub async fn run_periodically_from<F, Fut>(
+    schedule: &Schedule,
+    first: Option<DateTime<Local>>,
+    shutdown: impl Future<Output = ()>,
     mut tick: F,
 ) -> anyhow::Result<()>
 where
@@ -58,7 +73,10 @@ where
     Fut: Future<Output = anyhow::Result<()>>,
 {
     tokio::pin!(shutdown);
-    let mut due = if run_now { Local::now() } else { schedule.next_after(Local::now())? };
+    let mut due = match first {
+        Some(first) => first,
+        None => schedule.next_after(Local::now())?,
+    };
 
     loop {
         let wait = (due - Local::now()).to_std().unwrap_or_default();

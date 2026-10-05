@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::adapters::display_image_generator::chrome_render::ChromeSource;
 use crate::scheduler::Schedule;
@@ -28,6 +29,11 @@ pub struct Args {
     /// With --cron or --every, wait for the first slot instead of refreshing at startup
     #[arg(long)]
     pub no_initial_run: bool,
+
+    /// After a restart, wait until this long has passed since the last render was attempted before
+    /// the first one, so a crash loop can't hammer the APIs. e.g. 2m
+    #[arg(long, default_value = "2m", value_parser = humantime::parse_duration)]
+    pub restart_cooldown: Duration,
 }
 
 impl From<bool> for ChromeSource {
