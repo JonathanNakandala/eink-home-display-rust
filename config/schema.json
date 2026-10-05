@@ -40,6 +40,7 @@
         "bind": "0.0.0.0:8080",
         "directory": "served",
         "instance_name": "E-ink home display",
+        "refresh_cooldown_seconds": 30,
         "stale_grace_seconds": 300,
         "wake_delay_seconds": 30
       }
@@ -348,6 +349,13 @@
           "description": "The name shown for the service in a scan, at most 63 bytes. The host name `<name>.local` is derived from it.",
           "type": "string",
           "default": "E-ink home display"
+        },
+        "refresh_cooldown_seconds": {
+          "description": "The display's button asks for a render with `POST /refresh`. Requests are refused (and the\ncurrent image returned) when a render started within this many seconds.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 30,
+          "minimum": 0
         },
         "stale_grace_seconds": {
           "description": "How late a scheduled render may be before the image is reported stale.",

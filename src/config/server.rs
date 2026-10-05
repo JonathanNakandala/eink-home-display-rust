@@ -9,6 +9,7 @@ const DEFAULT_DIRECTORY: &str = "served";
 const DEFAULT_INSTANCE_NAME: &str = "E-ink home display";
 const DEFAULT_WAKE_DELAY_SECONDS: u32 = 30;
 const DEFAULT_STALE_GRACE_SECONDS: u32 = 300;
+const DEFAULT_REFRESH_COOLDOWN_SECONDS: u32 = 30;
 
 /// The HTTP server that hands the latest rendered image to displays that fetch it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -32,6 +33,14 @@ pub struct ServerConfig {
     /// How late a scheduled render may be before the image is reported stale.
     #[serde(default = "default_stale_grace_seconds")]
     pub stale_grace_seconds: u32,
+    /// The display's button asks for a render with `POST /refresh`. Requests are refused (and the
+    /// current image returned) when a render started within this many seconds.
+    #[serde(default = "default_refresh_cooldown_seconds")]
+    pub refresh_cooldown_seconds: u32,
+}
+
+fn default_refresh_cooldown_seconds() -> u32 {
+    DEFAULT_REFRESH_COOLDOWN_SECONDS
 }
 
 fn default_wake_delay_seconds() -> u32 {
@@ -67,6 +76,7 @@ impl Default for ServerConfig {
             instance_name: default_instance_name(),
             wake_delay_seconds: default_wake_delay_seconds(),
             stale_grace_seconds: default_stale_grace_seconds(),
+            refresh_cooldown_seconds: default_refresh_cooldown_seconds(),
         }
     }
 }
