@@ -109,6 +109,7 @@ async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
         NoStore,
         setup_departure_boards(&config.departures, &config.providers)?,
         (&config.stale_data).into(),
+        (&config.limits).into(),
     );
     app.run(Location::new(config.location.latitude, config.location.longitude))
         .await?;

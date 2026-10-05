@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::config::cache::CacheConfig;
 use crate::config::application::{
-    ApplicationConfig, DisplayConfig, DisplayKind, FileStoreConfig, LocationConfig, StaleDataConfig,
+    ApplicationConfig, DisplayConfig, DisplayKind, FileStoreConfig, LimitsConfig, LocationConfig, StaleDataConfig,
 };
 use crate::config::departures::{
     DepartureBoardConfig, DepartureSource, OpenLdbwsConfig, ProvidersConfig, TflConfig,
@@ -72,6 +72,7 @@ impl ApplicationConfig {
                 image_format: ImageFormat::Bmp,
             },
             stale_data: StaleDataConfig::default(),
+            limits: LimitsConfig::default(),
             server: ServerConfig::default(),
         }
     }
