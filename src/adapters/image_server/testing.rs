@@ -8,6 +8,7 @@ use chrono::Local;
 use tokio::net::TcpListener;
 
 use super::{router, Handles};
+use crate::adapters::clock::SystemClock;
 use crate::adapters::published_images::DirectoryImages;
 use crate::application::devices::DeviceBoard;
 use crate::application::plan::PlanTiming;
@@ -15,6 +16,7 @@ use crate::application::refresh::RefreshControl;
 use crate::application::status::StatusBoard;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::schedule::Schedule;
+use crate::domain::services::clock::Clock;
 use crate::domain::services::published_images::PublishedImages;
 
 pub(super) async fn publish(directory: &Path, format: ImageFormat, bytes: &[u8]) -> anyhow::Result<()> {
@@ -27,13 +29,22 @@ pub(super) async fn start(directory: PathBuf, format: ImageFormat) -> String {
 
 /// Also hands back the status board, to play the render loop's part.
 pub(super) async fn start_with_status(directory: PathBuf, format: ImageFormat) -> (String, Arc<StatusBoard>) {
+    start_with_clock(directory, format, Arc::new(SystemClock)).await
+}
+
+/// Like `start_with_status`, with the server reading the time from `clock`.
+pub(super) async fn start_with_clock(
+    directory: PathBuf,
+    format: ImageFormat,
+    clock: Arc<dyn Clock>,
+) -> (String, Arc<StatusBoard>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let timing = PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
     let schedule = Schedule::parse_every("1h").unwrap();
     let status = StatusBoard::new(Local::now());
     let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };
-    tokio::spawn(async move { axum::serve(listener, router(Arc::new(DirectoryImages::new(directory)), format, schedule, timing, handles)).await });
+    tokio::spawn(async move { axum::serve(listener, router(Arc::new(DirectoryImages::new(directory)), format, schedule, timing, handles, clock)).await });
     (format!("http://{address}"), status)
 }
 

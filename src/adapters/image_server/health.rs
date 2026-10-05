@@ -37,7 +37,7 @@ pub(super) async fn healthz(State(published): State<Arc<Published>>) -> Response
 
 async fn current_status(published: &Published) -> anyhow::Result<Status> {
     let rendered_at = image_written_at(published).await?;
-    let now = Local::now();
+    let now = published.clock.now();
     let mut status = published.handles.status.status(now, rendered_at, &published.schedule, published.timing)?;
     status.devices = published.handles.devices.snapshot(now);
     Ok(status)

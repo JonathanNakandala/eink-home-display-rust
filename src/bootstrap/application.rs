@@ -8,6 +8,7 @@ use crate::adapters::weather::WeatherServiceImpl;
 use crate::application::Application;
 use crate::config::application::ApplicationConfig;
 use crate::config::cache::CachePaths;
+use crate::domain::services::clock::Clock;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
 use crate::domain::services::published_images::PublishedImages;
@@ -18,12 +19,14 @@ use crate::domain::services::ImageDisplayService;
 use super::{setup_departure_boards, setup_display, setup_weather_service};
 
 /// The application with the data sources the configuration asks for and the three ports that
-/// differ between the programs that use it: how the image is drawn, shown and stored.
+/// differ between the programs that use it: how the image is drawn, shown and stored. `clock`
+/// is where the application reads the time.
 pub fn assemble<DIG, IDS, IR>(
     config: &ApplicationConfig,
     generator: DIG,
     display: IDS,
     repository: IR,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<Application<WeatherServiceImpl, DIG, IDS, IR, DeparturesServiceImpl>>
 where
     DIG: DisplayImageGenerator,
@@ -38,6 +41,7 @@ where
         setup_departure_boards(&config.departures, &config.providers)?,
         (&config.stale_data).into(),
         (&config.limits).into(),
+        clock,
     ))
 }
 
@@ -49,6 +53,7 @@ pub fn from_config(
     chrome_idle_timeout: Duration,
     chrome_source: ChromeSource,
     images: Arc<dyn PublishedImages>,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<
     Application<
         impl WeatherService,
@@ -63,5 +68,6 @@ pub fn from_config(
         ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source),
         setup_display(&config.display, images),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
+        clock,
     )
 }
