@@ -17,47 +17,37 @@ use crate::application::refresh::RefreshOutcome;
 /// How long a button press waits for its render: a cold Chrome start can take a while.
 const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(40);
 
+/// What `/plan` and `/refresh` read from the query besides what the display reports about itself
+/// (which `RawTelemetry` reads, from the same query).
 #[derive(Deserialize)]
 pub(super) struct PlanQuery {
     /// The version of the image the display already shows.
     have: Option<u32>,
-    // What the display reports about itself. Text, so a malformed value can't fail the request;
-    // see `RawTelemetry`.
-    device: Option<String>,
-    battery_mv: Option<String>,
-    battery_pct: Option<String>,
-    battery_state: Option<String>,
-    failed_wakes: Option<String>,
-}
-
-impl PlanQuery {
-    fn telemetry(&self) -> Option<Telemetry> {
-        RawTelemetry {
-            device: self.device.clone(),
-            battery_mv: self.battery_mv.clone(),
-            battery_pct: self.battery_pct.clone(),
-            battery_state: self.battery_state.clone(),
-            failed_wakes: self.failed_wakes.clone(),
-        }
-        .parse()
-    }
 }
 
 /// Tells a display which render the image is, whether it is stale, and when to ask again.
-pub(super) async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
-    plan_response(&published, query.have, query.telemetry()).await
+pub(super) async fn plan(
+    State(published): State<Arc<Published>>,
+    Query(query): Query<PlanQuery>,
+    Query(telemetry): Query<RawTelemetry>,
+) -> Response {
+    plan_response(&published, query.have, telemetry.parse()).await
 }
 
 /// Renders now if the display's button asked for it (and one hasn't just run), then answers
 /// like `/plan` for the image that results. A refused or failed render still answers, with the
 /// image there is.
-pub(super) async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
+pub(super) async fn refresh_now(
+    State(published): State<Arc<Published>>,
+    Query(query): Query<PlanQuery>,
+    Query(telemetry): Query<RawTelemetry>,
+) -> Response {
     match published.handles.refresh.request(REFRESH_TIMEOUT).await {
         RefreshOutcome::Rendered => log::info!("Rendered on request"),
         RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
         RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
     }
-    plan_response(&published, query.have, query.telemetry()).await
+    plan_response(&published, query.have, telemetry.parse()).await
 }
 
 async fn plan_response(published: &Published, have: Option<u32>, telemetry: Option<Telemetry>) -> Response {

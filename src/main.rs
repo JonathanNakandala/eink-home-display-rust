@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
     let devices = DeviceBoard::new(Duration::from_secs(config.server.device_overdue_grace_seconds.into()));
     // Built once so the Chrome it launches is kept between runs.
     let app = bootstrap::from_config(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source, images.clone(), clock.clone())?
-        .with_observer(Arc::new(launch::AttemptMarker::new(marker)))
+        .with_observer(Arc::new(launch::AttemptMarker::new(marker, clock.clone())))
         // Status before refresh: a button press is answered as soon as the refresh hears the render
         // end, and whoever then reads /status must see that render's outcome.
         .with_observer(status.clone())
