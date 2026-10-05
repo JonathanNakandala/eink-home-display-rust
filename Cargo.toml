@@ -39,6 +39,7 @@ socket2 = { version = "0.6", features = ["all"] }
 httpdate = "1.0.3"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 httpmock = "0.8"
 speculoos = "0.13"
 

@@ -5,10 +5,20 @@ use chrono::{DateTime, Local};
 use tokio::sync::Notify;
 
 pub use crate::domain::models::schedule::Schedule;
+use crate::domain::models::freshness::format_age;
+use crate::domain::services::clock::Clock;
 
 /// How long an idle Chrome stays connected between periodic renders. Cron gaps can be
 /// long (overnight, say), so this is generous; a Chrome that went away anyway is relaunched.
 pub const PERIODIC_IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How often the loop looks at the clock while it waits for the next run. A wait is worked out from the
+/// clock once, so a clock that is then set (NTP just after boot, a manual correction) would otherwise
+/// leave the loop sleeping for a time that no longer means anything.
+const CLOCK_CHECK: Duration = Duration::from_secs(30);
+
+/// A clock that reads this much earlier than the last look has been set back, not just read twice.
+const STEP_BACK: Duration = Duration::from_secs(2);
 
 /// Calls `tick` on the schedule until `shutdown` completes, starting with one run now
 /// when `run_now` is set. A failed tick is logged and doesn't stop the loop, and a run
@@ -16,6 +26,7 @@ pub const PERIODIC_IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 pub async fn run_periodically<F, Fut>(
     schedule: &Schedule,
     run_now: bool,
+    clock: &dyn Clock,
     shutdown: impl Future<Output = ()>,
     tick: F,
 ) -> anyhow::Result<()>
@@ -23,16 +34,21 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    run_periodically_from(schedule, run_now.then(Local::now), &Notify::new(), shutdown, tick).await
+    run_periodically_from(schedule, run_now.then(|| clock.now()), &Notify::new(), clock, shutdown, tick).await
 }
 
 /// Like `run_periodically`, but the first run is at `first` (immediately if that is already
 /// past), or at the first scheduled slot when it is None. Notifying `wake` runs a tick at once,
 /// without moving the schedule.
+///
+/// The wait for each run is taken in short slices, looking at `clock` between them, so a clock that
+/// changes meanwhile is noticed. Set forward, a run that has become overdue happens at the next look.
+/// Set back, the next run is planned again from the new time: kept, it would be hours or days away.
 pub async fn run_periodically_from<F, Fut>(
     schedule: &Schedule,
     first: Option<DateTime<Local>>,
     wake: &Notify,
+    clock: &dyn Clock,
     shutdown: impl Future<Output = ()>,
     mut tick: F,
 ) -> anyhow::Result<()>
@@ -43,22 +59,41 @@ where
     tokio::pin!(shutdown);
     let mut due = match first {
         Some(first) => first,
-        None => schedule.next_after(Local::now())?,
+        None => schedule.next_after(clock.now())?,
     };
 
     loop {
-        let wait = (due - Local::now()).to_std().unwrap_or_default();
         log::info!("Next run at {}", due.format("%Y-%m-%d %H:%M:%S"));
-        tokio::select! {
-            _ = &mut shutdown => {
-                log::info!("Shutting down");
-                return Ok(());
+        let mut last_look = clock.now();
+        loop {
+            let now = clock.now();
+            if last_look - now > chrono::Duration::from_std(STEP_BACK)? {
+                due = schedule.next_after(now)?;
+                log::warn!(
+                    "The clock was set back {}: planning the next run again, for {}",
+                    format_age(last_look - now),
+                    due.format("%Y-%m-%d %H:%M:%S")
+                );
             }
-            _ = tokio::time::sleep(wait) => {}
-            _ = wake.notified() => log::info!("Render requested"),
+            last_look = now;
+            let remaining = (due - now).to_std().unwrap_or_default();
+            if remaining.is_zero() {
+                break;
+            }
+            tokio::select! {
+                _ = &mut shutdown => {
+                    log::info!("Shutting down");
+                    return Ok(());
+                }
+                _ = tokio::time::sleep(remaining.min(CLOCK_CHECK)) => {}
+                _ = wake.notified() => {
+                    log::info!("Render requested");
+                    break;
+                }
+            }
         }
 
-        let started = Local::now();
+        let started = clock.now();
         // Let a signal interrupt a long fetch or render too.
         tokio::select! {
             _ = &mut shutdown => {
@@ -72,8 +107,9 @@ where
             }
         }
 
-        due = schedule.next_after(started)?;
-        let finished = Local::now();
+        let finished = clock.now();
+        // From whichever was earlier, so a clock set back during the run doesn't leave the next one far off.
+        due = schedule.next_after(started.min(finished))?;
         if due <= finished {
             due = schedule.next_after(finished)?;
         }
@@ -104,9 +140,13 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    use std::sync::Mutex;
+
     use anyhow::anyhow;
+    use chrono::TimeZone;
 
     use super::*;
+    use crate::adapters::clock::SystemClock;
 
     #[tokio::test]
     async fn runs_now_then_on_schedule_and_survives_failures() {
@@ -117,6 +157,7 @@ mod tests {
         run_periodically(
             &schedule,
             true,
+            &SystemClock,
             tokio::time::sleep(Duration::from_millis(250)),
             move || {
                 let n = counter.fetch_add(1, Ordering::SeqCst);
@@ -144,7 +185,7 @@ mod tests {
             waker.notify_one();
         });
 
-        run_periodically_from(&schedule, None, &wake, tokio::time::sleep(Duration::from_millis(300)), move || {
+        run_periodically_from(&schedule, None, &wake, &SystemClock, tokio::time::sleep(Duration::from_millis(300)), move || {
             counter.fetch_add(1, Ordering::SeqCst);
             async { Ok(()) }
         })
@@ -163,6 +204,7 @@ mod tests {
         run_periodically(
             &schedule,
             false,
+            &SystemClock,
             tokio::time::sleep(Duration::from_millis(50)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -185,6 +227,7 @@ mod tests {
         run_periodically(
             &schedule,
             true,
+            &SystemClock,
             tokio::time::sleep(Duration::from_millis(100)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -199,5 +242,82 @@ mod tests {
 
         assert_eq!(started.load(Ordering::SeqCst), 1);
         assert!(begun.elapsed() < Duration::from_secs(5));
+    }
+
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    }
+
+    /// A clock that follows tokio's (pausable) time and can be set forward or back, as NTP would.
+    struct SteppedClock {
+        start: DateTime<Local>,
+        origin: tokio::time::Instant,
+        offset: Mutex<chrono::Duration>,
+    }
+
+    impl SteppedClock {
+        fn new(start: DateTime<Local>) -> Self {
+            Self { start, origin: tokio::time::Instant::now(), offset: Mutex::new(chrono::Duration::zero()) }
+        }
+
+        fn step(&self, by: chrono::Duration) {
+            *self.offset.lock().unwrap() += by;
+        }
+    }
+
+    impl Clock for SteppedClock {
+        fn now(&self) -> DateTime<Local> {
+            self.start + chrono::Duration::from_std(self.origin.elapsed()).unwrap() + *self.offset.lock().unwrap()
+        }
+    }
+
+    /// Runs hourly from 08:00 for three and a half hours of (virtual) time, with the clock stepped by `by` ten minutes
+    /// in. Returns how many minutes after the start each run happened.
+    async fn runs_with_a_step(by: chrono::Duration) -> Vec<u64> {
+        let clock = SteppedClock::new(at(8, 0, 0));
+        let started = tokio::time::Instant::now();
+        let runs = Mutex::new(Vec::new());
+        let schedule = Schedule::parse_every("1h").unwrap();
+        let wake = Notify::new();
+
+        let stepper = async {
+            tokio::time::sleep(Duration::from_secs(10 * 60)).await;
+            clock.step(by);
+        };
+        let scheduler = run_periodically_from(
+            &schedule,
+            None,
+            &wake,
+            &clock,
+            tokio::time::sleep(Duration::from_secs(3 * 3600 + 30 * 60)),
+            || {
+                runs.lock().unwrap().push(started.elapsed().as_secs() / 60);
+                async { Ok(()) }
+            },
+        );
+        let (result, ()) = tokio::join!(scheduler, stepper);
+        result.unwrap();
+        runs.into_inner().unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn without_a_step_runs_come_hourly() {
+        assert_eq!(runs_with_a_step(chrono::Duration::zero()).await, [60, 120, 180]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_clock_set_back_plans_the_next_run_again_instead_of_waiting_for_the_old_time() {
+        // Five hours back: kept, the 09:00 run would now be nearly six hours away and nothing would happen.
+        let runs = runs_with_a_step(chrono::Duration::hours(-5)).await;
+        // Planned from 03:10 on the new clock: an hour on, give or take the look interval.
+        assert_eq!(runs.len(), 3, "{runs:?}");
+        assert!((70..=71).contains(&runs[0]), "{runs:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_clock_set_forward_runs_the_overdue_run_at_the_next_look() {
+        let runs = runs_with_a_step(chrono::Duration::hours(5)).await;
+        // Not at 60 minutes: ten minutes in the clock jumped past 09:00, so it runs within a look.
+        assert!((10..=11).contains(&runs[0]), "{runs:?}");
     }
 }

@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
         // end, and whoever then reads /status must see that render's outcome.
         .with_observer(status.clone())
         .with_observer(refresh.clone());
-    let periodic = run_periodically_from(schedule, first, refresh.wake(), shutdown_signal(), || {
+    let periodic = run_periodically_from(schedule, first, refresh.wake(), clock.as_ref(), shutdown_signal(), || {
         let run = app.run(location);
         async move { run.await.map(|_| ()) }
     });
@@ -89,6 +89,6 @@ async fn main() -> Result<()> {
     let settings = ServerSettings::from(&config.server);
     tokio::select! {
         result = periodic => result,
-        result = serve(&settings, images, config.display.image_format.into(), schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }, clock) => result,
+        result = serve(&settings, images, config.display.image_format.into(), schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }, clock.clone()) => result,
     }
 }

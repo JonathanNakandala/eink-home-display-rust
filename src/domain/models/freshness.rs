@@ -50,6 +50,14 @@ impl<T: Clone> LastGood<T> {
         };
         let reason = error.reason();
         match slot.as_ref() {
+            // From later than now: the clock has been set back since, so there is no telling how old this
+            // is. Better off the display than shown with an age that is made up, and dropped so that the
+            // clock catching up can't bring it back looking fresh.
+            Some((_, fetched_at)) if *fetched_at > now => {
+                report(source, &error, "its last data is from the future (the clock was set back), so it is dropped");
+                *slot = None;
+                Fetched::Unavailable { reason }
+            }
             Some((value, fetched_at)) if now - *fetched_at <= max_age => {
                 let age = (now - *fetched_at).max(Duration::zero());
                 report(source, &error, &format!("showing data from {} ago", format_age(age)));
@@ -155,5 +163,26 @@ mod tests {
         assert_eq!(format_age(Duration::seconds(30)), "under 1 min");
         assert_eq!(format_age(Duration::minutes(8)), "8 min");
         assert_eq!(format_age(Duration::minutes(80)), "1 h 20 min");
+    }
+
+    #[test]
+    fn data_from_the_future_after_a_clock_set_back_is_dropped_not_shown_as_fresh() {
+        let slot = LastGood::default();
+        slot.resolve(Ok(1), at(15, 0), LIMIT, "t");
+
+        // Three hours back, and the source is down: the data's age can't be known.
+        let fetched = slot.resolve(Err(SourceError::Timeout), at(12, 0), LIMIT, "t");
+        assert_eq!(fetched, Fetched::Unavailable { reason: "timed out" });
+
+        // And it stays gone when the clock catches up to 15:05, within the limit of when it was fetched.
+        let later = slot.resolve(Err(SourceError::Timeout), at(15, 5), LIMIT, "t");
+        assert_eq!(later, Fetched::Unavailable { reason: "timed out" });
+
+        // A source that answers again starts over.
+        assert_eq!(slot.resolve(Ok(2), at(12, 10), LIMIT, "t"), Fetched::Fresh(2));
+        assert_eq!(
+            slot.resolve(Err(SourceError::Timeout), at(12, 15), LIMIT, "t"),
+            Fetched::Stale { value: 2, age: Duration::minutes(5) }
+        );
     }
 }
