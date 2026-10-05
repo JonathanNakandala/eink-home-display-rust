@@ -74,8 +74,10 @@ async fn main() -> Result<()> {
     // Built once so the Chrome it launches is kept between runs.
     let app = bootstrap::from_config(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source, images.clone(), clock.clone())?
         .with_observer(Arc::new(launch::AttemptMarker::new(marker)))
-        .with_observer(refresh.clone())
-        .with_observer(status.clone());
+        // Status before refresh: a button press is answered as soon as the refresh hears the render
+        // end, and whoever then reads /status must see that render's outcome.
+        .with_observer(status.clone())
+        .with_observer(refresh.clone());
     let periodic = run_periodically_from(schedule, first, refresh.wake(), shutdown_signal(), || {
         let run = app.run(location);
         async move { run.await.map(|_| ()) }
