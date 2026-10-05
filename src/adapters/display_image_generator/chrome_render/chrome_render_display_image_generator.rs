@@ -275,6 +275,45 @@ mod tests {
 
     use super::*;
 
+    fn html_for(data: &GlanceData) -> String {
+        let generator = ChromeRenderDisplayImageGenerator::new(
+            PathBuf::from("unused"),
+            DEFAULT_IDLE_TIMEOUT,
+            ChromeSource::PreferSystem,
+        );
+        generator.render_html(data).unwrap()
+    }
+
+    #[test]
+    fn a_fresh_dashboard_carries_no_staleness_markers() {
+        let html = html_for(&GlanceData::sample(chrono::Local::now()));
+        assert!(!html.contains(" ago<"), "no age label expected");
+        assert!(!html.contains("Unavailable"));
+        assert!(!html.contains("Weather unavailable"));
+        assert!(html.contains("container has-weather"));
+    }
+
+    #[test]
+    fn degraded_data_shows_ages_and_unavailable_parts() {
+        let html = html_for(&GlanceData::sample_degraded(chrono::Local::now()));
+        assert!(html.contains("8 min ago</span>"));
+        assert!(html.contains("Updated 40 min ago"));
+        assert!(html.contains(">Unavailable</div>"));
+    }
+
+    #[test]
+    fn unavailable_weather_keeps_its_column_and_says_so() {
+        let data = GlanceData::new(None, vec![], DateInfo::new(chrono::Local::now())).with_weather_unavailable();
+        let html = html_for(&data);
+        assert!(html.contains("Weather unavailable"));
+        assert!(html.contains("container has-weather"));
+
+        // Weather that is simply switched off leaves no column and no message.
+        let off = html_for(&GlanceData::new(None, vec![], DateInfo::new(chrono::Local::now())));
+        assert!(!off.contains("Weather unavailable"));
+        assert!(!off.contains("container has-weather"));
+    }
+
     #[test]
     fn file_urls_encode_characters_that_need_it() {
         let url = file_url(Path::new("/tmp/my render/dashboard é.html")).unwrap();

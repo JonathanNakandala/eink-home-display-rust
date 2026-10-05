@@ -135,5 +135,6 @@ fn create_application(
         setup_display(&config.display, &config.server.directory),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         setup_departure_boards(&config.departures, &config.providers)?,
+        (&config.stale_data).into(),
     ))
 }

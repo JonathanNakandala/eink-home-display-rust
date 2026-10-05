@@ -23,12 +23,47 @@ pub struct DepartureService {
     pub countdown: String,
 }
 
+impl DepartureService {
+    /// When it leaves, as a clock time: the new time for a delayed service that has one.
+    fn leaves_at(&self) -> &str {
+        match self.status {
+            DepartureStatus::Delayed if NaiveTime::parse_from_str(&self.expected, "%H:%M").is_ok() => &self.expected,
+            _ => &self.time,
+        }
+    }
+
+    /// This service as it reads at `now`, for departures fetched a while ago: the countdown is
+    /// recalculated, and None if it has already gone.
+    pub fn as_of(&self, now: DateTime<Local>) -> Option<Self> {
+        let seconds = seconds_until(now, self.leaves_at())?;
+        if seconds < 0 {
+            return None;
+        }
+        let mut service = self.clone();
+        // A cancelled train, or a late one with no estimate, never had a countdown.
+        if !service.countdown.is_empty() {
+            service.countdown = countdown(seconds);
+        }
+        Some(service)
+    }
+}
+
 /// What a departures service returns for its stop.
 #[derive(Debug, Clone, PartialEq, Eq, derive_new::new)]
 pub struct Departures {
     /// The station or stop's own name, e.g. "Hornsey"; empty if the source didn't give one.
     pub station: String,
     pub services: Vec<DepartureService>,
+}
+
+impl Departures {
+    /// These departures as they read at `now`, without the services that have left.
+    pub fn as_of(&self, now: DateTime<Local>) -> Self {
+        Self {
+            station: self.station.clone(),
+            services: self.services.iter().filter_map(|service| service.as_of(now)).collect(),
+        }
+    }
 }
 
 /// Seconds from `now` until the next occurrence of `clock_time` ("HH:MM", local time).
@@ -81,6 +116,47 @@ mod tests {
     #[test]
     fn rejects_text_that_is_not_a_time() {
         assert_eq!(seconds_until(at(9, 0, 0), "Delayed"), None);
+    }
+
+    fn service(time: &str, status: DepartureStatus, expected: &str, countdown: &str) -> DepartureService {
+        DepartureService::new(time.into(), "X".into(), status, expected.into(), countdown.into())
+    }
+
+    #[test]
+    fn old_departures_get_a_new_countdown_and_lose_the_ones_that_left() {
+        let departures = Departures::new(
+            "Hornsey".into(),
+            vec![
+                service("09:00", DepartureStatus::OnTime, "", "due"),
+                service("09:10", DepartureStatus::OnTime, "", "10 min"),
+                service("09:20", DepartureStatus::Delayed, "09:27", "27 min"),
+            ],
+        );
+
+        let later = departures.as_of(at(9, 5, 0));
+        assert_eq!(later.station, "Hornsey");
+        let countdowns: Vec<_> = later.services.iter().map(|s| s.countdown.as_str()).collect();
+        // 09:00 has gone; the delayed one counts to its new time.
+        assert_eq!(later.services.len(), 2);
+        assert_eq!(countdowns, ["5 min", "22 min"]);
+        assert_eq!(later.services[1].expected, "09:27");
+    }
+
+    #[test]
+    fn cancelled_and_estimate_less_services_keep_no_countdown_until_they_go() {
+        let cancelled = service("09:10", DepartureStatus::Cancelled, "", "");
+        assert_eq!(cancelled.as_of(at(9, 5, 0)).unwrap().countdown, "");
+        assert!(cancelled.as_of(at(9, 11, 0)).is_none());
+
+        let late = service("09:10", DepartureStatus::Delayed, "late", "");
+        assert_eq!(late.as_of(at(9, 5, 0)).unwrap().countdown, "");
+    }
+
+    #[test]
+    fn a_service_leaving_this_minute_is_still_shown_as_due() {
+        let now = service("09:05", DepartureStatus::OnTime, "", "5 min");
+        assert_eq!(now.as_of(at(9, 5, 40)).unwrap().countdown, "due");
+        assert!(now.as_of(at(9, 6, 0)).is_none());
     }
 
     #[test]

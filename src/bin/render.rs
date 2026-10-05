@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
 
     let data = match (&config, args.live) {
         (Some(config), true) => fetch_live(config).await?,
+        _ if args.degraded => GlanceData::sample_degraded(chrono::Local::now()),
         _ => GlanceData::sample(chrono::Local::now()),
     };
 
@@ -107,6 +108,7 @@ async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
         NoDisplay,
         NoStore,
         setup_departure_boards(&config.departures, &config.providers)?,
+        (&config.stale_data).into(),
     );
     app.run(Location::new(config.location.latitude, config.location.longitude))
         .await?;

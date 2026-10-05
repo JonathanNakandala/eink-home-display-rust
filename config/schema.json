@@ -45,6 +45,14 @@
         "wake_delay_seconds": 30
       }
     },
+    "stale_data": {
+      "description": "How long an earlier result stands in for a source that has failed.",
+      "$ref": "#/$defs/StaleDataConfig",
+      "default": {
+        "departures_max_age_minutes": 15,
+        "weather_max_age_minutes": 180
+      }
+    },
     "weather": {
       "$ref": "#/$defs/WeatherConfig"
     }
@@ -369,6 +377,25 @@
           "type": "integer",
           "format": "uint32",
           "default": 30,
+          "minimum": 0
+        }
+      }
+    },
+    "StaleDataConfig": {
+      "description": "When a source fails, the dashboard shows what it said last time, labelled with its age, until it\nis older than this; after that the part is shown as unavailable.",
+      "type": "object",
+      "properties": {
+        "departures_max_age_minutes": {
+          "description": "Departures go out of date quickly, so this is short.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 15,
+          "minimum": 0
+        },
+        "weather_max_age_minutes": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 180,
           "minimum": 0
         }
       }
