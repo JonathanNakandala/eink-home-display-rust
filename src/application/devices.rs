@@ -128,7 +128,9 @@ impl DeviceBoard {
     /// Logs what an operator would want to hear about: a battery getting worse, or a display
     /// that returns after going quiet.
     pub fn record(&self, now: DateTime<Local>, telemetry: Telemetry, next_seconds: u64) {
-        let expected_by = now + Duration::seconds(next_seconds.try_into().unwrap_or(i64::MAX));
+        let expected_by = Duration::try_seconds(next_seconds.try_into().unwrap_or(i64::MAX))
+            .and_then(|wait| now.checked_add_signed(wait))
+            .unwrap_or(now);
         let mut devices = self.devices();
         if devices.len() >= MAX_DEVICES && !devices.contains_key(&telemetry.device) {
             log::warn!("Ignoring {:?}: already tracking {MAX_DEVICES} devices", telemetry.device);

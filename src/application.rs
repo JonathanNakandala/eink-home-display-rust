@@ -4,10 +4,13 @@ pub mod plan;
 pub mod refresh;
 pub mod status;
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use anyhow::anyhow;
+use futures_util::FutureExt;
 use chrono::{DateTime, Duration, Local};
 
 use std::future::Future;
@@ -64,6 +67,15 @@ async fn within<T>(
     work: impl Future<Output = Result<T, SourceError>>,
 ) -> Result<T, SourceError> {
     tokio::time::timeout(limit, work).await.unwrap_or(Err(SourceError::Timeout))
+}
+
+/// What a panic said, if it said anything readable (`panic!("...")` carries a `&str` or a `String`).
+fn panic_message(panic: &(dyn Any + Send)) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no message".to_owned())
 }
 
 fn age_seconds(age: Duration) -> u64 {
@@ -162,15 +174,19 @@ where
     /// is shown from its last good data if recent enough (labelled with the age), or as unavailable.
     /// The whole run is abandoned, with an error, if it takes longer than `limits.deadline`.
     /// On success, says how healthy each source was. The observers hear of the outcome either way.
+    ///
+    /// A panic in a source, the renderer or the display is caught and reported as a failed run, like
+    /// any other: the service also serves the image and its health, and one bad response must not end it.
     pub async fn run(&self, location: Location) -> anyhow::Result<RenderReport> {
         for observer in &self.observers {
             observer.render_started();
         }
         let deadline = self.limits.deadline;
-        let result = tokio::time::timeout(deadline, self.render(location))
-            .await
-            .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))
-            .and_then(|rendered| rendered);
+        let result = match AssertUnwindSafe(tokio::time::timeout(deadline, self.render(location))).catch_unwind().await {
+            Ok(Ok(rendered)) => rendered,
+            Ok(Err(_)) => Err(anyhow!("The render didn't answer within {deadline:?}")),
+            Err(panic) => Err(anyhow!("The render panicked: {}", panic_message(panic.as_ref()))),
+        };
         let finished = self.clock.now();
         for observer in &self.observers {
             match &result {
@@ -548,5 +564,43 @@ mod tests {
         let frame = rig.frames.lock().unwrap().last().unwrap().to_string();
         assert!(frame.contains("09:41") && frame.contains("Mon"), "{frame}");
         assert_eq!(*stamps.0.lock().unwrap(), [at]);
+    }
+
+    /// A renderer that panics while the flag is set, and otherwise answers.
+    struct Unreliable(Flag);
+    impl DisplayImageGenerator for Unreliable {
+        async fn generate(&self, _: GlanceData, _: &DisplayProfile) -> anyhow::Result<ImageData> {
+            if self.0.load(Ordering::SeqCst) {
+                panic!("Chrome sent something unreadable");
+            }
+            Ok(ImageData::new(vec![]))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_panic_is_a_failed_run_that_the_observers_hear_about_and_the_next_run_recovers() {
+        let events = Arc::new(Events::default());
+        let broken = Flag::default();
+        let app = Application::new(
+            Weather(Flag::default()),
+            Unreliable(broken.clone()),
+            Panel,
+            Store,
+            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(Flag::default(), Flag::default()))],
+            MaxAge::default(),
+            RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
+            Arc::new(SystemClock),
+        )
+        .with_observer(events.clone());
+
+        broken.store(true, Ordering::SeqCst);
+        let error = app.run(Location::new(0.0, 0.0)).await.unwrap_err();
+        assert!(format!("{error}").contains("The render panicked: Chrome sent something unreadable"), "{error}");
+        assert_eq!(*events.0.lock().unwrap(), ["started", "failed"]);
+
+        // The data sources' memory and the observers are intact: the next run works.
+        broken.store(false, Ordering::SeqCst);
+        app.run(Location::new(0.0, 0.0)).await.unwrap();
+        assert_eq!(*events.0.lock().unwrap(), ["started", "failed", "started", "succeeded"]);
     }
 }

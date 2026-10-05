@@ -85,7 +85,7 @@ impl Status {
             (Health::Stale, None) => "stale: no image has been rendered".to_owned(),
             (Health::Stale, Some(image)) => format!(
                 "stale: the image is {} old",
-                format_age(chrono::Duration::seconds(image.age_seconds.try_into().unwrap_or(i64::MAX)))
+                format_age(chrono::Duration::try_seconds(image.age_seconds.try_into().unwrap_or(i64::MAX)).unwrap_or(chrono::Duration::zero()))
             ),
             (Health::Starting, _) => "starting".to_owned(),
             (Health::Ok, _) => "ok".to_owned(),

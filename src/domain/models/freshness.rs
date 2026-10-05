@@ -2,7 +2,7 @@
 //! shown from what it said a little while ago, labelled with how old that is, instead of
 //! being left off the display.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use chrono::{DateTime, Duration, Local};
 
@@ -38,7 +38,9 @@ impl<T: Clone> LastGood<T> {
         max_age: Duration,
         source: &str,
     ) -> Fetched<T> {
-        let mut slot = self.slot.lock().unwrap();
+        // The slot is plain data and each update leaves it whole, so a panic elsewhere while the lock was
+        // held is no reason to stop remembering.
+        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
         let error = match result {
             Ok(value) => {
                 *slot = Some((value.clone(), now));
