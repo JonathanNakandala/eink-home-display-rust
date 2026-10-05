@@ -56,7 +56,7 @@ one network need different `instance_name`s (a clash is resolved by adding a num
 ### What the server tells the device (`/plan`)
 
 `GET /plan` (optionally `?have=<version>`) answers with JSON, worked out from the server's refresh
-schedule. The device does not use it yet.
+schedule. The device asks it on every wake.
 
 ```json
 {"version":3973074790,"changed":true,"stale":false,"pending":false,"next_seconds":65,"age_seconds":1}
@@ -70,6 +70,35 @@ schedule. The device does not use it yet.
 - `pending`: a render is due or running, so `next_seconds` is just the wake delay. Ask again then.
 - `stale`: a scheduled render came more than `server.stale_grace_seconds` (300) late. `next_seconds` then points at the next slot.
 - `age_seconds`: time since the image was rendered.
+
+### What the device does on each wake
+
+1. Joins Wi-Fi and asks `/plan?have=<version it is showing>` (the version is remembered in flash).
+2. `changed: false`: skips the download and the refresh. `changed: true`: downloads the image, draws it,
+   and remembers its `version`.
+3. `stale: true`: also writes `Out of date: rendered 3 h 20 min ago` in the bottom-right corner.
+4. Sleeps for `next_seconds` (limited to between 1 minute and 1 day). `sleep_duration` is only the
+   fallback when the server never answered.
+
+If `/plan` fails (no connection, a bad status, unreadable JSON) it takes the lookup-and-retry path
+below, then counts a failed wake (see "When the download fails"). A device that has never drawn anything has version 0,
+so its first wake always downloads.
+
+### The refresh button
+
+Press KEY0 (the right green button) to get a fresh picture now, for example in the middle of the night
+when the device would otherwise sleep until morning. The button wakes the device, which then calls
+`POST /refresh?have=<version>` instead of `GET /plan`. The server renders at once, waits for it to
+finish (up to 40 s), and answers in the same format as `/plan`, so the rest of the wake is unchanged:
+it downloads and draws the new image, then sleeps until the next scheduled render.
+
+- The server refuses a request when a render started in the last `server.refresh_cooldown_seconds`
+  (30), and then just answers with the image it has. A held or repeated press can't cause a stream of
+  API calls.
+- A forced render doesn't change the schedule: the next scheduled slot still happens.
+- The panel doesn't change until the render is done, a few seconds in the log timings I saw on a laptop
+  (2.4 s), longer on a Raspberry Pi or a cold Chrome. There is no on-screen "refreshing" message.
+- If the server can't be reached, the usual lookup, retry and failure notice apply.
 
 ### How the device finds the server
 
@@ -93,9 +122,20 @@ server announces its format, and the log reports an error if it differs from `im
 
 ### When the download fails
 
-The old picture stays on the panel, with a label in the bottom-right corner:
-`Last update failed @ 14:32` (the time of the failed wake, in `timezone`). The next successful
-download redraws the whole screen and the label goes away.
+The old picture stays on the panel. What happens next depends on how many wakes in a row have failed
+(the count is kept in flash and resets on any wake that reaches the server):
+
+| Failed wakes in a row | Panel | Sleep |
+|---|---|---|
+| 1st | Label in the bottom-right corner: `Last update failed @ 14:32` | `sleep_duration` (10 min) |
+| 2nd | unchanged | 20 min |
+| 3rd | unchanged | 40 min |
+| 4th and later | unchanged | `max_backoff_ms` (1 h) |
+
+So a server that is down for a day costs one panel refresh and a handful of short wakes, not 144.
+When the server comes back, the next wake redraws the picture even if it is the version the device
+thinks it shows, so the label doesn't stay up. The `Out of date` notice is also drawn once per stale
+spell, not on every wake.
 
 After deep sleep the device keeps no copy of the picture, so the label is a partial refresh of
 just that corner ([eink_notice.h](eink_notice.h)). The display driver marks the whole screen as
@@ -114,12 +154,19 @@ life, switch both settings to PNG. Measure rather than assume.
 
 ## Timing
 
-`sleep_duration` should equal the cron period. The device's wake time isn't aligned to
-the cron, so the picture can be up to one period old. Fine for a departures board; if it
-matters, render earlier in each period than the device usually wakes.
+The device sleeps for the `next_seconds` the server reports: the next scheduled render plus
+`server.wake_delay_seconds`, so it wakes just after each render. A cron with quiet hours, such as
+`*/10 6-22 * * *`, keeps it asleep overnight.
 
 ## Verify on first flash
 
+- Stop the server and wake the device a few times: the label appears once, and the log shows
+  `Failure 2 in a row; sleeping 1200 s`, then 2400 s. Start the server again: the next wake redraws
+  the picture and the label goes.
+
+- The log shows `Image changed, downloading` on the first wake and `Image unchanged, skipping refresh`
+  on a wake before the next render, and the sleep length matches `next_seconds`.
+- `shown_version` survives deep sleep (a second wake sends `have=` with the previous version).
 - The lookup finds the server (`Found '...' at ...` in the log) and the remembered address
   survives deep sleep. Try moving the server to another port to see it recover.
 - Unplug the Rust server and wake the device: the picture stays and the label appears in the

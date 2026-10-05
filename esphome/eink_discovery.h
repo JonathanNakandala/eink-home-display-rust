@@ -83,4 +83,14 @@ inline std::string url(uint32_t ip, uint16_t port, const std::string &path) {
   return buffer + path;
 }
 
+// "5 min", "3 h 20 min", for the out-of-date notice.
+inline std::string age(uint32_t seconds) {
+  uint32_t minutes = seconds / 60;
+  if (minutes < 1)
+    return "under 1 min";
+  if (minutes < 60)
+    return std::to_string(minutes) + " min";
+  return std::to_string(minutes / 60) + " h " + std::to_string(minutes % 60) + " min";
+}
+
 }  // namespace eink_discovery

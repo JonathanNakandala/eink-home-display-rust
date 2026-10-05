@@ -1,7 +1,8 @@
 # =============================================================================
 # reTerminal E1003 - shows the image served by eink-home-display-rust
 # =============================================================================
-# Each wake: join Wi-Fi, download http://<server>:<port>/image, draw it, deep sleep.
+# Each wake: join Wi-Fi, ask the server's /plan what is current, download and draw the image
+# only if it changed, then sleep for as long as the server says.
 # The server's address and port are found over mDNS and remembered across sleeps; the
 # download only goes looking again when the remembered one stops working.
 # The server side is `[server]` and `[display]` in the Rust app's config; keep
@@ -19,9 +20,11 @@ substitutions:
   friendly_name: "reTerminal_E1003"
   # The server is found over mDNS, so nothing here needs to change when its address or
   # port does. Used only until the first successful scan, or if a scan finds nothing:
-  fallback_url: "http://e-ink-home-display.local:8080/image"
-  # The path the Rust app serves the image at.
+  fallback_base: "http://e-ink-home-display.local:8080"
+  # The paths the Rust app serves the image and its plan at.
   image_path: /image
+  plan_path: /plan
+  refresh_path: /refresh
   # For the time shown when a download fails.
   timezone: Europe/London
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
@@ -29,8 +32,11 @@ substitutions:
   server_name: ""
   # BMP (8-bit, uncompressed, ~2.6 MB, no decoder needed) or PNG (small, needs inflating).
   image_format: BMP
-  # Match the Rust app's refresh schedule, e.g. --cron "*/10 * * * *".
+  # Only used when the server can't be reached; normally the server's /plan says when to wake.
   sleep_duration: 10min
+  sleep_duration_ms: "600000"
+  # After repeated failures the sleep doubles each time, up to this.
+  max_backoff_ms: "3600000"
   # How long the panel needs to finish drawing before power is cut.
   refresh_settle: 15s
 
@@ -56,7 +62,12 @@ esphome:
           condition:
             wifi.connected:
           timeout: 30s
-      - script.execute: fetch_image
+      # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
+      - lambda: |-
+          id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+          if (id(force_refresh))
+            ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
+      - script.execute: check_plan
 
 esp32:
   board: seeed_xiao_esp32s3
@@ -92,41 +103,29 @@ wifi:
 
 http_request:
   # Plain HTTP on the LAN; TLS would cost a lot of RAM for nothing.
-  timeout: 20s
-  watchdog_timeout: 40s
+  # Long enough for the server to render when the button asks for it (it waits up to 40 s).
+  timeout: 50s
+  watchdog_timeout: 70s
+
+json:
 
 online_image:
   - id: dashboard
-    url: ${fallback_url}
+    url: ${fallback_base}${image_path}
     format: ${image_format}
     type: GRAYSCALE
     update_interval: never
     # The panel is 1872x1404 and the image is rendered at that size, so no resize.
     on_download_finished:
       - logger.log: "Image downloaded, drawing"
+      - lambda: |-
+          id(shown_version) = id(plan_version);
+          id(notice_on_panel) = false;
       - component.update: epaper_display
       - delay: ${refresh_settle}
-      - if:
-          condition:
-            binary_sensor.is_off: maintenance_button
-          then:
-            - deep_sleep.enter: deep_sleep_1
+      - script.execute: after_image
     on_error:
-      # The remembered server may have moved: look once per wake, then try again.
-      - if:
-          condition:
-            lambda: 'return !id(searched);'
-          then:
-            - script.execute: discover
-            - if:
-                condition:
-                  lambda: 'return id(server_found);'
-                then:
-                  - script.execute: fetch_image
-                else:
-                  - script.execute: give_up
-          else:
-            - script.execute: give_up
+      - script.execute: server_failed
 
 globals:
   # The server found last time. Kept across deep sleep; 0 means none yet.
@@ -138,7 +137,52 @@ globals:
     type: uint16_t
     restore_value: yes
     initial_value: '0'
+  # The render on the panel now (the server's /plan `version`). Kept across deep sleep; 0 means unknown.
+  - id: shown_version
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  # Wakes in a row that couldn't reach the server. Drives the backoff; 0 after any success.
+  - id: failed_wakes
+    type: uint8_t
+    restore_value: yes
+    initial_value: '0'
+  # A notice is on the panel instead of (part of) the picture, so the next good wake must redraw it.
+  - id: notice_on_panel
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
   # This wake's state.
+  - id: plan_version
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  # Woken by the button, so ask the server to render now.
+  - id: force_refresh
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: plan_ok
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: plan_changed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: plan_stale
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # Milliseconds the server asked us to sleep; 0 means use sleep_duration.
+  - id: plan_sleep_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: plan_age_seconds
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
   - id: searched
     type: bool
     restore_value: no
@@ -147,23 +191,152 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-  # Draw the failure notice instead of the picture.
-  - id: show_failure
+  # Draw a notice in the corner instead of the picture, and what it says.
+  - id: show_notice
     type: bool
     restore_value: no
     initial_value: 'false'
+  - id: notice_text
+    type: std::string
+    restore_value: no
 
 script:
-  # Downloads from the remembered server, or the fallback URL before one has been found.
+  # Asks the server what is current: whether the image changed, whether it is stale, and when to come back.
+  # After a button wake it asks for a render first (POST /refresh), which answers the same way.
+  - id: check_plan
+    then:
+      - if:
+          condition:
+            lambda: 'return id(force_refresh);'
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  std::string base = (id(server_ip) == 0 || id(server_port) == 0)
+                                         ? std::string("${fallback_base}")
+                                         : eink_discovery::url(id(server_ip), id(server_port), "");
+                  return base + "${refresh_path}?have=" + std::to_string(id(shown_version));
+                capture_response: true
+                max_response_buffer_size: 1024
+                on_response:
+                  - script.execute:
+                      id: handle_plan
+                      code: !lambda 'return response->status_code;'
+                      body: !lambda 'return body;'
+          else:
+            - http_request.get:
+                url: !lambda |-
+                  std::string base = (id(server_ip) == 0 || id(server_port) == 0)
+                                         ? std::string("${fallback_base}")
+                                         : eink_discovery::url(id(server_ip), id(server_port), "");
+                  return base + "${plan_path}?have=" + std::to_string(id(shown_version));
+                capture_response: true
+                max_response_buffer_size: 1024
+                on_response:
+                  - script.execute:
+                      id: handle_plan
+                      code: !lambda 'return response->status_code;'
+                      body: !lambda 'return body;'
+
+  # Reads the server's plan, then downloads the image, or skips it when it hasn't changed.
+  - id: handle_plan
+    parameters:
+      code: int
+      body: string
+    then:
+      - lambda: |-
+          bool ok = code == 200 && json::parse_json(body, [](JsonObject root) -> bool {
+            if (!root["version"].is<uint32_t>() || !root["next_seconds"].is<uint32_t>())
+              return false;
+            id(plan_version) = root["version"].as<uint32_t>();
+            id(plan_changed) = root["changed"] | true;
+            id(plan_stale) = root["stale"] | false;
+            id(plan_age_seconds) = root["age_seconds"] | 0;
+            // A little more than a minute at least, and never more than a day.
+            uint32_t seconds = root["next_seconds"].as<uint32_t>();
+            id(plan_sleep_ms) = (seconds < 60 ? 60 : seconds > 86400 ? 86400 : seconds) * 1000u;
+            return true;
+          });
+          if (!ok)
+            ESP_LOGW("plan", "No usable plan (HTTP %d): %s", code, body.c_str());
+          id(plan_ok) = ok;
+          if (ok) {
+            id(failed_wakes) = 0;
+            // A notice is covering the picture and the server is fine again: redraw it, even if the
+            // image is the one we think we show. Not while stale, or it would redraw every wake.
+            if (id(notice_on_panel) && !id(plan_stale))
+              id(plan_changed) = true;
+          }
+      - if:
+          condition:
+            lambda: 'return !id(plan_ok);'
+          then:
+            - script.execute: server_failed
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(plan_changed);'
+                then:
+                  - logger.log: "Image changed, downloading"
+                  - script.execute: fetch_image
+                else:
+                  - logger.log: "Image unchanged, skipping refresh"
+                  - script.execute: after_image
+
+  # Downloads the image from the remembered server.
   - id: fetch_image
     then:
       - online_image.set_url:
           id: dashboard
           url: !lambda |-
             if (id(server_ip) == 0 || id(server_port) == 0)
-              return "${fallback_url}";
+              return "${fallback_base}${image_path}";
             return eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
       - component.update: dashboard
+
+  # The image is current (just drawn, or already on the panel): say so if the server is behind, then sleep.
+  - id: after_image
+    then:
+      - if:
+          condition:
+            # Once per spell: the text has an age in it, which would otherwise redraw every wake.
+            lambda: 'return id(plan_stale) && !id(notice_on_panel);'
+          then:
+            - lambda: |-
+                id(notice_text) = "Out of date: rendered " + eink_discovery::age(id(plan_age_seconds)) + " ago";
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+      - script.execute: sleep_now
+
+  # Sleeps for as long as the server asked, or sleep_duration if it never answered.
+  - id: sleep_now
+    then:
+      - if:
+          condition:
+            binary_sensor.is_off: maintenance_button
+          then:
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                sleep_duration: !lambda 'return id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms});'
+
+  # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
+  - id: server_failed
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(searched);'
+          then:
+            - script.execute: discover
+            - if:
+                condition:
+                  lambda: 'return id(server_found);'
+                then:
+                  - script.execute: check_plan
+                else:
+                  - script.execute: give_up
+          else:
+            - script.execute: give_up
 
   # Asks the network where the server is, and remembers the answer.
   - id: discover
@@ -179,28 +352,42 @@ script:
           if (!server.format.empty() && server.format != "${image_format}" && strcasecmp(server.format.c_str(), "${image_format}") != 0)
             ESP_LOGE("eink_discovery", "Server sends %s but this firmware decodes ${image_format}; set both to the same format", server.format.c_str());
 
-  # Nothing worked: the picture stays on the panel (e-paper keeps it) apart from a notice in
-  # the corner saying when it last failed. Tries again at the next wake.
+  # Nothing worked: the picture stays on the panel (e-paper keeps it). The first failure in a row
+  # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time
+  # (doubling, up to max_backoff_ms), so a server that is down doesn't drain the battery.
   - id: give_up
     then:
-      - logger.log: "Image download failed, showing notice"
-      # The clock survives deep sleep; this just gives a fresh start a moment to sync.
+      - lambda: |-
+          if (id(failed_wakes) < 255)
+            id(failed_wakes)++;
+          // 1st failure: sleep_duration, 2nd: twice that, and so on.
+          uint32_t shift = id(failed_wakes) > 7 ? 6 : id(failed_wakes) - 1;
+          uint64_t sleep_ms = (uint64_t) (${sleep_duration_ms}) << shift;
+          id(plan_sleep_ms) = sleep_ms > (${max_backoff_ms}) ? (${max_backoff_ms}) : (uint32_t) sleep_ms;
+          ESP_LOGW("backoff", "Failure %u in a row; sleeping %u s", (unsigned) id(failed_wakes),
+                   (unsigned) (id(plan_sleep_ms) / 1000));
       - if:
           condition:
-            wifi.connected:
+            lambda: 'return id(failed_wakes) == 1 && !id(notice_on_panel);'
           then:
-            - wait_until:
+            - logger.log: "First failure, showing notice"
+            # The clock survives deep sleep; this just gives a fresh start a moment to sync.
+            - if:
                 condition:
-                  time.has_time:
-                timeout: 8s
-      - lambda: 'id(show_failure) = true;'
-      - component.update: epaper_display
-      - delay: ${refresh_settle}
-      - if:
-          condition:
-            binary_sensor.is_off: maintenance_button
-          then:
-            - deep_sleep.enter: deep_sleep_1
+                  wifi.connected:
+                then:
+                  - wait_until:
+                      condition:
+                        time.has_time:
+                      timeout: 8s
+            - lambda: |-
+                auto now = id(sntp_time).now();
+                id(notice_text) = now.is_valid() ? now.strftime("Last update failed @ %H:%M") : std::string("Last update failed");
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+      - script.execute: sleep_now
 
 time:
   - platform: sntp
@@ -212,7 +399,7 @@ font:
   - file: ../templates/fonts/Overpass/Overpass-SemiBold.ttf
     id: notice_font
     size: 36
-    glyphs: " :@0123456789Laustpdefi"
+    glyphs: " :@-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 spi:
   id: epaper_spi_bus
@@ -234,11 +421,9 @@ display:
       mirror_x: true
       mirror_y: false
     lambda: |-
-      if (id(show_failure)) {
+      if (id(show_notice)) {
         // Only this corner is refreshed; the rest of the panel keeps its picture.
-        auto now = id(sntp_time).now();
-        eink_notice::draw(*id(epaper_display), id(notice_font),
-                          now.is_valid() ? now.strftime("Last update failed @ %H:%M") : std::string("Last update failed"));
+        eink_notice::draw(*id(epaper_display), id(notice_font), id(notice_text));
       } else {
         it.image(0, 0, id(dashboard));
       }
