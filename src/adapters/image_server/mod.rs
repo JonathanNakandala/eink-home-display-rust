@@ -2,22 +2,28 @@
 //! The display adapter publishes into a directory; this serves what is there.
 
 mod advertise;
+mod plan;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::extract::State;
+use chrono::{DateTime, Local};
+use serde::Deserialize;
+use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
+use axum::{Json, Router};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
+pub use self::plan::{render_due, PlanTiming};
+use self::plan::compute;
 use crate::config::server::ServerConfig;
 use crate::domain::models::display::ImageFormat;
+use crate::scheduler::Schedule;
 
 fn published_path(directory: &Path, format: ImageFormat) -> PathBuf {
     directory.join(format!("image.{}", format.extension()))
@@ -40,18 +46,53 @@ pub async fn publish(directory: &Path, format: ImageFormat, bytes: &[u8]) -> any
     Ok(())
 }
 
-#[derive(Clone)]
 struct Published {
     directory: PathBuf,
     format: ImageFormat,
+    schedule: Schedule,
+    timing: PlanTiming,
 }
 
-pub fn router(directory: PathBuf, format: ImageFormat) -> Router {
+/// When the image being served was rendered, or None if there isn't one yet.
+pub fn rendered_at(directory: &Path, format: ImageFormat) -> Option<DateTime<Local>> {
+    let modified = std::fs::metadata(published_path(directory, format)).ok()?.modified().ok()?;
+    Some(DateTime::<Local>::from(modified))
+}
+
+pub fn router(directory: PathBuf, format: ImageFormat, schedule: Schedule, timing: PlanTiming) -> Router {
     Router::new()
         .route("/image", get(image))
+        .route("/plan", get(plan))
         .route("/healthz", get(|| async { "ok" }))
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published { directory, format }))
+        .with_state(Arc::new(Published { directory, format, schedule, timing }))
+}
+
+#[derive(Deserialize)]
+struct PlanQuery {
+    /// The version of the image the display already shows.
+    have: Option<u32>,
+}
+
+/// Tells a display which render the image is, whether it is stale, and when to ask again.
+async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
+    let path = published_path(&published.directory, published.format);
+    let modified = match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
+        Ok(modified) => modified,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
+        }
+        Err(e) => return server_error("inspect", e),
+    };
+    match compute(Local::now(), DateTime::<Local>::from(modified), &published.schedule, published.timing, query.have) {
+        Ok(plan) => ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response(),
+        Err(e) => server_error("plan", e),
+    }
+}
+
+fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
+    log::error!("Failed to {action} the published image: {e}");
+    StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
 async fn image(State(published): State<Arc<Published>>) -> impl IntoResponse {
@@ -76,7 +117,7 @@ async fn image(State(published): State<Arc<Published>>) -> impl IntoResponse {
 }
 
 /// Serves until the future is dropped, or fails at once if the address can't be bound.
-pub async fn serve(config: &ServerConfig, format: ImageFormat) -> anyhow::Result<()> {
+pub async fn serve(config: &ServerConfig, format: ImageFormat, schedule: Schedule) -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("Failed to listen on {}", config.bind))?;
@@ -91,7 +132,7 @@ pub async fn serve(config: &ServerConfig, format: ImageFormat) -> anyhow::Result
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(config.directory.clone(), format))
+    axum::serve(listener, router(config.directory.clone(), format, schedule, PlanTiming::from(config)))
         .await
         .context("Image server stopped")
 }
@@ -103,7 +144,9 @@ mod tests {
     async fn start(directory: PathBuf, format: ImageFormat) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router(directory, format)).await });
+        let timing = PlanTiming::from(&ServerConfig::default());
+        let schedule = Schedule::parse_every("1h").unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing)).await });
         format!("http://{address}")
     }
 
@@ -133,5 +176,52 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
         assert_eq!(reqwest::get(format!("{base}/healthz")).await.unwrap().status(), 200);
+    }
+
+    fn set_age(directory: &Path, seconds: u64) {
+        let file = std::fs::File::options().write(true).open(directory.join("image.bmp")).unwrap();
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plan_reports_the_version_and_when_to_come_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        assert_eq!(reqwest::get(format!("{base}/plan")).await.unwrap().status(), 404);
+
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+        set_age(tmp.path(), 100);
+        let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
+        let version = plan["version"].as_u64().unwrap();
+        let expected = rendered_at(tmp.path(), ImageFormat::Bmp).unwrap().timestamp() as u64;
+        assert_eq!(version, expected);
+        assert_eq!(plan["changed"], true);
+        assert_eq!(plan["stale"], false);
+        // An hour after the render, less the 100 seconds already gone, plus the 30 second delay.
+        let next = plan["next_seconds"].as_u64().unwrap();
+        assert!((3525..=3535).contains(&next), "{next}");
+
+        let same: serde_json::Value =
+            reqwest::get(format!("{base}/plan?have={version}")).await.unwrap().json().await.unwrap();
+        assert_eq!(same["changed"], false);
+        let other: serde_json::Value = reqwest::get(format!("{base}/plan?have=1")).await.unwrap().json().await.unwrap();
+        assert_eq!(other["changed"], true);
+
+        // A newer render is a larger version.
+        publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
+        let newer: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
+        assert!(newer["version"].as_u64().unwrap() >= version + 99);
+    }
+
+    #[tokio::test]
+    async fn an_old_image_is_reported_stale() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+        set_age(tmp.path(), 3 * 3600);
+
+        let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
+        assert_eq!(plan["stale"], true);
+        assert!(plan["age_seconds"].as_u64().unwrap() >= 3 * 3600);
     }
 }

@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
     // The display downloads its image, so serve it for as long as the refresh loop runs.
     tokio::select! {
         result = periodic => result,
-        result = serve(&config.server, config.display.image_format) => result,
+        result = serve(&config.server, config.display.image_format, schedule.clone()) => result,
     }
 }
 
