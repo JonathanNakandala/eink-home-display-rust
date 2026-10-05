@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 
+use eink_home_display_rust::adapters::clock::SystemClock;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_server::{serve, Handles, ServerSettings};
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
@@ -15,6 +16,7 @@ use eink_home_display_rust::bootstrap;
 use eink_home_display_rust::cli;
 use eink_home_display_rust::config::cache::CachePaths;
 use eink_home_display_rust::domain::models::location::Location;
+use eink_home_display_rust::domain::services::clock::Clock;
 use eink_home_display_rust::scheduler::{run_periodically_from, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
 
 #[tokio::main]
@@ -40,14 +42,15 @@ async fn main() -> Result<()> {
     let cache = CachePaths::new(args.cache_dir.clone().unwrap_or_else(|| config.cache.directory.clone()));
     cache.ensure_exists()?;
     let chrome_source = ChromeSource::from(args.bundled_chrome);
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
     let Some(schedule) = args.schedule() else {
-        return bootstrap::from_config(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source, Arc::new(DirectoryImages::new(config.server.directory.clone())))?
+        return bootstrap::from_config(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source, Arc::new(DirectoryImages::new(config.server.directory.clone())), clock)?
             .run(location)
             .await
             .map(|_| ());
     };
-    let now = chrono::Local::now();
+    let now = clock.now();
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
@@ -69,7 +72,7 @@ async fn main() -> Result<()> {
     let status = StatusBoard::new(now);
     let devices = DeviceBoard::new(Duration::from_secs(config.server.device_overdue_grace_seconds.into()));
     // Built once so the Chrome it launches is kept between runs.
-    let app = bootstrap::from_config(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source, images.clone())?
+    let app = bootstrap::from_config(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source, images.clone(), clock.clone())?
         .with_observer(Arc::new(launch::AttemptMarker::new(marker)))
         .with_observer(refresh.clone())
         .with_observer(status.clone());
@@ -84,6 +87,6 @@ async fn main() -> Result<()> {
     let settings = ServerSettings::from(&config.server);
     tokio::select! {
         result = periodic => result,
-        result = serve(&settings, images, config.display.image_format.into(), schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
+        result = serve(&settings, images, config.display.image_format.into(), schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }, clock) => result,
     }
 }

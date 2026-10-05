@@ -6,7 +6,6 @@ use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::Local;
 use serde::Deserialize;
 
 use super::health::image_written_at;
@@ -67,7 +66,7 @@ async fn plan_response(published: &Published, have: Option<u32>, telemetry: Opti
         Ok(None) => return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response(),
         Err(e) => return server_error("inspect", e),
     };
-    let now = Local::now();
+    let now = published.clock.now();
     match compute(now, rendered_at, &published.schedule, published.timing, have) {
         Ok(plan) => {
             if let Some(telemetry) = telemetry {
@@ -127,6 +126,25 @@ mod tests {
         let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
         assert_eq!(plan["stale"], true);
         assert!(plan["age_seconds"].as_u64().unwrap() >= 3 * 3600);
+    }
+
+    #[tokio::test]
+    async fn staleness_follows_the_servers_clock() {
+        use crate::adapters::clock::FixedClock;
+        use super::super::testing::start_with_clock;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FixedClock::at(chrono::Local::now());
+        let (base, _) = start_with_clock(tmp.path().to_path_buf(), ImageFormat::Bmp, clock.clone()).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+        let plan = || async { reqwest::get(format!("{base}/plan")).await.unwrap().json::<serde_json::Value>().await.unwrap() };
+        assert_eq!(plan().await["stale"], false);
+
+        // Three hours on, with an hourly schedule and no render since, nothing about the file changed.
+        clock.set(chrono::Local::now() + chrono::Duration::hours(3));
+        let late = plan().await;
+        assert_eq!(late["stale"], true);
+        assert!(late["age_seconds"].as_u64().unwrap() >= 3 * 3600);
     }
 
     #[tokio::test]

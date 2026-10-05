@@ -6,6 +6,7 @@ use image::GrayImage;
 
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
+use eink_home_display_rust::adapters::clock::SystemClock;
 use eink_home_display_rust::bootstrap::{self, setup_display};
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
 use eink_home_display_rust::cli::RenderArgs;
@@ -98,7 +99,7 @@ fn file_name(kind: DisplayKind) -> &'static str {
 async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
     // Reuse the application's own fetching by running it against a capture-only generator.
     let (tx, rx) = std::sync::mpsc::channel();
-    let app = bootstrap::assemble(config, Capture(tx), NoDisplay, NoStore)?;
+    let app = bootstrap::assemble(config, Capture(tx), NoDisplay, NoStore, Arc::new(SystemClock))?;
     app.run(Location::new(config.location.latitude, config.location.longitude))
         .await?;
     Ok(rx.recv()?)

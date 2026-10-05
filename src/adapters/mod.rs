@@ -1,3 +1,4 @@
+pub mod clock;
 pub mod departures;
 pub mod display_image_generator;
 pub mod image_display_service;

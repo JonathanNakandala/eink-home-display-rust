@@ -1,4 +1,5 @@
 pub mod arrivals_service;
+pub mod clock;
 pub mod departures_service;
 pub mod display_image_generator;
 pub mod image_display_service;

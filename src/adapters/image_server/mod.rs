@@ -27,6 +27,7 @@ use crate::application::refresh::RefreshControl;
 use crate::application::status::StatusBoard;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::schedule::Schedule;
+use crate::domain::services::clock::Clock;
 use crate::domain::services::published_images::PublishedImages;
 
 pub(super) struct Published {
@@ -35,6 +36,7 @@ pub(super) struct Published {
     pub(super) schedule: Schedule,
     pub(super) timing: PlanTiming,
     pub(super) handles: Handles,
+    pub(super) clock: Arc<dyn Clock>,
 }
 
 /// How the server listens and announces itself.
@@ -67,6 +69,7 @@ pub fn router(
     schedule: Schedule,
     timing: PlanTiming,
     handles: Handles,
+    clock: Arc<dyn Clock>,
 ) -> Router {
     Router::new()
         .route("/image", get(image::image))
@@ -76,7 +79,7 @@ pub fn router(
         .route("/healthz", get(health::healthz))
         .route("/metrics", get(health::metrics))
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published { images, format, schedule, timing, handles }))
+        .with_state(Arc::new(Published { images, format, schedule, timing, handles, clock }))
 }
 
 
@@ -100,6 +103,7 @@ pub async fn serve(
     format: ImageFormat,
     schedule: Schedule,
     handles: Handles,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(settings.bind)
         .await
@@ -115,7 +119,7 @@ pub async fn serve(
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(images, format, schedule, settings.timing, handles))
+    axum::serve(listener, router(images, format, schedule, settings.timing, handles, clock))
         .await
         .context("Image server stopped")
 }

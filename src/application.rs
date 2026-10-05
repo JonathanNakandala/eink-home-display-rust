@@ -19,6 +19,7 @@ use crate::domain::models::render_report::{RenderReport, SourceReport, SourceSta
 use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
+use crate::domain::services::clock::Clock;
 use crate::domain::services::departures_service::DeparturesService;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
@@ -133,6 +134,7 @@ where
     departure_boards: Vec<DepartureBoard<DS>>,
     max_age: MaxAge,
     limits: RenderLimits,
+    clock: Arc<dyn Clock>,
     #[new(default)]
     last_weather: LastGood<Option<WeatherInformation>>,
     /// Told how each run goes; see `with_observer`.
@@ -167,7 +169,7 @@ where
             .await
             .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))
             .and_then(|rendered| rendered);
-        let finished = Local::now();
+        let finished = self.clock.now();
         for observer in &self.observers {
             match &result {
                 Ok(report) => observer.render_succeeded(finished, report),
@@ -179,7 +181,7 @@ where
 
     async fn render(&self, location: Location) -> anyhow::Result<RenderReport> {
         // One instant for the whole frame, so the clock and the countdowns agree.
-        let now = chrono::Local::now();
+        let now = self.clock.now();
         let (weather, boards) = tokio::join!(
             async {
                 let result = within(
@@ -232,6 +234,7 @@ mod tests {
     use crate::domain::models::departures::{DepartureService, DepartureStatus};
     use crate::domain::models::display::{DisplayProfile, Palette};
     use crate::domain::models::image::ImageData;
+    use crate::adapters::clock::SystemClock;
     use crate::domain::models::weather::WeatherCondition;
 
     type Flag = Arc<AtomicBool>;
@@ -315,6 +318,7 @@ mod tests {
             vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(trains_down.clone(), trains_hang.clone()))],
             MaxAge::default(),
             RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
+            Arc::new(SystemClock),
         );
         Rig { weather_down, trains_down, trains_hang, render_hang, frames, app }
     }
@@ -504,5 +508,43 @@ mod tests {
         rig.render_hang.store(true, Ordering::SeqCst);
         app.run(Location::new(0.0, 0.0)).await.unwrap_err();
         assert_eq!(*events.0.lock().unwrap(), ["started", "succeeded", "started", "failed"]);
+    }
+
+    #[tokio::test]
+    async fn the_frame_and_the_outcome_are_stamped_from_the_clock() {
+        use chrono::TimeZone;
+
+        use crate::adapters::clock::FixedClock;
+
+        #[derive(Default)]
+        struct Stamps(Mutex<Vec<DateTime<Local>>>);
+        impl RenderObserver for Stamps {
+            fn render_started(&self) {}
+            fn render_succeeded(&self, at: DateTime<Local>, _report: &RenderReport) {
+                self.0.lock().unwrap().push(at);
+            }
+            fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {}
+        }
+
+        let rig = rig();
+        let at = Local.with_ymd_and_hms(2026, 6, 15, 9, 41, 0).unwrap();
+        let stamps = Arc::new(Stamps::default());
+        let app = Application::new(
+            Weather(rig.weather_down.clone()),
+            Capture(rig.frames.clone(), rig.render_hang.clone()),
+            Panel,
+            Store,
+            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(rig.trains_down.clone(), rig.trains_hang.clone()))],
+            MaxAge::default(),
+            RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
+            FixedClock::at(at),
+        )
+        .with_observer(stamps.clone());
+
+        app.run(Location::new(0.0, 0.0)).await.unwrap();
+
+        let frame = rig.frames.lock().unwrap().last().unwrap().to_string();
+        assert!(frame.contains("09:41") && frame.contains("Mon"), "{frame}");
+        assert_eq!(*stamps.0.lock().unwrap(), [at]);
     }
 }
