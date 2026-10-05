@@ -9,7 +9,7 @@ use eink_home_display_rust::adapters::departures::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::setup_display;
 use eink_home_display_rust::adapters::image_repository::file_store::FileStoreImageRepository;
-use eink_home_display_rust::adapters::image_server::{serve, Handles, RefreshControl, StatusBoard};
+use eink_home_display_rust::adapters::image_server::{serve, DeviceBoard, Handles, RefreshControl, StatusBoard};
 use eink_home_display_rust::adapters::weather::setup_weather_service;
 use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli;
@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
     }
     let refresh = RefreshControl::new(Duration::from_secs(config.server.refresh_cooldown_seconds.into()));
     let status = StatusBoard::new(now);
+    let devices = DeviceBoard::new(Duration::from_secs(config.server.device_overdue_grace_seconds.into()));
     let periodic = run_periodically_from(schedule, first, refresh.wake(), shutdown_signal(), || {
         launch::record_attempt(&marker);
         refresh.render_started();
@@ -118,7 +119,7 @@ async fn main() -> Result<()> {
     // The display downloads its image, so serve it for as long as the refresh loop runs.
     tokio::select! {
         result = periodic => result,
-        result = serve(&config.server, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone() }) => result,
+        result = serve(&config.server, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
     }
 }
 

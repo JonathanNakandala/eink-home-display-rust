@@ -74,3 +74,4 @@ instance_name = "E-ink home display"
 wake_delay_seconds = 30
 stale_grace_seconds = 300
 refresh_cooldown_seconds = 30
+device_overdue_grace_seconds = 900

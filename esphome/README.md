@@ -138,6 +138,26 @@ The memory check compares the largest free PSRAM block with the decoded image (1
 96 KB, and the log says what was needed and what was free. Each failure counts towards the backoff below,
 and the log line `Failure N in a row (reason)` names the stage.
 
+### Battery
+
+The voltage is read once at the start of every wake, before the radio or the panel are used, so it
+isn't pulled down by their load. Three states, with hysteresis so the label doesn't flap:
+
+| Voltage (percent) | What the device does |
+|---|---|
+| 3.40 V and above (10%) | Normal. |
+| Below `battery_low_v` 3.40 V | Normal, but every picture carries `Battery low 8% - please charge` in the bottom-right corner. It is drawn into the same refresh as the picture, so it costs nothing extra. |
+| Below `battery_empty_v` 3.30 V (5%) | Writes `Battery empty - charge to resume` once, then stops: no Wi-Fi, no refresh, and it wakes every `battery_halt_sleep_ms` (6 h) only to read the voltage. |
+| Back above `battery_resume_v` 3.60 V (about 32%) | Clears both states and carries on; the picture is redrawn, which removes the notice. |
+
+An unusable reading (under 2.5 V or over 5 V, as with no battery connected) is ignored, never a reason
+to stop. Maintenance mode (KEY1 held) still keeps the device awake. These thresholds are my reading
+of a typical Li-ion cell, not measured on your battery: check the real voltage at the moment the
+device halts, and the cell's own protection cut-off, before relying on them.
+
+Each check-in also sends the server `device`, `battery_mv`, `battery_pct`, `battery_state` and
+`failed_wakes`, which feed `/status` and `/metrics` (see [deploy/README.md](../deploy/README.md)).
+
 ### When the download fails
 
 The old picture stays on the panel. What happens next depends on how many wakes in a row have failed
@@ -177,6 +197,11 @@ The device sleeps for the `next_seconds` the server reports: the next scheduled 
 `*/10 6-22 * * *`, keeps it asleep overnight.
 
 ## Verify on first flash
+
+- The log shows `3.9x V, NN%, ok` at the start of each wake, and the server's `/status` lists the device
+  with the same voltage. Compare it with a multimeter on the battery once.
+- To see the label and the halt without draining the battery, temporarily raise `battery_low_v` and
+  `battery_empty_v` above the current voltage.
 
 - The first boot log shows no `Not enough PSRAM` line. If it does, the figures in it say how much was
   free; check that PSRAM is detected (about 8 MB) before anything else.

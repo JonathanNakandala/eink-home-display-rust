@@ -46,6 +46,7 @@
       "default": {
         "advertise": true,
         "bind": "0.0.0.0:8080",
+        "device_overdue_grace_seconds": 900,
         "directory": "served",
         "instance_name": "E-ink home display",
         "refresh_cooldown_seconds": 30,
@@ -375,6 +376,13 @@
           "description": "Address to listen on. The image is served at `/image`, with no authentication, so keep it on the LAN.",
           "type": "string",
           "default": "0.0.0.0:8080"
+        },
+        "device_overdue_grace_seconds": {
+          "description": "A display is reported overdue (`/status`, `/metrics`) once it is this much later than the\ntime it was told to return at. Covers a slow Wi-Fi join; a flat battery far exceeds it.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 900,
+          "minimum": 0
         },
         "directory": {
           "description": "Where the image to serve is written. Relative paths are resolved against the working directory.",

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use chrono::{DateTime, Local};
 use serde::Serialize;
 
+use super::devices::DeviceStatus;
 use super::plan::{is_stale, version_of, PlanTiming};
 use crate::domain::models::freshness::format_age;
 use crate::domain::models::render_report::{RenderReport, SourceReport};
@@ -43,6 +44,8 @@ pub struct Status {
     pub consecutive_failures: u32,
     /// How each source was on the last successful render.
     pub sources: Vec<SourceReport>,
+    /// The displays that have checked in, with their battery and whether any has gone quiet.
+    pub devices: Vec<DeviceStatus>,
     pub next_render: Option<DateTime<Local>>,
     pub uptime_seconds: u64,
     pub version: &'static str,
@@ -182,6 +185,7 @@ impl StatusBoard {
             }),
             consecutive_failures: record.consecutive_failures,
             sources: record.last_success.as_ref().map(|s| s.report.sources.clone()).unwrap_or_default(),
+            devices: Vec::new(),
             next_render: schedule.next_after(now).ok(),
             uptime_seconds: uptime.num_seconds().unsigned_abs(),
             version: env!("CARGO_PKG_VERSION"),

@@ -34,3 +34,67 @@ image, and the error text can name the failing source, so keep the port on the L
 
 `/status` keeps its history in memory, so a restart starts it again at `starting`. The sources list is
 from the last render that succeeded.
+
+## Watching the displays
+
+Each display reports itself on its normal check-in (query parameters on `/plan` and `/refresh`, so no
+extra radio time): its name, battery voltage, charge and state, and how many wakes in a row failed. The
+server also knows when it told the display to come back, so it can tell one that is asleep from one that
+has gone quiet: a display is **overdue** once it is later than that by `server.device_overdue_grace_seconds`
+(15 minutes), which covers a slow Wi-Fi join but not a flat battery. An overnight sleep of seven hours is
+not overdue, because the server asked for it.
+
+- `GET /status` lists them under `devices`, with `age_seconds`, `overdue` and the battery.
+- `GET /healthz` is still about the server only (it is 503 when the image is stale). A display going
+  quiet is an alert on its own, below, not a reason to restart the service.
+- `GET /metrics` is the same data in the Prometheus text format, for any scraper.
+- The service logs a warning when a battery goes low or empty, and an info line when a display returns
+  after being overdue.
+
+### Scraping and alerting (Prometheus)
+
+```yaml
+scrape_configs:
+  - job_name: eink
+    scrape_interval: 1m
+    static_configs:
+      - targets: ["eink-host.local:8080"]
+```
+
+```yaml
+groups:
+  - name: eink
+    rules:
+      - alert: EinkDisplayOverdue
+        expr: eink_device_overdue == 1
+        for: 5m
+        annotations:
+          summary: "{{ $labels.device }} has not checked in when it was told to"
+      - alert: EinkBatteryLow
+        expr: eink_device_battery_state{state="low"} == 1
+        for: 30m
+        annotations:
+          summary: "{{ $labels.device }} battery is low ({{ $value }})"
+      - alert: EinkBatteryEmpty
+        expr: eink_device_battery_state{state="empty"} == 1
+        annotations:
+          summary: "{{ $labels.device }} has stopped refreshing: battery empty"
+      - alert: EinkDisplayFailingToConnect
+        expr: eink_device_failed_wakes >= 4
+        annotations:
+          summary: "{{ $labels.device }} cannot reach the server"
+      - alert: EinkServerStale
+        expr: eink_render_state{state="stale"} == 1
+        for: 5m
+        annotations:
+          summary: "The dashboard is not being re-rendered"
+      - alert: EinkSourceUnavailable
+        expr: eink_source_state{state="unavailable"} == 1
+        for: 30m
+        annotations:
+          summary: "{{ $labels.source }} has had no data for half an hour"
+```
+
+A flat battery is the one failure the display cannot report itself, so `EinkDisplayOverdue` is the
+alert that catches it: the display simply stops checking in. The metrics have no authentication, like
+the rest of the server, so scrape from the LAN.
