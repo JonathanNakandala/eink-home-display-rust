@@ -73,6 +73,9 @@ esphome:
           then:
             - logger.log: "Maintenance mode: staying awake"
             - deep_sleep.prevent: deep_sleep_1
+            # Wi-Fi is normally left off until the battery has been checked; an update over the air
+            # needs it whatever the battery says.
+            - wifi.enable
       - script.execute: battery_gate
 
 esp32:
@@ -100,6 +103,9 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   fast_connect: true
+  # Off until `start_wake` turns it on, so the battery is read with the radio idle (its transmit bursts
+  # pull the cell down) and a flat battery never starts it at all.
+  enable_on_boot: false
 
 http_request:
   # Plain HTTP on the LAN; TLS would cost a lot of RAM for nothing.
@@ -320,6 +326,7 @@ script:
   # The normal wake: Wi-Fi, then the server.
   - id: start_wake
     then:
+      - wifi.enable
       - wait_until:
           condition:
             wifi.connected:
