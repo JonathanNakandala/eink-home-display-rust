@@ -3,9 +3,11 @@
 
 mod advertise;
 mod plan;
+mod refresh;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Local};
@@ -13,13 +15,15 @@ use serde::Deserialize;
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
 pub use self::plan::{render_due, PlanTiming};
+pub use self::refresh::RefreshControl;
+use self::refresh::RefreshOutcome;
 use self::plan::compute;
 use crate::config::server::ServerConfig;
 use crate::domain::models::display::ImageFormat;
@@ -51,7 +55,11 @@ struct Published {
     format: ImageFormat,
     schedule: Schedule,
     timing: PlanTiming,
+    refresh: Arc<RefreshControl>,
 }
+
+/// How long a button press waits for its render: a cold Chrome start can take a while.
+const REFRESH_TIMEOUT: Duration = Duration::from_secs(40);
 
 /// When the image being served was rendered, or None if there isn't one yet.
 pub fn rendered_at(directory: &Path, format: ImageFormat) -> Option<DateTime<Local>> {
@@ -59,13 +67,20 @@ pub fn rendered_at(directory: &Path, format: ImageFormat) -> Option<DateTime<Loc
     Some(DateTime::<Local>::from(modified))
 }
 
-pub fn router(directory: PathBuf, format: ImageFormat, schedule: Schedule, timing: PlanTiming) -> Router {
+pub fn router(
+    directory: PathBuf,
+    format: ImageFormat,
+    schedule: Schedule,
+    timing: PlanTiming,
+    refresh: Arc<RefreshControl>,
+) -> Router {
     Router::new()
         .route("/image", get(image))
         .route("/plan", get(plan))
+        .route("/refresh", post(refresh_now))
         .route("/healthz", get(|| async { "ok" }))
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published { directory, format, schedule, timing }))
+        .with_state(Arc::new(Published { directory, format, schedule, timing, refresh }))
 }
 
 #[derive(Deserialize)]
@@ -76,6 +91,22 @@ struct PlanQuery {
 
 /// Tells a display which render the image is, whether it is stale, and when to ask again.
 async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
+    plan_response(&published, query.have).await
+}
+
+/// Renders now if the display's button asked for it (and one hasn't just run), then answers
+/// like `/plan` for the image that results. A refused or failed render still answers, with the
+/// image there is.
+async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
+    match published.refresh.request(REFRESH_TIMEOUT).await {
+        RefreshOutcome::Rendered => log::info!("Rendered on request"),
+        RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
+        RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
+    }
+    plan_response(&published, query.have).await
+}
+
+async fn plan_response(published: &Published, have: Option<u32>) -> Response {
     let path = published_path(&published.directory, published.format);
     let modified = match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
         Ok(modified) => modified,
@@ -84,7 +115,7 @@ async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQ
         }
         Err(e) => return server_error("inspect", e),
     };
-    match compute(Local::now(), DateTime::<Local>::from(modified), &published.schedule, published.timing, query.have) {
+    match compute(Local::now(), DateTime::<Local>::from(modified), &published.schedule, published.timing, have) {
         Ok(plan) => ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response(),
         Err(e) => server_error("plan", e),
     }
@@ -117,7 +148,12 @@ async fn image(State(published): State<Arc<Published>>) -> impl IntoResponse {
 }
 
 /// Serves until the future is dropped, or fails at once if the address can't be bound.
-pub async fn serve(config: &ServerConfig, format: ImageFormat, schedule: Schedule) -> anyhow::Result<()> {
+pub async fn serve(
+    config: &ServerConfig,
+    format: ImageFormat,
+    schedule: Schedule,
+    refresh: Arc<RefreshControl>,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("Failed to listen on {}", config.bind))?;
@@ -132,7 +168,7 @@ pub async fn serve(config: &ServerConfig, format: ImageFormat, schedule: Schedul
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(config.directory.clone(), format, schedule, PlanTiming::from(config)))
+    axum::serve(listener, router(config.directory.clone(), format, schedule, PlanTiming::from(config), refresh))
         .await
         .context("Image server stopped")
 }
@@ -146,7 +182,8 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let timing = PlanTiming::from(&ServerConfig::default());
         let schedule = Schedule::parse_every("1h").unwrap();
-        tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing)).await });
+        let refresh = RefreshControl::new(Duration::from_secs(30));
+        tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing, refresh)).await });
         format!("http://{address}")
     }
 

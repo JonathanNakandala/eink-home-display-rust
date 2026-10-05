@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use chrono::{DateTime, Local};
 use croner::Cron;
+use tokio::sync::Notify;
 
 /// How long an idle Chrome stays connected between periodic renders. Cron gaps can be
 /// long (overnight, say), so this is generous; a Chrome that went away anyway is relaunched.
@@ -57,14 +58,16 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    run_periodically_from(schedule, run_now.then(Local::now), shutdown, tick).await
+    run_periodically_from(schedule, run_now.then(Local::now), &Notify::new(), shutdown, tick).await
 }
 
 /// Like `run_periodically`, but the first run is at `first` (immediately if that is already
-/// past), or at the first scheduled slot when it is None.
+/// past), or at the first scheduled slot when it is None. Notifying `wake` runs a tick at once,
+/// without moving the schedule.
 pub async fn run_periodically_from<F, Fut>(
     schedule: &Schedule,
     first: Option<DateTime<Local>>,
+    wake: &Notify,
     shutdown: impl Future<Output = ()>,
     mut tick: F,
 ) -> anyhow::Result<()>
@@ -87,6 +90,7 @@ where
                 return Ok(());
             }
             _ = tokio::time::sleep(wait) => {}
+            _ = wake.notified() => log::info!("Render requested"),
         }
 
         let started = Local::now();
@@ -186,6 +190,28 @@ mod tests {
         .unwrap();
 
         assert!(runs.load(Ordering::SeqCst) >= 3, "ran {} times", runs.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_wake_runs_now_and_leaves_the_schedule_alone() {
+        let schedule = Schedule::Every(Duration::from_secs(3600));
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&runs);
+        let wake = Arc::new(Notify::new());
+        let waker = Arc::clone(&wake);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            waker.notify_one();
+        });
+
+        run_periodically_from(&schedule, None, &wake, tokio::time::sleep(Duration::from_millis(300)), move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
