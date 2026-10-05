@@ -26,10 +26,36 @@ fn sources(directory: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// The module after `crate::` in each import, ignoring test code (which may wire in an adapter)
-/// and comments.
+/// The source with each `#[cfg(test)]` item blanked out, keeping line numbers. Test code may wire
+/// in an adapter, but what follows it in the file still has to obey the layering, so only the
+/// gated item (a `mod tests { .. }`, a `mod testing;`, an impl) is dropped, not the rest of the file.
+fn without_test_code(source: &str) -> String {
+    let mut kept = Vec::new();
+    let mut lines = source.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() != "#[cfg(test)]" {
+            kept.push(line);
+            continue;
+        }
+        kept.push("");
+        // The item that follows runs to its closing brace, or to its `;` if it has no body.
+        let mut depth = 0i32;
+        let mut opened = false;
+        for item in lines.by_ref() {
+            kept.push("");
+            depth += item.matches('{').count() as i32 - item.matches('}').count() as i32;
+            opened |= item.contains('{');
+            if (opened && depth <= 0) || (!opened && item.trim_end().ends_with(';')) {
+                break;
+            }
+        }
+    }
+    kept.join("\n")
+}
+
+/// The module after `crate::` in each import, ignoring test code and comments.
 fn imports(source: &str) -> Vec<(usize, String)> {
-    let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+    let production = without_test_code(source);
     let mut found = Vec::new();
     for (number, line) in production.lines().enumerate() {
         let line = line.trim_start();
@@ -77,6 +103,13 @@ fn the_check_sees_a_violation_and_ignores_tests_and_comments() {
     assert_eq!(imports(source), [(1, "domain".to_owned()), (3, "config".to_owned())]);
 }
 
+#[test]
+fn code_after_an_early_test_item_is_still_checked() {
+    // A `mod testing;` above the imports, a gated impl in the middle, and a test module at the end.
+    let source = "#[cfg(test)]\nmod testing;\n\nuse crate::config::A;\n\n#[cfg(test)]\nimpl X {\n    fn f() { crate::adapters::B; }\n}\n\nuse crate::bootstrap::C;\n\n#[cfg(test)]\nmod tests {\n    use crate::cli::D;\n}\n";
+    assert_eq!(imports(source), [(4, "config".to_owned()), (11, "bootstrap".to_owned())]);
+}
+
 /// The domain describes the problem, not how it is configured: no config schema derives in it.
 #[test]
 fn the_domain_carries_no_config_schema() {
@@ -87,7 +120,7 @@ fn the_domain_carries_no_config_schema() {
         .iter()
         .filter(|file| {
             let source = fs::read_to_string(file).unwrap();
-            let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+            let production = without_test_code(&source);
             production.contains("schemars") || production.contains("JsonSchema") || production.contains("Deserialize")
         })
         .map(|file| file.strip_prefix(root).unwrap().display().to_string())
