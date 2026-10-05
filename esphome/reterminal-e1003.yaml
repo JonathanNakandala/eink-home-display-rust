@@ -52,6 +52,10 @@ substitutions:
   battery_halt_sleep_ms: "21600000"
   # How long the panel needs to finish drawing before power is cut.
   refresh_settle: 15s
+  # A wake that hasn't finished by now is treated as failed: it counts towards the backoff and sleeps.
+  # Longer than the slowest normal wait for the server (a button refresh waits for it to render), and
+  # shorter than the `run_duration` that backs it up.
+  wake_timeout: 110s
 
 esphome:
   name: ${device_name}
@@ -78,6 +82,7 @@ esphome:
             # Wi-Fi is normally left off until the battery has been checked; an update over the air
             # needs it whatever the battery says.
             - wifi.enable
+      - script.execute: wake_watchdog
       - script.execute: battery_gate
 
 esp32:
@@ -128,6 +133,8 @@ online_image:
     update_interval: never
     # The panel is 1872x1404 and the image is rendered at that size, so no resize.
     on_download_finished:
+      # Downloaded: what is left (the draw and the settle) takes a known time, and must not be cut short.
+      - script.stop: wake_watchdog
       - logger.log: "Image downloaded, drawing"
       - component.update: epaper_display
       - delay: ${refresh_settle}
@@ -160,11 +167,12 @@ globals:
     type: uint32_t
     restore_value: yes
     initial_value: '0'
-  # Why this wake failed: wifi, server (no usable /plan), download, or memory. Empty if it didn't.
+  # Why this wake failed: wifi, server (no usable /plan), download, memory, or timeout (the `wake_watchdog`
+  # ran out). Empty if it didn't.
   - id: fail_reason
     type: std::string
     restore_value: no
-  # Wakes in a row that couldn't reach the server. Drives the backoff; 0 after any success.
+  # Wakes in a row that failed. Drives the backoff; 0 after a wake that finished with the image current.
   - id: failed_wakes
     type: uint8_t
     restore_value: yes
@@ -222,6 +230,12 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # When this wake's plan arrived (millis), so the sleep can be shortened by the time the wake took.
+  # 0 when the sleep isn't the server's plan (a backoff, or no plan).
+  - id: plan_received_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
   # Woken by the button, so ask the server to render now.
   - id: force_refresh
     type: bool
@@ -416,7 +430,9 @@ script:
             ESP_LOGW("plan", "No usable plan (HTTP %d): %s", code, body.c_str());
           id(plan_ok) = ok;
           if (ok) {
-            id(failed_wakes) = 0;
+            // Not `failed_wakes = 0` here: the plan answering isn't the wake succeeding. The image can still
+            // fail to download, and resetting now would keep that failure at the first backoff step forever.
+            id(plan_received_ms) = millis();
             // A notice is covering the picture and the server is fine again: redraw it, even if the
             // image is the one we think we show. Not while stale, or it would redraw every wake.
             if (id(notice_on_panel) && !id(plan_stale))
@@ -466,6 +482,9 @@ script:
   # The image is current (just drawn, or already on the panel): say so if the server is behind, then sleep.
   - id: after_image
     then:
+      # The wake worked: the server answered and the picture on the panel is current.
+      - script.stop: wake_watchdog
+      - lambda: 'id(failed_wakes) = 0;'
       - if:
           condition:
             # Once per spell: the text has an age in it, which would otherwise redraw every wake.
@@ -488,7 +507,15 @@ script:
           then:
             - deep_sleep.enter:
                 id: deep_sleep_1
-                sleep_duration: !lambda 'return id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms});'
+                sleep_duration: !lambda |-
+                  uint32_t ms = id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms});
+                  if (id(plan_received_ms) != 0) {
+                    // The server counted from when it answered, and this wake has used some of that since
+                    // (the download, the refresh, the settle). Without taking it off, every wake lands late.
+                    uint32_t used = millis() - id(plan_received_ms);
+                    ms = ms > used + 60000u ? ms - used : 60000u;
+                  }
+                  return ms;
 
   # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
   - id: server_failed
@@ -521,10 +548,27 @@ script:
           id(server_ip) = server.ip;
           id(server_port) = server.port;
 
-  # Nothing worked: the picture stays on the panel (e-paper keeps it). The first failure in a row
-  # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time
-  # (doubling, up to max_backoff_ms), so a server that is down doesn't drain the battery.
-  - id: give_up
+  # Backstop for a wake that hangs (a server that accepts the connection and goes quiet). Without it the
+  # only way out is `run_duration`, which sleeps the normal time and counts nothing, so each wake would burn
+  # that long awake every sleep_duration for as long as the server stayed that way. This counts it as a
+  # failure instead, so the backoff applies. It stands down once the wake reaches a step that ends in a
+  # known time (the image downloaded, the wake succeeded, or it gave up). Not in maintenance mode.
+  - id: wake_watchdog
+    then:
+      - delay: ${wake_timeout}
+      - if:
+          condition:
+            lambda: 'return !id(maintenance);'
+          then:
+            - lambda: 'id(fail_reason) = "timeout";'
+            - logger.log:
+                level: WARN
+                format: "The wake didn't finish in ${wake_timeout}: giving up"
+            - script.execute: backoff
+            - script.execute: sleep_now
+
+  # Counts a failed wake and works out how long to sleep: sleep_duration, doubling with each failure in a row.
+  - id: backoff
     then:
       - lambda: |-
           if (id(failed_wakes) < 255)
@@ -533,8 +577,20 @@ script:
           uint32_t shift = id(failed_wakes) > 7 ? 6 : id(failed_wakes) - 1;
           uint64_t sleep_ms = (uint64_t) (${sleep_duration_ms}) << shift;
           id(plan_sleep_ms) = sleep_ms > (${max_backoff_ms}) ? (${max_backoff_ms}) : (uint32_t) sleep_ms;
+          // Not the server's plan, so not shortened by the time the wake took.
+          id(plan_received_ms) = 0;
           ESP_LOGW("backoff", "Failure %u in a row (%s); sleeping %u s", (unsigned) id(failed_wakes),
                    id(fail_reason).c_str(), (unsigned) (id(plan_sleep_ms) / 1000));
+
+  # Nothing worked: the picture stays on the panel (e-paper keeps it). The first failure in a row
+  # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time
+  # (doubling, up to max_backoff_ms), so a server that is down doesn't drain the battery.
+  - id: give_up
+    then:
+      # It failed in a way that was noticed, so the watchdog has nothing to add: left running it would count
+      # the failure twice, or cut the notice's refresh short.
+      - script.stop: wake_watchdog
+      - script.execute: backoff
       - if:
           condition:
             lambda: 'return id(failed_wakes) == 1 && !id(notice_on_panel);'
@@ -661,8 +717,11 @@ binary_sensor:
 
 deep_sleep:
   id: deep_sleep_1
-  # Safety net if the download or draw hangs; the normal exit is deep_sleep.enter above.
-  run_duration: 120s
+  # Last resort behind the `wake_watchdog` script (${wake_timeout}), which does the same with the backoff;
+  # the normal exit is deep_sleep.enter above.
+  # Longer than the watchdog, with room for the failure path it leaves running: two /plan timeouts, a
+  # lookup and then the notice.
+  run_duration: 180s
   sleep_duration: ${sleep_duration}
   # KEY0, the right green button, wakes it early for an immediate refresh.
   esp32_ext1_wakeup:
