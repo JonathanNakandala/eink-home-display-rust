@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -75,6 +76,59 @@ struct Inner {
     idle_timeout: Duration,
     source: ChromeSource,
     browser: Mutex<Option<LaunchedBrowser>>,
+    /// The process id of the running Chrome, or 0. Kept outside the lock above, which a render in
+    /// progress holds, so a stuck one can be stopped from outside (see `AbandonGuard`).
+    chrome_pid: AtomicU32,
+}
+
+/// Stops the Chrome a render is using if the render is given up on while it is still running.
+///
+/// Dropping the render's future (the run's deadline passed) doesn't stop the blocking call inside it:
+/// it keeps the browser lock until Chrome answers, and every later render queues up behind it, each on a
+/// thread of the pool that file serving shares. Killing Chrome makes that call fail at once.
+struct AbandonGuard {
+    inner: Arc<Inner>,
+    abandoned: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl AbandonGuard {
+    fn new(inner: Arc<Inner>, abandoned: Arc<AtomicBool>) -> Self {
+        Self { inner, abandoned, armed: true }
+    }
+
+    /// The render has ended, one way or the other: leave Chrome alone.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbandonGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.abandoned.store(true, Ordering::SeqCst);
+        let pid = self.inner.chrome_pid.load(Ordering::SeqCst);
+        if pid != 0 {
+            log::warn!("The render was given up on while Chrome (pid {pid}) was still working: stopping it");
+            kill_process(pid);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn kill_process(pid: u32) {
+    let Ok(pid) = i32::try_from(pid) else { return };
+    // SAFETY: kill(2) takes two integers and touches no memory. At worst the process has already gone.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process(pid: u32) {
+    log::warn!("Can't stop Chrome (pid {pid}) on this platform; it will end when its calls time out");
 }
 
 struct LaunchedBrowser {
@@ -116,6 +170,7 @@ impl ChromeRenderDisplayImageGenerator {
                 idle_timeout,
                 source,
                 browser: Mutex::new(None),
+                chrome_pid: AtomicU32::new(0),
             }),
         }
     }
@@ -148,7 +203,10 @@ impl ChromeRenderDisplayImageGenerator {
 
 impl Inner {
     /// Screenshots `page`, reusing the running Chrome where possible.
-    fn capture(&self, page: &Path, profile: &DisplayProfile) -> anyhow::Result<Vec<u8>> {
+    ///
+    /// `abandoned` is set if the render has been given up on, in which case it stops rather than
+    /// launch a Chrome nobody is waiting for.
+    fn capture(&self, page: &Path, profile: &DisplayProfile, abandoned: &AtomicBool) -> anyhow::Result<Vec<u8>> {
         let window = (profile.width, profile.height);
         let mut slot = self.browser.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -159,12 +217,23 @@ impl Inner {
             }
         }
 
+        anyhow::ensure!(!abandoned.load(Ordering::SeqCst), "The render was given up on");
         // Drop the old one first so its process is gone before the next starts.
         *slot = None;
+        self.chrome_pid.store(0, Ordering::SeqCst);
         let browser = self.launch(window)?;
-        let png = capture_in_new_tab(&browser, page, profile)?;
-        *slot = Some(LaunchedBrowser { browser, window });
-        Ok(png)
+        self.chrome_pid.store(browser.get_process_id().unwrap_or(0), Ordering::SeqCst);
+        match capture_in_new_tab(&browser, page, profile) {
+            Ok(png) => {
+                *slot = Some(LaunchedBrowser { browser, window });
+                Ok(png)
+            }
+            Err(e) => {
+                // The browser is dropped (and stopped) on the way out.
+                self.chrome_pid.store(0, Ordering::SeqCst);
+                Err(e)
+            }
+        }
     }
 
     fn launch(&self, window: (u32, u32)) -> anyhow::Result<Browser> {
@@ -259,9 +328,11 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
         // headless_chrome blocks, so keep it off the async runtime's threads.
         let inner = Arc::clone(&self.inner);
         let profile = profile.clone();
-        let png = tokio::task::spawn_blocking(move || inner.capture(&page, &profile))
-            .await
-            .context("Render task panicked")??;
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let mut guard = AbandonGuard::new(Arc::clone(&inner), Arc::clone(&abandoned));
+        let rendered = tokio::task::spawn_blocking(move || inner.capture(&page, &profile, &abandoned)).await;
+        guard.disarm();
+        let png = rendered.context("Render task panicked")??;
         drop(dir);
         Ok(ImageData::new(png))
     }
@@ -324,6 +395,55 @@ mod tests {
     #[test]
     fn file_urls_need_an_absolute_path() {
         assert!(file_url(Path::new("dashboard.html")).is_err());
+    }
+
+    #[cfg(unix)]
+    fn a_stand_in_for_chrome() -> (Arc<Inner>, std::process::Child) {
+        let generator =
+            ChromeRenderDisplayImageGenerator::new(PathBuf::from("unused"), DEFAULT_IDLE_TIMEOUT, ChromeSource::PreferSystem);
+        let child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        generator.inner.chrome_pid.store(child.id(), Ordering::SeqCst);
+        (generator.inner, child)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_render_given_up_on_stops_its_chrome_and_says_so() {
+        let (inner, mut child) = a_stand_in_for_chrome();
+        let abandoned = Arc::new(AtomicBool::new(false));
+
+        drop(AbandonGuard::new(inner, Arc::clone(&abandoned)));
+
+        let status = child.wait().unwrap();
+        assert!(!status.success(), "{status:?}");
+        assert!(abandoned.load(Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_render_that_ended_leaves_chrome_running() {
+        let (inner, mut child) = a_stand_in_for_chrome();
+        let abandoned = Arc::new(AtomicBool::new(false));
+
+        let mut guard = AbandonGuard::new(inner, Arc::clone(&abandoned));
+        guard.disarm();
+        drop(guard);
+
+        assert!(child.try_wait().unwrap().is_none(), "Chrome should still be running");
+        assert!(!abandoned.load(Ordering::SeqCst));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn an_abandoned_render_does_not_launch_a_chrome_for_nobody() {
+        let generator =
+            ChromeRenderDisplayImageGenerator::new(PathBuf::from("unused"), DEFAULT_IDLE_TIMEOUT, ChromeSource::PreferSystem);
+        let profile = DisplayProfile { width: 10, height: 10, palette: Palette::Mono };
+
+        let error = generator.inner.capture(Path::new("/nonexistent.html"), &profile, &AtomicBool::new(true)).unwrap_err();
+
+        assert!(format!("{error}").contains("given up on"), "{error}");
     }
 
     /// Needs a real Chrome, so run with `--ignored`.
