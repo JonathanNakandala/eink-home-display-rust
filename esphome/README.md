@@ -51,7 +51,8 @@ one network need different `instance_name`s (a clash is resolved by adding a num
 1. `cp secrets.example.yaml secrets.yaml` and fill it in.
 2. `esphome run reterminal-e1003.yaml` over USB the first time. There is no address to set: the
    device finds the server itself.
-3. To update later over the air, hold the middle button while waking; it then stays awake.
+3. To update later over the air, hold the middle button (KEY1) while waking. It is read once, at boot,
+   and then the device stays awake until it is reset, so you can let go.
 
 ### What the server tells the device (`/plan`)
 
@@ -176,7 +177,7 @@ the air works whatever the battery says. Three states, with hysteresis so the la
 | Back above `battery_resume_v` 3.60 V (about 32%) | Clears both states and carries on; the picture is redrawn, which removes the notice. |
 
 An unusable reading (under 2.5 V or over 5 V, as with no battery connected) is ignored, never a reason
-to stop. Maintenance mode (KEY1 held) still keeps the device awake. These thresholds are my reading
+to stop. Maintenance mode (KEY1 held at boot) still keeps the device awake. These thresholds are my reading
 of a typical Li-ion cell, not measured on your battery: check the real voltage at the moment the
 device halts, and the cell's own protection cut-off, before relying on them.
 
@@ -236,6 +237,8 @@ The device sleeps for the `next_seconds` the server reports: the next scheduled 
   `Failure 2 in a row; sleeping 1200 s`, then 2400 s. Start the server again: the next wake redraws
   the picture and the label goes.
 
+- Hold KEY1 at boot, then let go: the log says `Maintenance mode: staying awake` and the device is still up a
+  minute later, reachable for an update over the air.
 - The log shows `Image changed, downloading` on the first wake and `Image unchanged, skipping refresh`
   on a wake before the next render, and the sleep length matches `next_seconds`.
 - `shown_version` survives deep sleep (a second wake sends `have=` with the previous version).
