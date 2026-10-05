@@ -39,7 +39,9 @@
         "advertise": true,
         "bind": "0.0.0.0:8080",
         "directory": "served",
-        "instance_name": "E-ink home display"
+        "instance_name": "E-ink home display",
+        "stale_grace_seconds": 300,
+        "wake_delay_seconds": 30
       }
     },
     "weather": {
@@ -346,6 +348,20 @@
           "description": "The name shown for the service in a scan, at most 63 bytes. The host name `<name>.local` is derived from it.",
           "type": "string",
           "default": "E-ink home display"
+        },
+        "stale_grace_seconds": {
+          "description": "How late a scheduled render may be before the image is reported stale.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 300,
+          "minimum": 0
+        },
+        "wake_delay_seconds": {
+          "description": "How long after a scheduled render the display is told to come back, so the new image is ready.\nAlso how soon it retries while a render is due but not finished.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 30,
+          "minimum": 0
         }
       }
     },

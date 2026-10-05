@@ -53,6 +53,24 @@ one network need different `instance_name`s (a clash is resolved by adding a num
    device finds the server itself.
 3. To update later over the air, hold the middle button while waking; it then stays awake.
 
+### What the server tells the device (`/plan`)
+
+`GET /plan` (optionally `?have=<version>`) answers with JSON, worked out from the server's refresh
+schedule. The device does not use it yet.
+
+```json
+{"version":3973074790,"changed":true,"stale":false,"pending":false,"next_seconds":65,"age_seconds":1}
+```
+
+- `version`: when the image was rendered, in seconds since 1970, so a newer render has a larger version. The
+  device sends back the version it is showing as `have`, and `changed` says whether it differs, so an image
+  it already shows needs no refresh.
+- `next_seconds`: how long to sleep: until the next scheduled render plus `server.wake_delay_seconds` (30).
+  With a cron such as `*/10 6-22 * * *` the device sleeps until morning.
+- `pending`: a render is due or running, so `next_seconds` is just the wake delay. Ask again then.
+- `stale`: a scheduled render came more than `server.stale_grace_seconds` (300) late. `next_seconds` then points at the next slot.
+- `age_seconds`: time since the image was rendered.
+
 ### How the device finds the server
 
 [eink_discovery.h](eink_discovery.h) queries mDNS for `_http._tcp` services and takes the first one

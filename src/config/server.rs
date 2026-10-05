@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_DIRECTORY: &str = "served";
 const DEFAULT_INSTANCE_NAME: &str = "E-ink home display";
+const DEFAULT_WAKE_DELAY_SECONDS: u32 = 30;
+const DEFAULT_STALE_GRACE_SECONDS: u32 = 300;
 
 /// The HTTP server that hands the latest rendered image to displays that fetch it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -23,6 +25,21 @@ pub struct ServerConfig {
     /// The name shown for the service in a scan, at most 63 bytes. The host name `<name>.local` is derived from it.
     #[serde(default = "default_instance_name")]
     pub instance_name: String,
+    /// How long after a scheduled render the display is told to come back, so the new image is ready.
+    /// Also how soon it retries while a render is due but not finished.
+    #[serde(default = "default_wake_delay_seconds")]
+    pub wake_delay_seconds: u32,
+    /// How late a scheduled render may be before the image is reported stale.
+    #[serde(default = "default_stale_grace_seconds")]
+    pub stale_grace_seconds: u32,
+}
+
+fn default_wake_delay_seconds() -> u32 {
+    DEFAULT_WAKE_DELAY_SECONDS
+}
+
+fn default_stale_grace_seconds() -> u32 {
+    DEFAULT_STALE_GRACE_SECONDS
 }
 
 fn default_advertise() -> bool {
@@ -48,6 +65,8 @@ impl Default for ServerConfig {
             directory: default_directory(),
             advertise: default_advertise(),
             instance_name: default_instance_name(),
+            wake_delay_seconds: default_wake_delay_seconds(),
+            stale_grace_seconds: default_stale_grace_seconds(),
         }
     }
 }

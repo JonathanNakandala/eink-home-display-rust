@@ -63,3 +63,5 @@ bind = "0.0.0.0:8080"
 directory = "served"
 advertise = true
 instance_name = "E-ink home display"
+wake_delay_seconds = 30
+stale_grace_seconds = 300
