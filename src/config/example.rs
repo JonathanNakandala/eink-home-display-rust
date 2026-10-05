@@ -6,14 +6,14 @@ use std::path::PathBuf;
 
 use crate::config::cache::CacheConfig;
 use crate::config::application::{
-    ApplicationConfig, DisplayConfig, DisplayKind, FileStoreConfig, LimitsConfig, LocationConfig, StaleDataConfig,
+    ApplicationConfig, DisplayConfig, DisplayKind, DitherSetting, FileStoreConfig, ImageFormatSetting, LimitsConfig,
+    LocationConfig, StaleDataConfig,
 };
 use crate::config::departures::{
     DepartureBoardConfig, DepartureSource, OpenLdbwsConfig, ProvidersConfig, TflConfig,
     DEFAULT_TFL_HOST_URL,
 };
 use crate::config::server::ServerConfig;
-use crate::domain::models::display::{Dither, ImageFormat};
 use crate::config::weather::{OpenWeatherConfig, WeatherConfig, WeatherProvider};
 
 /// Header so editors with TOML schema support (taplo / "Even Better TOML")
@@ -68,8 +68,8 @@ impl ApplicationConfig {
             cache: CacheConfig { directory: PathBuf::from("./cache") },
             display: DisplayConfig {
                 kind: DisplayKind::WaveshareEpd7in5V2,
-                dither: Dither::None,
-                image_format: ImageFormat::Bmp,
+                dither: DitherSetting::None,
+                image_format: ImageFormatSetting::Bmp,
             },
             stale_data: StaleDataConfig::default(),
             limits: LimitsConfig::default(),

@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
-        && launch::served_image_is_current(images.as_ref(), config.display.image_format, schedule, now).await;
+        && launch::served_image_is_current(images.as_ref(), config.display.image_format.into(), schedule, now).await;
     let first = launch::first_render_at(
         now,
         args.no_initial_run,
@@ -84,6 +84,6 @@ async fn main() -> Result<()> {
     let settings = ServerSettings::from(&config.server);
     tokio::select! {
         result = periodic => result,
-        result = serve(&settings, images, config.display.image_format, schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
+        result = serve(&settings, images, config.display.image_format.into(), schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }) => result,
     }
 }

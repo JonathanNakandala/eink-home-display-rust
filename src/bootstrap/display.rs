@@ -10,11 +10,11 @@ use crate::domain::services::published_images::PublishedImages;
 pub fn setup_display(config: &DisplayConfig, images: Arc<dyn PublishedImages>) -> DisplayImpl {
     match config.kind {
         DisplayKind::WaveshareEpd7in5V2 => {
-            DisplayImpl::WaveshareEpd7in5V2(EinkWaveshareAdapter::new(config.dither))
+            DisplayImpl::WaveshareEpd7in5V2(EinkWaveshareAdapter::new(config.dither.into()))
         }
         DisplayKind::ReTerminalE1003 => DisplayImpl::ReTerminalE1003(ReTerminalE1003Adapter::new(
-            config.dither,
-            config.image_format,
+            config.dither.into(),
+            config.image_format.into(),
             images,
         )),
     }

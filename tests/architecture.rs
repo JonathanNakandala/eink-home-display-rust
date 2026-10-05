@@ -76,3 +76,21 @@ fn the_check_sees_a_violation_and_ignores_tests_and_comments() {
     let source = "use crate::domain::X;\n// use crate::config::Y;\nuse crate::config::Z;\n#[cfg(test)]\nmod t { use crate::adapters::W; }\n";
     assert_eq!(imports(source), [(1, "domain".to_owned()), (3, "config".to_owned())]);
 }
+
+/// The domain describes the problem, not how it is configured: no config schema derives in it.
+#[test]
+fn the_domain_carries_no_config_schema() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    sources(&root.join("src/domain"), &mut files);
+    let offenders: Vec<_> = files
+        .iter()
+        .filter(|file| {
+            let source = fs::read_to_string(file).unwrap();
+            let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+            production.contains("schemars") || production.contains("JsonSchema") || production.contains("Deserialize")
+        })
+        .map(|file| file.strip_prefix(root).unwrap().display().to_string())
+        .collect();
+    assert!(offenders.is_empty(), "config derives in the domain: {offenders:?}");
+}
