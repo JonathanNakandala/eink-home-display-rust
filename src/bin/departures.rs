@@ -1,29 +1,17 @@
 use anyhow::{bail, Result};
 use clap::Parser;
-use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::bootstrap::setup_departure_boards;
+use eink_home_display_rust::bootstrap::{self, setup_departure_boards};
 use eink_home_display_rust::cli::DeparturesArgs;
-use eink_home_display_rust::config::application::ApplicationConfig;
 use eink_home_display_rust::domain::models::departures::{DepartureStatus, Departures};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    initialize_logging();
+    bootstrap::init_logging("debug");
 
     let args = DeparturesArgs::parse();
 
-    let config = match ApplicationConfig::new(&args.config_file) {
-        Ok(config) => config,
-        Err(e) => {
-            log::error!("Failed to load settings: {}", e);
-            eprintln!(
-                "Error: Failed to load configuration from {}. Please check your config file.",
-                args.config_file.display()
-            );
-            std::process::exit(1);
-        }
-    };
+    let config = bootstrap::load_application_config(&args.config_file)?;
 
     let configs: Vec<_> = config
         .departures
@@ -75,9 +63,4 @@ fn print_board(name: &str, departures: &Departures) {
             service.time, expected, service.destination, service.countdown
         );
     }
-}
-
-fn initialize_logging() {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
-    fmt().with_env_filter(env_filter).init();
 }

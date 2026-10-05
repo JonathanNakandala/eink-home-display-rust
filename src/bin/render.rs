@@ -3,15 +3,11 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Parser;
 use image::GrayImage;
-use tracing_subscriber::{fmt, EnvFilter};
 
-use eink_home_display_rust::bootstrap::setup_departure_boards;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT};
 use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
-use eink_home_display_rust::bootstrap::setup_display;
+use eink_home_display_rust::bootstrap::{self, setup_display};
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
-use eink_home_display_rust::bootstrap::setup_weather_service;
-use eink_home_display_rust::application::Application;
 use eink_home_display_rust::cli::RenderArgs;
 use eink_home_display_rust::config::cache::{CacheConfig, CachePaths};
 use eink_home_display_rust::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
@@ -26,15 +22,13 @@ use eink_home_display_rust::domain::services::image_repository::ImageRepository;
 /// Renders the dashboard to PNG files without touching any display, one set per display type.
 #[tokio::main]
 async fn main() -> Result<()> {
-    fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .init();
+    bootstrap::init_logging("info");
     let args = RenderArgs::parse();
 
     let config = args
         .config_file
         .as_ref()
-        .map(|path| ApplicationConfig::new(path).with_context(|| format!("Failed to load {}", path.display())))
+        .map(|path| bootstrap::load_application_config(path))
         .transpose()?;
     if args.live && config.is_none() {
         anyhow::bail!("--live needs --config-file");
@@ -104,15 +98,7 @@ fn file_name(kind: DisplayKind) -> &'static str {
 async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
     // Reuse the application's own fetching by running it against a capture-only generator.
     let (tx, rx) = std::sync::mpsc::channel();
-    let app = Application::new(
-        setup_weather_service(&config.weather)?,
-        Capture(tx),
-        NoDisplay,
-        NoStore,
-        setup_departure_boards(&config.departures, &config.providers)?,
-        (&config.stale_data).into(),
-        (&config.limits).into(),
-    );
+    let app = bootstrap::assemble(config, Capture(tx), NoDisplay, NoStore)?;
     app.run(Location::new(config.location.latitude, config.location.longitude))
         .await?;
     Ok(rx.recv()?)

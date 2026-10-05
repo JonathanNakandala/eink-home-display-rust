@@ -1,14 +1,13 @@
 use anyhow::Context;
 use chrono::{Duration, NaiveDate, NaiveTime};
 use clap::Parser;
-use serde_valid::Validate;
-use tracing_subscriber::{fmt, EnvFilter};
 
 use eink_home_display_rust::adapters::train_schedule::network_rail::cif_feed;
 use eink_home_display_rust::adapters::train_schedule::network_rail::network_rail_train_schedule_service::NetworkRailTrainScheduleServiceAdapter;
 use eink_home_display_rust::adapters::train_schedule::network_rail::schedule_cache;
+use eink_home_display_rust::bootstrap;
 use eink_home_display_rust::cli::QuietTimesArgs;
-use eink_home_display_rust::config::quiet_times::{QuietTimesConfig, QuietTimesRulesConfig};
+use eink_home_display_rust::config::quiet_times::QuietTimesRulesConfig;
 use eink_home_display_rust::domain::services::quiet_times_calculator::{
     Gap, QuietTimesCalculator, QuietTimesReport, QuietTimesRules, TimeWindow,
 };
@@ -16,27 +15,11 @@ use eink_home_display_rust::quiet_times::QuietTimesApplication;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    initialize_logging();
+    bootstrap::init_logging("debug");
 
     let args = QuietTimesArgs::parse();
 
-    let config = match QuietTimesConfig::new(&args.config_file) {
-        Ok(config) => config,
-        Err(e) => {
-            log::error!("Failed to load settings: {}", e);
-            eprintln!(
-                "Error: Failed to load configuration from {}. Please check your config file.",
-                args.config_file.display()
-            );
-            std::process::exit(1);
-        }
-    };
-
-    if let Err(e) = config.validate() {
-        log::error!("Configuration validation failed: {}", e);
-        eprintln!("Error: Configuration is invalid. Please check your config file.");
-        std::process::exit(1);
-    }
+    let config = bootstrap::load_quiet_times_config(&args.config_file)?;
 
     let network_rail = &config.network_rail;
     if !network_rail.enabled {
@@ -174,9 +157,4 @@ fn format_gap(gap: &Gap) -> String {
         gap.end.format("%H:%M"),
         gap.duration().num_minutes()
     )
-}
-
-fn initialize_logging() {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
-    fmt().with_env_filter(env_filter).init();
 }
