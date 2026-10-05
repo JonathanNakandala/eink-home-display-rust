@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let dither = args
         .dither
         .map(Dither::from)
-        .or(config.as_ref().map(|c| c.display.dither))
+        .or(config.as_ref().map(|c| c.display.dither.into()))
         .unwrap_or_default();
 
     let data = match (&config, args.live) {
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
 
     for kind in kinds {
         let name = file_name(kind);
-        let profile = setup_display(&DisplayConfig { kind, dither, image_format: Default::default() }, Arc::new(DirectoryImages::new(""))).profile();
+        let profile = setup_display(&DisplayConfig { kind, dither: dither.into(), image_format: Default::default() }, Arc::new(DirectoryImages::new(""))).profile();
         log::info!("Rendering for {name} ({}x{}, {:?})", profile.width, profile.height, profile.palette);
 
         if args.html {

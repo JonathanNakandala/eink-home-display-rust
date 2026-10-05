@@ -1,6 +1,3 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 /// What a display can show. The image generator renders to this, and the
 /// display adapter converts the result to its own pixel format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +21,7 @@ pub enum Palette {
 }
 
 /// How to reduce the rendered image to fewer levels.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Dither {
     /// Plain threshold: crisp text, harsh on greys.
     #[default]
@@ -36,7 +33,7 @@ pub enum Dither {
 }
 
 /// The file format the reTerminal E1003 downloads.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     /// 8-bit greyscale, uncompressed (about 2.6 MB). The simplest for the firmware to decode.
     #[default]

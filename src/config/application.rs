@@ -132,11 +132,67 @@ pub struct DisplayConfig {
     pub kind: DisplayKind,
     /// How greys are reduced to the panel's levels.
     #[serde(default)]
-    pub dither: Dither,
+    pub dither: DitherSetting,
     /// The format the reTerminal E1003 is sent when it has no preference. Every format is published, and the
     /// display can ask for another with its `Accept` header. Ignored by displays driven directly.
     #[serde(default)]
-    pub image_format: ImageFormat,
+    pub image_format: ImageFormatSetting,
+}
+
+// The config's spelling of `domain::models::display::Dither`, so the domain needn't know about
+// serde or the schema. The same variants and docs keep the schema as it was.
+/// How to reduce the rendered image to fewer levels.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "Dither")]
+pub enum DitherSetting {
+    /// Plain threshold: crisp text, harsh on greys.
+    #[default]
+    None,
+    /// Error diffusion: smooth greys, a bit noisy on text.
+    FloydSteinberg,
+    /// 4x4 Bayer matrix: regular pattern, stable between refreshes.
+    Ordered,
+}
+
+impl From<DitherSetting> for Dither {
+    fn from(setting: DitherSetting) -> Self {
+        match setting {
+            DitherSetting::None => Self::None,
+            DitherSetting::FloydSteinberg => Self::FloydSteinberg,
+            DitherSetting::Ordered => Self::Ordered,
+        }
+    }
+}
+
+impl From<Dither> for DitherSetting {
+    fn from(dither: Dither) -> Self {
+        match dither {
+            Dither::None => Self::None,
+            Dither::FloydSteinberg => Self::FloydSteinberg,
+            Dither::Ordered => Self::Ordered,
+        }
+    }
+}
+
+// The config's spelling of `domain::models::display::ImageFormat`; see `DitherSetting`.
+/// The file format the reTerminal E1003 downloads.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "ImageFormat")]
+pub enum ImageFormatSetting {
+    /// 8-bit greyscale, uncompressed (about 2.6 MB). The simplest for the firmware to decode.
+    #[default]
+    Bmp,
+    /// 8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.
+    Png,
+}
+
+impl From<ImageFormatSetting> for ImageFormat {
+    fn from(setting: ImageFormatSetting) -> Self {
+        match setting {
+            ImageFormatSetting::Bmp => Self::Bmp,
+            ImageFormatSetting::Png => Self::Png,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
