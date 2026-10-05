@@ -79,8 +79,9 @@ schedule. The device asks it on every wake.
    and, once the panel has finished refreshing, remembers its `version`. If the device resets mid-refresh the
    old version is still recorded, so the next wake downloads the image again.
 3. `stale: true`: also writes `Out of date: rendered 3 h 20 min ago` in the bottom-right corner.
-4. Sleeps for `next_seconds` (limited to between 1 minute and 1 day). `sleep_duration` is only the
-   fallback when the server never answered.
+4. Sleeps for `next_seconds` (limited to between 1 minute and 1 day), less the time the wake has used
+   since `/plan` answered, so it comes back when the server meant and not a download, a refresh and a
+   settle later (never under a minute). `sleep_duration` is only the fallback when the server never answered.
 
 If `/plan` fails (no connection, a bad status, unreadable JSON) it takes the lookup-and-retry path
 below, then counts a failed wake (see "When the download fails"). A device that has never drawn anything has version 0,
@@ -157,6 +158,7 @@ right path:
 | `/plan` didn't answer, or answered badly | `server` | Look for the server once, then ask again. Notice: `Last update failed @ ...` |
 | Not enough PSRAM for the image | `memory` | Checked before the download ([eink_health.h](eink_health.h)); no lookup. Notice: `Out of memory @ ...` |
 | The download or decode failed after `/plan` answered | `download` | No lookup, since the server just answered. Notice: `Last update failed @ ...` |
+| The wake hadn't finished after `wake_timeout` (110 s) | `timeout` | A hang, such as a server that accepts the connection and goes quiet. No notice, since the panel's state is unknown. It stands down once the image has downloaded, the wake has succeeded or it has given up for another reason. |
 
 The memory check compares the largest free PSRAM block with the decoded image (1872 x 1404 bytes) plus
 96 KB, and the log says what was needed and what was free. Each failure counts towards the backoff below,
@@ -187,7 +189,8 @@ Each check-in also sends the server `device`, `battery_mv`, `battery_pct`, `batt
 ### When the download fails
 
 The old picture stays on the panel. What happens next depends on how many wakes in a row have failed
-(the count is kept in flash and resets on any wake that reaches the server):
+(the count is kept in flash and resets on a wake that finishes with the picture current, not merely one
+where `/plan` answered):
 
 | Failed wakes in a row | Panel | Sleep |
 |---|---|---|
@@ -239,6 +242,10 @@ The device sleeps for the `next_seconds` the server reports: the next scheduled 
 
 - Hold KEY1 at boot, then let go: the log says `Maintenance mode: staying awake` and the device is still up a
   minute later, reachable for an update over the air.
+- Make the server accept the connection and never answer (for example `nc -l 8080` in place of it): after
+  110 s the log shows `The wake didn't finish in 110s` and `Failure 1 in a row (timeout)`, and the next
+  wakes sleep 20, 40, then 60 minutes instead of 10 each time.
+- A wake that downloads an image logs a sleep shorter than `next_seconds` by about the time it was awake.
 - The log shows `Image changed, downloading` on the first wake and `Image unchanged, skipping refresh`
   on a wake before the next render, and the sleep length matches `next_seconds`.
 - `shown_version` survives deep sleep (a second wake sends `have=` with the previous version).
