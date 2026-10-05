@@ -19,7 +19,8 @@ const GREY_LEVELS: u8 = 16;
 
 /// Seeed reTerminal E1003: 1872x1404, 16 greys. It can't be driven from here, so the
 /// image is published for the device to download (see `adapters::image_server`)
-/// when it wakes.
+/// when it wakes. Every format the server can send is published, so the device can pick one
+/// with its `Accept` header; `format` is the one sent when it has no preference.
 #[derive(derive_new::new)]
 pub struct ReTerminalE1003Adapter {
     dither: Dither,
@@ -35,22 +36,36 @@ impl ImageDisplayService for ReTerminalE1003Adapter {
 
     async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
         let encoded = data.data.clone();
-        let (dither, format) = (self.dither, self.format);
+        let (dither, preferred) = (self.dither, self.format);
         // Dithering a 2.6 megapixel image is too much work to do on the async threads.
-        let bytes = tokio::task::spawn_blocking(move || encode_for_panel(&encoded, dither, format)).await??;
-        publish(&self.publish_directory, format, &bytes).await
+        let files = tokio::task::spawn_blocking(move || encode_all(&encoded, dither, preferred)).await??;
+        for (format, bytes) in files {
+            publish(&self.publish_directory, format, &bytes).await?;
+        }
+        Ok(())
     }
 }
 
-/// Decodes the rendered image and re-encodes it as 8-bit greyscale holding only the
-/// panel's 16 levels, so what the device draws matches what was previewed.
-fn encode_for_panel(encoded: &[u8], dither: Dither, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
+/// Every format of the picture, with `preferred` last: its file's date is the render's version, so
+/// when it changes the others are already in place.
+fn encode_all(encoded: &[u8], dither: Dither, preferred: ImageFormat) -> anyhow::Result<Vec<(ImageFormat, Vec<u8>)>> {
+    let grey = quantise_for_panel(encoded, dither)?;
+    let mut formats: Vec<ImageFormat> = ImageFormat::ALL.into_iter().filter(|format| *format != preferred).collect();
+    formats.push(preferred);
+    formats.into_iter().map(|format| Ok((format, encode(&grey, format)?))).collect()
+}
+
+/// Decodes the rendered image and reduces it to the panel's 16 greys, so what the device
+/// draws matches what was previewed.
+fn quantise_for_panel(encoded: &[u8], dither: Dither) -> anyhow::Result<image::GrayImage> {
     let image = image::load_from_memory(encoded).context("Failed to decode display image")?;
     if (image.width(), image.height()) != (WIDTH, HEIGHT) {
         bail!("Image is {}x{}, but the panel is {WIDTH}x{HEIGHT}", image.width(), image.height());
     }
-    let grey = quantise_grey(&image.to_luma8(), GREY_LEVELS, dither);
+    Ok(quantise_grey(&image.to_luma8(), GREY_LEVELS, dither))
+}
 
+fn encode(grey: &image::GrayImage, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
     let mut out = Cursor::new(Vec::new());
     match format {
         ImageFormat::Bmp => BmpEncoder::new(&mut out).encode(grey.as_raw(), WIDTH, HEIGHT, ExtendedColorType::L8),
@@ -65,6 +80,10 @@ mod tests {
     use image::{GrayImage, Luma};
 
     use super::*;
+
+    fn encode_for_panel(encoded: &[u8], dither: Dither, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
+        encode(&quantise_for_panel(encoded, dither)?, format)
+    }
 
     fn rendered() -> Vec<u8> {
         let img = GrayImage::from_fn(WIDTH, HEIGHT, |x, _| Luma([(x * 255 / WIDTH) as u8]));
@@ -110,7 +129,10 @@ mod tests {
 
         adapter.display(&ImageData::new(rendered())).await.unwrap();
 
-        let published = std::fs::read(tmp.path().join("out").join("image.png")).unwrap();
-        assert_eq!(image::load_from_memory(&published).unwrap().width(), WIDTH);
+        // Every format is published, so the display can ask for either.
+        for file in ["image.png", "image.bmp"] {
+            let published = std::fs::read(tmp.path().join("out").join(file)).unwrap();
+            assert_eq!(image::load_from_memory(&published).unwrap().width(), WIDTH, "{file}");
+        }
     }
 }

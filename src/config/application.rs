@@ -133,7 +133,8 @@ pub struct DisplayConfig {
     /// How greys are reduced to the panel's levels.
     #[serde(default)]
     pub dither: Dither,
-    /// File format served to the reTerminal E1003. Ignored by displays that are driven directly.
+    /// The format the reTerminal E1003 is sent when it has no preference. Every format is published, and the
+    /// display can ask for another with its `Accept` header. Ignored by displays driven directly.
     #[serde(default)]
     pub image_format: ImageFormat,
 }
