@@ -21,6 +21,9 @@ substitutions:
   # The server is found over mDNS, so nothing here needs to change when its address or
   # port does. Used only until the first successful scan, or if a scan finds nothing:
   fallback_base: "http://e-ink-home-display.local:8080"
+  # The panel's size: the decoded image buffer is this many bytes (checked against PSRAM before a download).
+  image_width: "1872"
+  image_height: "1404"
   # The paths the Rust app serves the image and its plan at.
   image_path: /image
   plan_path: /plan
@@ -46,6 +49,7 @@ esphome:
   includes:
     - eink_discovery.h
     - eink_notice.h
+    - eink_health.h
   on_boot:
     priority: -100
     then:
@@ -62,12 +66,20 @@ esphome:
           condition:
             wifi.connected:
           timeout: 30s
-      # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
-      - lambda: |-
-          id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
-          if (id(force_refresh))
-            ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
-      - script.execute: check_plan
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
+            - lambda: |-
+                id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+                if (id(force_refresh))
+                  ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
+            - script.execute: check_plan
+          else:
+            # Without Wi-Fi there is no point asking the server, or looking for it.
+            - lambda: 'id(fail_reason) = "wifi";'
+            - script.execute: give_up
 
 esp32:
   board: seeed_xiao_esp32s3
@@ -125,7 +137,10 @@ online_image:
       - delay: ${refresh_settle}
       - script.execute: after_image
     on_error:
-      - script.execute: server_failed
+      # /plan has just answered from this address, so the server is where it should be: looking for it
+      # again would find the same thing. The log line above this says what went wrong.
+      - lambda: 'id(fail_reason) = "download";'
+      - script.execute: give_up
 
 globals:
   # The server found last time. Kept across deep sleep; 0 means none yet.
@@ -142,6 +157,10 @@ globals:
     type: uint32_t
     restore_value: yes
     initial_value: '0'
+  # Why this wake failed: wifi, server (no usable /plan), download, or memory. Empty if it didn't.
+  - id: fail_reason
+    type: std::string
+    restore_value: no
   # Wakes in a row that couldn't reach the server. Drives the backoff; 0 after any success.
   - id: failed_wakes
     type: uint8_t
@@ -282,16 +301,24 @@ script:
                   - logger.log: "Image unchanged, skipping refresh"
                   - script.execute: after_image
 
-  # Downloads the image from the remembered server.
+  # Downloads the image from the remembered server, if there is memory to decode it into.
   - id: fetch_image
     then:
-      - online_image.set_url:
-          id: dashboard
-          url: !lambda |-
-            if (id(server_ip) == 0 || id(server_port) == 0)
-              return "${fallback_base}${image_path}";
-            return eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
-      - component.update: dashboard
+      - if:
+          condition:
+            lambda: 'return eink_health::image_buffer_fits(${image_width}, ${image_height});'
+          then:
+            - online_image.set_url:
+                id: dashboard
+                url: !lambda |-
+                  if (id(server_ip) == 0 || id(server_port) == 0)
+                    return "${fallback_base}${image_path}";
+                  return eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
+            - component.update: dashboard
+          else:
+            # Not the server's fault, so don't go looking for it.
+            - lambda: 'id(fail_reason) = "memory";'
+            - script.execute: give_up
 
   # The image is current (just drawn, or already on the panel): say so if the server is behind, then sleep.
   - id: after_image
@@ -323,6 +350,7 @@ script:
   # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
   - id: server_failed
     then:
+      - lambda: 'id(fail_reason) = "server";'
       - if:
           condition:
             lambda: 'return !id(searched);'
@@ -364,8 +392,8 @@ script:
           uint32_t shift = id(failed_wakes) > 7 ? 6 : id(failed_wakes) - 1;
           uint64_t sleep_ms = (uint64_t) (${sleep_duration_ms}) << shift;
           id(plan_sleep_ms) = sleep_ms > (${max_backoff_ms}) ? (${max_backoff_ms}) : (uint32_t) sleep_ms;
-          ESP_LOGW("backoff", "Failure %u in a row; sleeping %u s", (unsigned) id(failed_wakes),
-                   (unsigned) (id(plan_sleep_ms) / 1000));
+          ESP_LOGW("backoff", "Failure %u in a row (%s); sleeping %u s", (unsigned) id(failed_wakes),
+                   id(fail_reason).c_str(), (unsigned) (id(plan_sleep_ms) / 1000));
       - if:
           condition:
             lambda: 'return id(failed_wakes) == 1 && !id(notice_on_panel);'
@@ -381,8 +409,14 @@ script:
                         time.has_time:
                       timeout: 8s
             - lambda: |-
+                // What went wrong, in a few words; the log has the detail.
+                std::string what = "Last update failed";
+                if (id(fail_reason) == "wifi")
+                  what = "No Wi-Fi";
+                else if (id(fail_reason) == "memory")
+                  what = "Out of memory";
                 auto now = id(sntp_time).now();
-                id(notice_text) = now.is_valid() ? now.strftime("Last update failed @ %H:%M") : std::string("Last update failed");
+                id(notice_text) = now.is_valid() ? what + now.strftime(" @ %H:%M") : what;
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
             - component.update: epaper_display
