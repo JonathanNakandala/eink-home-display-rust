@@ -40,6 +40,13 @@ substitutions:
   sleep_duration_ms: "600000"
   # After repeated failures the sleep doubles each time, up to this.
   max_backoff_ms: "3600000"
+  # Battery thresholds, in volts (see the README). Below `low` a label says so on every picture;
+  # below `empty` the device stops refreshing and sleeps `battery_halt_sleep_ms` between checks;
+  # it starts again, and clears both, only once the voltage is back above `resume`.
+  battery_low_v: "3.40"
+  battery_empty_v: "3.30"
+  battery_resume_v: "3.60"
+  battery_halt_sleep_ms: "21600000"
   # How long the panel needs to finish drawing before power is cut.
   refresh_settle: 15s
 
@@ -50,6 +57,7 @@ esphome:
     - eink_discovery.h
     - eink_notice.h
     - eink_health.h
+    - eink_battery.h
   on_boot:
     priority: -100
     then:
@@ -62,24 +70,7 @@ esphome:
           then:
             - logger.log: "Maintenance mode: staying awake"
             - deep_sleep.prevent: deep_sleep_1
-      - wait_until:
-          condition:
-            wifi.connected:
-          timeout: 30s
-      - if:
-          condition:
-            wifi.connected:
-          then:
-            # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
-            - lambda: |-
-                id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
-                if (id(force_refresh))
-                  ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
-            - script.execute: check_plan
-          else:
-            # Without Wi-Fi there is no point asking the server, or looking for it.
-            - lambda: 'id(fail_reason) = "wifi";'
-            - script.execute: give_up
+      - script.execute: battery_gate
 
 esp32:
   board: seeed_xiao_esp32s3
@@ -138,6 +129,7 @@ online_image:
       - lambda: |-
           id(shown_version) = id(plan_version);
           id(notice_on_panel) = false;
+          id(low_label_on_panel) = id(battery_low);
       - script.execute: after_image
     on_error:
       # /plan has just answered from this address, so the server is where it should be: looking for it
@@ -174,6 +166,44 @@ globals:
     type: bool
     restore_value: yes
     initial_value: 'false'
+  # The battery has gone below `battery_empty_v` and not yet recovered past `battery_resume_v`:
+  # nothing is refreshed. Kept across deep sleep.
+  - id: battery_halted
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  # Below `battery_low_v` and not yet recovered past `battery_resume_v`: every picture carries a label.
+  - id: battery_low
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  # The picture on the panel has that label baked in, so a change in `battery_low` needs a redraw.
+  - id: low_label_on_panel
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  # This wake's battery reading.
+  - id: battery_known
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: battery_mv
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: battery_pct
+    type: int
+    restore_value: no
+    initial_value: '0'
+  # 0 ok, 1 low, 2 empty.
+  - id: battery_state
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: battery_action
+    type: int
+    restore_value: no
+    initial_value: '0'
   # This wake's state.
   - id: plan_version
     type: uint32_t
@@ -223,6 +253,91 @@ globals:
     restore_value: no
 
 script:
+  # First thing every wake, before the radio or the panel are used: read the battery and, if it is too
+  # low to carry on, stop. Voltage is read once, with the load light, so it isn't pulled down by Wi-Fi.
+  - id: battery_gate
+    then:
+      - lambda: |-
+          float v = id(battery_voltage).sample();
+          id(battery_known) = eink_battery::plausible(v);
+          id(battery_action) = 0;
+          if (!id(battery_known)) {
+            // No battery, or a bad reading: never a reason to stop.
+            ESP_LOGW("battery", "Unusable reading (%.2f V); carrying on", v);
+            return;
+          }
+          id(battery_mv) = (uint32_t) (v * 1000.0f + 0.5f);
+          id(battery_pct) = eink_battery::percent(v);
+          bool was_halted = id(battery_halted);
+          if (v >= ${battery_resume_v}) {
+            // Charged enough to carry on; both latches reset together so neither flaps near its edge.
+            id(battery_halted) = false;
+            id(battery_low) = false;
+          } else {
+            if (v < ${battery_empty_v})
+              id(battery_halted) = true;
+            if (v < ${battery_low_v})
+              id(battery_low) = true;
+          }
+          id(battery_state) = id(battery_halted) ? 2 : id(battery_low) ? 1 : 0;
+          // 0: carry on, 1: still halted (just sleep), 2: halting now (say so first).
+          id(battery_action) = id(battery_halted) ? (was_halted ? 1 : 2) : 0;
+          ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(id(battery_state)));
+      - if:
+          condition:
+            lambda: 'return id(battery_action) == 2;'
+          then:
+            - logger.log: "Battery empty: showing the notice and stopping"
+            - lambda: |-
+                id(notice_text) = "Battery empty - charge to resume";
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+            - script.execute: battery_sleep
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(battery_action) == 1;'
+                then:
+                  - logger.log: "Battery still empty: sleeping"
+                  - script.execute: battery_sleep
+                else:
+                  - script.execute: start_wake
+
+  # Halted: no Wi-Fi, no refresh; just wake now and then to see whether it has been charged.
+  - id: battery_sleep
+    then:
+      - if:
+          condition:
+            binary_sensor.is_off: maintenance_button
+          then:
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                sleep_duration: ${battery_halt_sleep_ms}ms
+
+  # The normal wake: Wi-Fi, then the server.
+  - id: start_wake
+    then:
+      - wait_until:
+          condition:
+            wifi.connected:
+          timeout: 30s
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
+            - lambda: |-
+                id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+                if (id(force_refresh))
+                  ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
+            - script.execute: check_plan
+          else:
+            # Without Wi-Fi there is no point asking the server, or looking for it.
+            - lambda: 'id(fail_reason) = "wifi";'
+            - script.execute: give_up
+
   # Asks the server what is current: whether the image changed, whether it is stale, and when to come back.
   # After a button wake it asks for a render first (POST /refresh), which answers the same way.
   - id: check_plan
@@ -236,7 +351,9 @@ script:
                   std::string base = (id(server_ip) == 0 || id(server_port) == 0)
                                          ? std::string("${fallback_base}")
                                          : eink_discovery::url(id(server_ip), id(server_port), "");
-                  return base + "${refresh_path}?have=" + std::to_string(id(shown_version));
+                  return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
+                         eink_battery::telemetry("${device_name}", id(battery_known), id(battery_mv), id(battery_pct),
+                                                 id(battery_state), id(failed_wakes));
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -250,7 +367,9 @@ script:
                   std::string base = (id(server_ip) == 0 || id(server_port) == 0)
                                          ? std::string("${fallback_base}")
                                          : eink_discovery::url(id(server_ip), id(server_port), "");
-                  return base + "${plan_path}?have=" + std::to_string(id(shown_version));
+                  return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
+                         eink_battery::telemetry("${device_name}", id(battery_known), id(battery_mv), id(battery_pct),
+                                                 id(battery_state), id(failed_wakes));
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -286,6 +405,9 @@ script:
             // A notice is covering the picture and the server is fine again: redraw it, even if the
             // image is the one we think we show. Not while stale, or it would redraw every wake.
             if (id(notice_on_panel) && !id(plan_stale))
+              id(plan_changed) = true;
+            // The battery label is part of the picture: draw it when it should appear or go.
+            if (id(low_label_on_panel) != id(battery_low))
               id(plan_changed) = true;
           }
       - if:
@@ -463,6 +585,9 @@ display:
         eink_notice::draw(*id(epaper_display), id(notice_font), id(notice_text));
       } else {
         it.image(0, 0, id(dashboard));
+        // Drawn into the same refresh as the picture, so it costs nothing extra.
+        if (id(battery_low))
+          eink_notice::label(it, id(notice_font), "Battery low " + std::to_string(id(battery_pct)) + "% - please charge");
       }
 
 output:
@@ -477,6 +602,8 @@ sensor:
     id: battery_voltage
     name: "Battery Voltage"
     attenuation: 12db
+    # Averaged inside each reading, which is what battery_gate takes.
+    samples: 16
     update_interval: 60s
     filters:
       # Onboard 1:2 voltage divider

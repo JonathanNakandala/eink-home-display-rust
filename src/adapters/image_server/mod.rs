@@ -2,6 +2,8 @@
 //! The display adapter publishes into a directory; this serves what is there.
 
 mod advertise;
+mod devices;
+mod metrics;
 mod plan;
 mod refresh;
 mod status;
@@ -23,8 +25,10 @@ use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
 pub use self::plan::{render_due, PlanTiming};
+pub use self::devices::DeviceBoard;
 pub use self::refresh::RefreshControl;
 pub use self::status::StatusBoard;
+use self::devices::{RawTelemetry, Telemetry};
 use self::refresh::RefreshOutcome;
 use self::plan::compute;
 use crate::config::server::ServerConfig;
@@ -67,6 +71,8 @@ pub struct Handles {
     pub refresh: Arc<RefreshControl>,
     /// The render history, for `/status` and `/healthz`.
     pub status: Arc<StatusBoard>,
+    /// What the displays report about themselves, for `/status` and `/metrics`.
+    pub devices: Arc<DeviceBoard>,
 }
 
 /// How long a button press waits for its render: a cold Chrome start can take a while.
@@ -91,6 +97,7 @@ pub fn router(
         .route("/refresh", post(refresh_now))
         .route("/status", get(status))
         .route("/healthz", get(healthz))
+        .route("/metrics", get(metrics))
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(Published { directory, format, schedule, timing, handles }))
 }
@@ -99,11 +106,31 @@ pub fn router(
 struct PlanQuery {
     /// The version of the image the display already shows.
     have: Option<u32>,
+    // What the display reports about itself. Text, so a malformed value can't fail the request;
+    // see `RawTelemetry`.
+    device: Option<String>,
+    battery_mv: Option<String>,
+    battery_pct: Option<String>,
+    battery_state: Option<String>,
+    failed_wakes: Option<String>,
+}
+
+impl PlanQuery {
+    fn telemetry(&self) -> Option<Telemetry> {
+        RawTelemetry {
+            device: self.device.clone(),
+            battery_mv: self.battery_mv.clone(),
+            battery_pct: self.battery_pct.clone(),
+            battery_state: self.battery_state.clone(),
+            failed_wakes: self.failed_wakes.clone(),
+        }
+        .parse()
+    }
 }
 
 /// Tells a display which render the image is, whether it is stale, and when to ask again.
 async fn plan(State(published): State<Arc<Published>>, Query(query): Query<PlanQuery>) -> Response {
-    plan_response(&published, query.have).await
+    plan_response(&published, query.have, query.telemetry()).await
 }
 
 /// Renders now if the display's button asked for it (and one hasn't just run), then answers
@@ -115,7 +142,7 @@ async fn refresh_now(State(published): State<Arc<Published>>, Query(query): Quer
         RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
         RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
     }
-    plan_response(&published, query.have).await
+    plan_response(&published, query.have, query.telemetry()).await
 }
 
 /// When the served image was written; None before the first render.
@@ -149,17 +176,38 @@ async fn healthz(State(published): State<Arc<Published>>) -> Response {
 
 async fn current_status(published: &Published) -> anyhow::Result<status::Status> {
     let rendered_at = image_written_at(published).await?;
-    published.handles.status.status(Local::now(), rendered_at, &published.schedule, published.timing)
+    let now = Local::now();
+    let mut status = published.handles.status.status(now, rendered_at, &published.schedule, published.timing)?;
+    status.devices = published.handles.devices.snapshot(now);
+    Ok(status)
 }
 
-async fn plan_response(published: &Published, have: Option<u32>) -> Response {
+/// The same facts as `/status`, in the Prometheus text format, for a scraper.
+async fn metrics(State(published): State<Arc<Published>>) -> Response {
+    match current_status(&published).await {
+        Ok(status) => (
+            [(header::CONTENT_TYPE, metrics::CONTENT_TYPE), (header::CACHE_CONTROL, "no-store")],
+            metrics::render(&status),
+        )
+            .into_response(),
+        Err(e) => server_error("report", e),
+    }
+}
+
+async fn plan_response(published: &Published, have: Option<u32>, telemetry: Option<Telemetry>) -> Response {
     let rendered_at = match image_written_at(published).await {
         Ok(Some(rendered_at)) => rendered_at,
         Ok(None) => return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response(),
         Err(e) => return server_error("inspect", e),
     };
-    match compute(Local::now(), rendered_at, &published.schedule, published.timing, have) {
-        Ok(plan) => ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response(),
+    let now = Local::now();
+    match compute(now, rendered_at, &published.schedule, published.timing, have) {
+        Ok(plan) => {
+            if let Some(telemetry) = telemetry {
+                published.handles.devices.record(now, telemetry, plan.next_seconds);
+            }
+            ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response()
+        }
         Err(e) => server_error("plan", e),
     }
 }
@@ -231,7 +279,7 @@ mod tests {
         let timing = PlanTiming::from(&ServerConfig::default());
         let schedule = Schedule::parse_every("1h").unwrap();
         let status = StatusBoard::new(Local::now());
-        let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status) };
+        let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };
         tokio::spawn(async move { axum::serve(listener, router(directory, format, schedule, timing, handles)).await });
         (format!("http://{address}"), status)
     }
@@ -389,5 +437,46 @@ mod tests {
         let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
         assert_eq!(plan["stale"], true);
         assert!(plan["age_seconds"].as_u64().unwrap() >= 3 * 3600);
+    }
+
+    #[tokio::test]
+    async fn a_check_in_shows_up_in_status_and_metrics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+
+        let status = || async {
+            reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap()
+        };
+        assert_eq!(status().await["devices"], serde_json::json!([]));
+
+        let url = format!(
+            "{base}/plan?have=1&device=kitchen&battery_mv=3350&battery_pct=8&battery_state=low&failed_wakes=0"
+        );
+        assert_eq!(reqwest::get(url).await.unwrap().status(), 200);
+
+        let devices = status().await["devices"].clone();
+        assert_eq!(devices[0]["name"], "kitchen");
+        assert_eq!(devices[0]["battery_millivolts"], 3350);
+        assert_eq!(devices[0]["battery_state"], "low");
+        assert_eq!(devices[0]["overdue"], false);
+
+        let response = reqwest::get(format!("{base}/metrics")).await.unwrap();
+        assert!(response.headers()["content-type"].to_str().unwrap().starts_with("text/plain; version=0.0.4"));
+        let text = response.text().await.unwrap();
+        assert!(text.contains("eink_device_battery_volts{device=\"kitchen\"} 3.35"), "{text}");
+        assert!(text.contains("eink_device_battery_state{device=\"kitchen\",state=\"low\"} 1"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn bad_telemetry_never_stops_the_plan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+
+        let url = format!("{base}/plan?device=%22bad%0A&battery_mv=lots&battery_pct=-1&failed_wakes=x");
+        assert_eq!(reqwest::get(url).await.unwrap().status(), 200);
+        let devices = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        assert_eq!(devices["devices"], serde_json::json!([]));
     }
 }
