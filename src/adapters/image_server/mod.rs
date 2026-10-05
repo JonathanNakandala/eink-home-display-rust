@@ -82,19 +82,10 @@ pub fn router(
         .with_state(Arc::new(Published { images, format, schedule, timing, handles, clock }))
 }
 
-
-
-
-
-
-
-
-
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
     log::error!("Failed to {action} the published image: {e}");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
-
 
 /// Serves until the future is dropped, or fails at once if the address can't be bound.
 pub async fn serve(

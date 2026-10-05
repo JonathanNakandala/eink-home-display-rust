@@ -7,6 +7,7 @@
 //! restarts. Failed renders never end the process, so only a crash can restart it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
@@ -15,6 +16,7 @@ use crate::application::plan::render_due;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::models::schedule::Schedule;
+use crate::domain::services::clock::Clock;
 use crate::domain::services::published_images::PublishedImages;
 use crate::domain::services::render_observer::RenderObserver;
 
@@ -49,25 +51,24 @@ pub async fn served_image_is_current(
         .is_some_and(|due| !due)
 }
 
-/// Notes that a render is starting. Best effort: a render is worth more than its bookkeeping.
-pub fn record_attempt(marker: &Path) {
-    if let Err(e) = std::fs::write(marker, Local::now().to_rfc3339()) {
-        log::warn!("Could not record the render attempt in {}: {e}", marker.display());
-    }
+/// Records each render's start in a file (the time, from the clock), for `first_render_at`'s
+/// cooldown after a restart. Best effort: a render is worth more than its bookkeeping.
+pub struct AttemptMarker {
+    path: PathBuf,
+    clock: Arc<dyn Clock>,
 }
 
-/// Records each render's start in a file, for `first_render_at`'s cooldown after a restart.
-pub struct AttemptMarker(PathBuf);
-
 impl AttemptMarker {
-    pub fn new(path: PathBuf) -> Self {
-        Self(path)
+    pub fn new(path: PathBuf, clock: Arc<dyn Clock>) -> Self {
+        Self { path, clock }
     }
 }
 
 impl RenderObserver for AttemptMarker {
     fn render_started(&self) {
-        record_attempt(&self.0);
+        if let Err(e) = std::fs::write(&self.path, self.clock.now().to_rfc3339()) {
+            log::warn!("Could not record the render attempt in {}: {e}", self.path.display());
+        }
     }
 
     fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {}
@@ -75,8 +76,10 @@ impl RenderObserver for AttemptMarker {
     fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {}
 }
 
+/// When the last render was started, from the marker; None if there is none or it can't be read.
 pub fn last_attempt(marker: &Path) -> Option<DateTime<Local>> {
-    std::fs::metadata(marker).ok()?.modified().ok().map(DateTime::<Local>::from)
+    let text = std::fs::read_to_string(marker).ok()?;
+    DateTime::parse_from_rfc3339(text.trim()).ok().map(|at| at.with_timezone(&Local))
 }
 
 #[cfg(test)]
@@ -116,14 +119,29 @@ mod tests {
     }
 
     #[test]
-    fn the_attempt_marker_round_trips() {
+    fn the_attempt_marker_records_the_clocks_time() {
+        use crate::adapters::clock::FixedClock;
+
         let tmp = tempfile::tempdir().unwrap();
         let marker = tmp.path().join("last_render_attempt");
         assert!(last_attempt(&marker).is_none());
 
-        record_attempt(&marker);
-        let seen = last_attempt(&marker).unwrap();
-        assert!((Local::now() - seen).num_seconds().abs() < 5);
+        // The clock, not the file's modification time, says when the attempt was.
+        let clock = FixedClock::at(at(9, 30, 0));
+        AttemptMarker::new(marker.clone(), clock.clone()).render_started();
+        assert_eq!(last_attempt(&marker), Some(at(9, 30, 0)));
+
+        clock.set(at(9, 45, 0));
+        AttemptMarker::new(marker.clone(), clock).render_started();
+        assert_eq!(last_attempt(&marker), Some(at(9, 45, 0)));
+    }
+
+    #[test]
+    fn an_unreadable_marker_is_no_attempt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("last_render_attempt");
+        std::fs::write(&marker, "not a time").unwrap();
+        assert!(last_attempt(&marker).is_none());
     }
 
     #[tokio::test]

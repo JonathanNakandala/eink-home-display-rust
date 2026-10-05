@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -20,10 +20,6 @@ impl DirectoryImages {
 
     fn path(&self, format: ImageFormat) -> PathBuf {
         self.directory.join(format!("image.{}", format.extension()))
-    }
-
-    pub fn directory(&self) -> &Path {
-        &self.directory
     }
 }
 
