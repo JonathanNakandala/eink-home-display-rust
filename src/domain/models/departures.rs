@@ -66,16 +66,16 @@ impl Departures {
     }
 }
 
-/// Seconds from `now` until the next occurrence of `clock_time` ("HH:MM", local time).
+/// Seconds from `now` until `clock_time` ("HH:MM", local time), negative if it has gone: whichever of
+/// today, yesterday or tomorrow puts it nearest to now, so within 12 hours either way.
 /// Resolution is a minute, so it agrees with the clock on the display.
 pub fn seconds_until(now: DateTime<Local>, clock_time: &str) -> Option<i64> {
     let time = NaiveTime::parse_from_str(clock_time, "%H:%M").ok()?;
     let minutes = |t: NaiveTime| i64::from(t.hour() * 60 + t.minute());
-    let mut diff = minutes(time) - minutes(now.time());
-    // Boards run across midnight: 00:10 at 23:55 is 15 minutes away, not -23h45.
-    if diff < -12 * 60 {
-        diff += 24 * 60;
-    }
+    // Boards run across midnight, both ways: 00:10 at 23:55 is 15 minutes away, not -23h45, and 23:55 at
+    // 00:05 (a train from the cached data of a board that has since been unreachable) left 10 minutes
+    // ago, not 23h50 from now.
+    let diff = (minutes(time) - minutes(now.time()) + 12 * 60).rem_euclid(24 * 60) - 12 * 60;
     Some(diff * 60)
 }
 
@@ -106,6 +106,20 @@ mod tests {
     #[test]
     fn wraps_past_midnight() {
         assert_eq!(seconds_until(at(23, 55, 0), "00:10"), Some(15 * 60));
+    }
+
+    #[test]
+    fn a_time_before_midnight_has_gone_after_it() {
+        assert_eq!(seconds_until(at(0, 5, 0), "23:55"), Some(-10 * 60));
+        assert_eq!(seconds_until(at(0, 0, 0), "23:59"), Some(-60));
+    }
+
+    #[test]
+    fn the_nearest_day_is_chosen_at_the_edges() {
+        assert_eq!(seconds_until(at(12, 0, 0), "12:00"), Some(0));
+        // Just under twelve hours ahead stays ahead; twelve hours or more behind is the next day.
+        assert_eq!(seconds_until(at(12, 0, 0), "23:59"), Some(11 * 3600 + 59 * 60));
+        assert_eq!(seconds_until(at(12, 0, 0), "00:00"), Some(-12 * 3600));
     }
 
     #[test]
@@ -140,6 +154,22 @@ mod tests {
         assert_eq!(later.services.len(), 2);
         assert_eq!(countdowns, ["5 min", "22 min"]);
         assert_eq!(later.services[1].expected, "09:27");
+    }
+
+    #[test]
+    fn across_midnight_a_gone_service_is_dropped_and_an_upcoming_one_counts_down() {
+        let departures = Departures::new(
+            "Hornsey".into(),
+            vec![
+                service("23:55", DepartureStatus::OnTime, "", "10 min"),
+                service("00:10", DepartureStatus::OnTime, "", "25 min"),
+            ],
+        );
+
+        // Fetched at 23:45 and shown at 00:05, because the source has been down since.
+        let later = departures.as_of(at(0, 5, 0));
+        let countdowns: Vec<_> = later.services.iter().map(|s| s.countdown.as_str()).collect();
+        assert_eq!(countdowns, ["5 min"], "the 23:55 left ten minutes ago");
     }
 
     #[test]
