@@ -150,7 +150,9 @@ where
     IR: ImageRepository,
     DS: DeparturesService,
 {
-    /// Has `observer` told when each run starts and how it ends.
+    /// Has `observer` told when each run starts and how it ends. Observers are told in the order
+    /// they were added, so one that releases a waiter should be added after the ones the waiter
+    /// will go on to read.
     pub fn with_observer(mut self, observer: Arc<dyn RenderObserver>) -> Self {
         self.observers.push(observer);
         self
