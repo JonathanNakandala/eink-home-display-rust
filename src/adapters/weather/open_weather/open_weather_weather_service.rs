@@ -1,6 +1,7 @@
 use anyhow::Context;
 use reqwest::Client;
 
+use crate::adapters::http;
 use crate::adapters::weather::open_weather::response::OpenWeatherResponse;
 use crate::domain::models::location::Location;
 use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
@@ -23,7 +24,9 @@ impl WeatherService for OpenWeatherWeatherServiceAdapter {
             self.host_url, location.latitude, location.longitude, self.api_key
         );
 
-        let response = self.client.get(&url).send().await?;
+        let response = http::send(self.client.get(&url))
+            .await
+            .context("Failed to fetch weather data")?;
         let response_body: OpenWeatherResponse = response
             .json()
             .await

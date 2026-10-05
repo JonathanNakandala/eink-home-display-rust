@@ -63,7 +63,7 @@ fn setup_service(
                     from.clone(),
                     to.clone(),
                     board.travel_minutes,
-                    reqwest::Client::new(),
+                    crate::adapters::http::client(),
                 ),
             ))
         }
@@ -74,7 +74,7 @@ fn setup_service(
                 None => (DEFAULT_TFL_HOST_URL.to_owned(), None),
             };
             Ok(DeparturesServiceImpl::Tfl(TflDeparturesServiceAdapter::new(
-                TflStopPointServiceAdapter::new(host_url, app_key, reqwest::Client::new()),
+                TflStopPointServiceAdapter::new(host_url, app_key, crate::adapters::http::client()),
                 stop_id.clone(),
                 board.travel_minutes,
             )))
