@@ -72,6 +72,8 @@ esphome:
             binary_sensor.is_on: maintenance_button
           then:
             - logger.log: "Maintenance mode: staying awake"
+            # Latched, so letting go of the button doesn't end it: the sleeps below check this, not the pin.
+            - lambda: 'id(maintenance) = true;'
             - deep_sleep.prevent: deep_sleep_1
             # Wi-Fi is normally left off until the battery has been checked; an update over the air
             # needs it whatever the battery says.
@@ -215,6 +217,11 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+  # KEY1 was held at boot: stay awake for an update over the air, however long the button is held.
+  - id: maintenance
+    type: bool
+    restore_value: no
+    initial_value: 'false'
   # Woken by the button, so ask the server to render now.
   - id: force_refresh
     type: bool
@@ -317,7 +324,7 @@ script:
     then:
       - if:
           condition:
-            binary_sensor.is_off: maintenance_button
+            lambda: 'return !id(maintenance);'
           then:
             - deep_sleep.enter:
                 id: deep_sleep_1
@@ -443,6 +450,9 @@ script:
           then:
             - online_image.set_url:
                 id: dashboard
+                # The download is started by the component.update below, once; set_url would otherwise start
+                # it too, and a second request would run after a failed one.
+                update: false
                 url: !lambda |-
                   if (id(server_ip) == 0 || id(server_port) == 0)
                     return "${fallback_base}${image_path}";
@@ -474,7 +484,7 @@ script:
     then:
       - if:
           condition:
-            binary_sensor.is_off: maintenance_button
+            lambda: 'return !id(maintenance);'
           then:
             - deep_sleep.enter:
                 id: deep_sleep_1
