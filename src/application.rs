@@ -1,4 +1,9 @@
+use std::time::Duration as StdDuration;
+
+use anyhow::anyhow;
 use chrono::{DateTime, Duration, Local};
+
+use std::future::Future;
 
 use crate::domain::models::departures::Departures;
 use crate::domain::models::freshness::{Fetched, LastGood};
@@ -25,6 +30,30 @@ impl Default for MaxAge {
     }
 }
 
+/// How long a run, and each part of it, may take.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderLimits {
+    /// For one source (the weather, or one board) to answer. A source that is too slow counts as
+    /// failed, so it is shown from its last good data or as unavailable instead of holding up the rest.
+    pub source_timeout: StdDuration,
+    /// For the whole run, from fetching to the display. Whatever is still going then is abandoned,
+    /// so a stuck render can't stop the next one or a waiting button press.
+    pub deadline: StdDuration,
+}
+
+impl Default for RenderLimits {
+    fn default() -> Self {
+        Self { source_timeout: StdDuration::from_secs(40), deadline: StdDuration::from_secs(120) }
+    }
+}
+
+/// Gives a source's answer, or an error if it takes longer than `limit`.
+async fn within<T>(limit: StdDuration, what: &str, work: impl Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
+    tokio::time::timeout(limit, work)
+        .await
+        .unwrap_or_else(|_| Err(anyhow!("{what} didn't answer within {limit:?}")))
+}
+
 /// A titled list of departures from one configured source.
 #[derive(derive_new::new)]
 pub struct DepartureBoard<DS: DeparturesService> {
@@ -44,9 +73,9 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
 
     /// The board as it should be shown: fresh if the source answered, otherwise what it last
     /// said (brought up to date, and labelled with its age) if that is recent enough.
-    async fn for_display(&self, now: DateTime<Local>, max_age: Duration) -> DepartureBoardData {
-        let result = self.fetch(self.rows, now).await;
+    async fn for_display(&self, now: DateTime<Local>, max_age: Duration, timeout: StdDuration) -> DepartureBoardData {
         let source = format!("Departures for {}", self.name);
+        let result = within(timeout, &source, self.fetch(self.rows, now)).await;
         match self.last_good.resolve(result, now, max_age, &source) {
             Fetched::Fresh(departures) => {
                 DepartureBoardData::new(self.name.clone(), departures.station, departures.services)
@@ -75,6 +104,7 @@ where
     image_repository: IR,
     departure_boards: Vec<DepartureBoard<DS>>,
     max_age: MaxAge,
+    limits: RenderLimits,
     #[new(default)]
     last_weather: LastGood<Option<WeatherInformation>>,
 }
@@ -87,18 +117,28 @@ where
     IR: ImageRepository,
     DS: DeparturesService,
 {
-    /// Renders and shows the dashboard. A source that fails doesn't stop it: that part is shown
-    /// from its last good data if recent enough (labelled with the age), or as unavailable.
+    /// Renders and shows the dashboard. A source that fails or is too slow doesn't stop it: that part
+    /// is shown from its last good data if recent enough (labelled with the age), or as unavailable.
+    /// The whole run is abandoned, with an error, if it takes longer than `limits.deadline`.
     pub async fn run(&self, location: Location) -> anyhow::Result<()> {
+        within(self.limits.deadline, "The render", self.render(location)).await
+    }
+
+    async fn render(&self, location: Location) -> anyhow::Result<()> {
         // One instant for the whole frame, so the clock and the countdowns agree.
         let now = chrono::Local::now();
         let (weather, departures) = tokio::join!(
             async {
-                let result = self.weather_service.get_weather_for_location(location).await;
+                let result = within(
+                    self.limits.source_timeout,
+                    "Weather",
+                    self.weather_service.get_weather_for_location(location),
+                )
+                .await;
                 self.last_weather.resolve(result, now, self.max_age.weather, "Weather")
             },
             futures_util::future::join_all(
-                self.departure_boards.iter().map(|board| board.for_display(now, self.max_age.departures)),
+                self.departure_boards.iter().map(|board| board.for_display(now, self.max_age.departures, self.limits.source_timeout)),
             ),
         );
 
@@ -145,9 +185,12 @@ mod tests {
         }
     }
 
-    struct Trains(Flag);
+    struct Trains(Flag, Flag);
     impl DeparturesService for Trains {
         async fn get_departures(&self, _: u8, now: DateTime<Local>) -> anyhow::Result<Departures> {
+            if self.1.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             if self.0.load(Ordering::SeqCst) {
                 return Err(anyhow!("trains are down"));
             }
@@ -160,9 +203,12 @@ mod tests {
     }
 
     /// Keeps what the dashboard was asked to draw.
-    struct Capture(Arc<Mutex<Vec<serde_json::Value>>>);
+    struct Capture(Arc<Mutex<Vec<serde_json::Value>>>, Flag);
     impl DisplayImageGenerator for Capture {
         async fn generate(&self, data: GlanceData, _: &DisplayProfile) -> anyhow::Result<ImageData> {
+            if self.1.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             self.0.lock().unwrap().push(serde_json::to_value(&data)?);
             Ok(ImageData::new(vec![]))
         }
@@ -190,22 +236,26 @@ mod tests {
     struct Rig {
         weather_down: Flag,
         trains_down: Flag,
+        trains_hang: Flag,
+        render_hang: Flag,
         frames: Arc<Mutex<Vec<serde_json::Value>>>,
         app: Application<Weather, Capture, Panel, Store, Trains>,
     }
 
     fn rig() -> Rig {
         let (weather_down, trains_down) = (Flag::default(), Flag::default());
+        let (trains_hang, render_hang) = (Flag::default(), Flag::default());
         let frames = Arc::new(Mutex::new(Vec::new()));
         let app = Application::new(
             Weather(weather_down.clone()),
-            Capture(frames.clone()),
+            Capture(frames.clone(), render_hang.clone()),
             Panel,
             Store,
-            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(trains_down.clone()))],
+            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(trains_down.clone(), trains_hang.clone()))],
             MaxAge::default(),
+            RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
         );
-        Rig { weather_down, trains_down, frames, app }
+        Rig { weather_down, trains_down, trains_hang, render_hang, frames, app }
     }
 
     impl Rig {
@@ -294,5 +344,43 @@ mod tests {
         let frame = rig.run().await;
         assert_eq!(frame["departures"][0]["unavailable"], true);
         assert_eq!(frame["weather_unavailable"], true);
+    }
+
+    #[tokio::test]
+    async fn a_source_that_hangs_is_treated_as_failed_and_the_render_goes_on() {
+        let rig = rig();
+        rig.trains_hang.store(true, Ordering::SeqCst);
+
+        let started = std::time::Instant::now();
+        let frame = rig.run().await;
+        assert!(started.elapsed() < StdDuration::from_millis(350), "{:?}", started.elapsed());
+        assert_eq!(frame["departures"][0]["unavailable"], true);
+        assert!(frame["weather_information"].is_object());
+    }
+
+    #[tokio::test]
+    async fn a_hung_source_shows_its_earlier_data_like_any_other_failure() {
+        let rig = rig();
+        rig.run().await;
+        rig.trains_hang.store(true, Ordering::SeqCst);
+
+        let frame = rig.run().await;
+        assert_eq!(frame["departures"][0]["age"], "under 1 min");
+        assert_eq!(frame["departures"][0]["unavailable"], false);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_overshoots_the_deadline_is_abandoned_with_an_error() {
+        let rig = rig();
+        rig.render_hang.store(true, Ordering::SeqCst);
+
+        let started = std::time::Instant::now();
+        let error = rig.app.run(Location::new(0.0, 0.0)).await.unwrap_err();
+        assert!(started.elapsed() < StdDuration::from_secs(2), "{:?}", started.elapsed());
+        assert!(format!("{error}").contains("The render didn't answer within"), "{error}");
+
+        // The next run is unaffected.
+        rig.render_hang.store(false, Ordering::SeqCst);
+        rig.run().await;
     }
 }

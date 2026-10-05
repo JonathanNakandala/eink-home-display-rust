@@ -24,6 +24,14 @@
     "file_store": {
       "$ref": "#/$defs/FileStoreConfig"
     },
+    "limits": {
+      "description": "How long a render, and each source in it, may take.",
+      "$ref": "#/$defs/LimitsConfig",
+      "default": {
+        "render_deadline_seconds": 120,
+        "source_timeout_seconds": 40
+      }
+    },
     "location": {
       "$ref": "#/$defs/LocationConfig"
     },
@@ -234,6 +242,26 @@
           "const": "Png"
         }
       ]
+    },
+    "LimitsConfig": {
+      "description": "Time limits that keep one stuck part from stopping the dashboard updating.",
+      "type": "object",
+      "properties": {
+        "render_deadline_seconds": {
+          "description": "A whole run, from fetching to the display, is abandoned after this long. Leave room for the\nsources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 120,
+          "minimum": 0
+        },
+        "source_timeout_seconds": {
+          "description": "A source (the weather, or one departures board) that hasn't answered by then counts as failed.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 40,
+          "minimum": 0
+        }
+      }
     },
     "LocationConfig": {
       "type": "object",

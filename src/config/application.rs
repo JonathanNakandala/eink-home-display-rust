@@ -30,6 +30,9 @@ pub struct ApplicationConfig {
     /// How long an earlier result stands in for a source that has failed.
     #[serde(default)]
     pub stale_data: StaleDataConfig,
+    /// How long a render, and each source in it, may take.
+    #[serde(default)]
+    pub limits: LimitsConfig,
     /// Serves the rendered image to displays that fetch it, like the reTerminal E1003.
     #[serde(default)]
     pub server: ServerConfig,
@@ -68,6 +71,44 @@ impl From<&StaleDataConfig> for crate::application::MaxAge {
         Self {
             departures: chrono::Duration::minutes(config.departures_max_age_minutes.into()),
             weather: chrono::Duration::minutes(config.weather_max_age_minutes.into()),
+        }
+    }
+}
+
+/// Time limits that keep one stuck part from stopping the dashboard updating.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LimitsConfig {
+    /// A source (the weather, or one departures board) that hasn't answered by then counts as failed.
+    #[serde(default = "default_source_timeout")]
+    pub source_timeout_seconds: u32,
+    /// A whole run, from fetching to the display, is abandoned after this long. Leave room for the
+    /// sources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.
+    #[serde(default = "default_render_deadline")]
+    pub render_deadline_seconds: u32,
+}
+
+fn default_source_timeout() -> u32 {
+    40
+}
+
+fn default_render_deadline() -> u32 {
+    120
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            source_timeout_seconds: default_source_timeout(),
+            render_deadline_seconds: default_render_deadline(),
+        }
+    }
+}
+
+impl From<&LimitsConfig> for crate::application::RenderLimits {
+    fn from(config: &LimitsConfig) -> Self {
+        Self {
+            source_timeout: std::time::Duration::from_secs(config.source_timeout_seconds.into()),
+            deadline: std::time::Duration::from_secs(config.render_deadline_seconds.into()),
         }
     }
 }
