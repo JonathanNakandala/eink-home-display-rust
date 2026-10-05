@@ -92,8 +92,6 @@ impl ApplicationConfig {
 mod tests {
     use std::path::Path;
 
-    use serde_valid::Validate;
-
     use super::*;
 
     #[test]

@@ -2,18 +2,28 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_valid::Validate;
 
-#[derive(Debug, Serialize, Deserialize, Validate, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WeatherConfig {
     /// When false no weather is fetched and the display shows none.
     pub enabled: bool,
     pub provider: WeatherProvider,
     /// Required when `provider = "OpenWeather"`.
-    #[validate]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_weather: Option<OpenWeatherConfig>,
     /// Optional: Open-Meteo needs no key, so the default host is used when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_meteo: Option<OpenMeteoConfig>,
+}
+
+impl WeatherConfig {
+    /// Checks the rules of the provider that is in use. Weather that is switched off, or the other
+    /// provider's section, isn't checked: nothing reads its values, so a placeholder there is fine.
+    pub fn validate_in_use(&self) -> Result<(), serde_valid::validation::Errors> {
+        match (self.enabled, &self.provider, &self.open_weather) {
+            (true, WeatherProvider::OpenWeather, Some(open_weather)) => open_weather.validate(),
+            _ => Ok(()),
+        }
+    }
 }
 
 pub const DEFAULT_OPEN_METEO_HOST_URL: &str = "https://api.open-meteo.com";
@@ -56,4 +66,37 @@ fn default_open_meteo_air_quality_host_url() -> String {
 
 fn default_open_meteo_host_url() -> String {
     DEFAULT_OPEN_METEO_HOST_URL.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(enabled: bool, provider: WeatherProvider, api_key: &str) -> WeatherConfig {
+        WeatherConfig {
+            enabled,
+            provider,
+            open_weather: Some(OpenWeatherConfig {
+                api_key: api_key.to_owned(),
+                host_url: "https://api.openweathermap.org".to_owned(),
+            }),
+            open_meteo: None,
+        }
+    }
+
+    #[test]
+    fn the_provider_in_use_is_checked() {
+        assert!(config(true, WeatherProvider::OpenWeather, &"k".repeat(32)).validate_in_use().is_ok());
+        assert!(config(true, WeatherProvider::OpenWeather, "").validate_in_use().is_err());
+        assert!(config(true, WeatherProvider::OpenWeather, "too short").validate_in_use().is_err());
+    }
+
+    #[test]
+    fn what_is_not_in_use_is_not_checked() {
+        // Switched off, or the other provider is selected: a placeholder key is no problem.
+        assert!(config(false, WeatherProvider::OpenWeather, "").validate_in_use().is_ok());
+        assert!(config(true, WeatherProvider::OpenMeteo, "").validate_in_use().is_ok());
+        let without_section = WeatherConfig { open_weather: None, ..config(true, WeatherProvider::OpenMeteo, "") };
+        assert!(without_section.validate_in_use().is_ok());
+    }
 }

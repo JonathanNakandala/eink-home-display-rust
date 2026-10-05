@@ -97,6 +97,8 @@ fn file_name(kind: DisplayKind) -> &'static str {
 }
 
 async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
+    // A live fetch uses the weather settings, so those are checked; the sample render never does.
+    config.weather.validate_in_use().context("The [weather] configuration is invalid")?;
     // Reuse the application's own fetching by running it against a capture-only generator.
     let (tx, rx) = std::sync::mpsc::channel();
     let app = bootstrap::assemble(config, Capture(tx), NoDisplay, NoStore, Arc::new(SystemClock))?;
