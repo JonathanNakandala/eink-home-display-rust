@@ -39,9 +39,17 @@ pub fn version_of(rendered_at: DateTime<Local>) -> u32 {
     u32::try_from(rendered_at.timestamp()).unwrap_or(u32::MAX)
 }
 
+/// When an image was rendered, as far as its time can be believed: an image stamped later than now was
+/// rendered before the clock was set back, so its real age is unknown and it counts as rendered just now.
+/// Taken at its word, the next render would be due that much later than any that follows, and a display
+/// would be sent to sleep until then.
+fn believable(rendered_at: DateTime<Local>, now: DateTime<Local>) -> DateTime<Local> {
+    rendered_at.min(now)
+}
+
 /// Whether the render that should follow the one served has come due, so a new one is wanted.
 pub fn render_due(now: DateTime<Local>, rendered_at: DateTime<Local>, schedule: &Schedule) -> anyhow::Result<bool> {
-    Ok(now >= schedule.next_after(rendered_at)?)
+    Ok(now >= schedule.next_after(believable(rendered_at, now))?)
 }
 
 /// Whether a render that was due after `rendered_at` is more than `grace` late.
@@ -51,7 +59,7 @@ pub fn is_stale(
     schedule: &Schedule,
     grace: Duration,
 ) -> anyhow::Result<bool> {
-    let due = schedule.next_after(rendered_at)?;
+    let due = schedule.next_after(believable(rendered_at, now))?;
     Ok(now >= due && (now - due).to_std().unwrap_or_default() > grace)
 }
 
@@ -65,7 +73,7 @@ pub fn compute(
 ) -> anyhow::Result<Plan> {
     let version = version_of(rendered_at);
     // The render that should have followed the one being served.
-    let due = schedule.next_after(rendered_at)?;
+    let due = schedule.next_after(believable(rendered_at, now))?;
     let (pending, stale, next) = if now < due {
         (false, false, due)
     } else if (now - due).to_std().unwrap_or_default() <= timing.stale_grace {
@@ -103,6 +111,26 @@ mod tests {
     fn plan(schedule: &str, rendered: DateTime<Local>, now: DateTime<Local>) -> Plan {
         let schedule = Schedule::parse_cron(schedule).unwrap();
         compute(now, rendered, &schedule, TIMING, None).unwrap()
+    }
+
+    #[test]
+    fn an_image_from_the_future_counts_as_just_rendered() {
+        // Rendered at 15:00, then the clock was set back to 12:00: the next slot is 12:10, not 15:10.
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let rendered = at(15, 15, 0, 0);
+        let now = at(15, 12, 0, 0);
+
+        let plan = compute(now, rendered, &schedule, TIMING, Some(version_of(rendered))).unwrap();
+        assert_eq!(plan.age_seconds, 0);
+        assert!(!plan.stale && !plan.pending);
+        assert_eq!(plan.next_seconds, 10 * 60 + 30, "the next slot, plus the wake delay");
+        // It is still the image the display shows, whatever its time says.
+        assert!(!plan.changed);
+        assert!(!is_stale(now, rendered, &schedule, TIMING.stale_grace).unwrap());
+        assert!(!render_due(now, rendered, &schedule).unwrap());
+        // Its age can't be known, so it isn't called stale either; the render history (`failing`) still says
+        // if renders stop, and once the clock passes the image's own time the real age counts again.
+        assert!(is_stale(at(15, 15, 40, 0), rendered, &schedule, TIMING.stale_grace).unwrap());
     }
 
     #[test]
