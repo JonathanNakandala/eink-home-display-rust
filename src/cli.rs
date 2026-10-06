@@ -18,9 +18,11 @@ pub struct Args {
     #[arg(long)]
     pub bundled_chrome: bool,
 
-    /// Keep running and refresh on a cron schedule in local time, e.g. "*/10 * * * *"
-    #[arg(long, value_parser = Schedule::parse_cron, conflicts_with = "every")]
-    pub cron: Option<Schedule>,
+    /// Keep running and refresh on a cron schedule in local time, e.g. "*/10 * * * *". Give it more than once
+    /// to cover different hours or days, e.g. --cron "* 7-8 * * 1-5" --cron "0 8-21 * * 6,0": a refresh is
+    /// due whenever any of them is.
+    #[arg(long, value_parser = valid_cron, conflicts_with = "every")]
+    pub cron: Vec<String>,
 
     /// Keep running and refresh at this interval, e.g. 10m or 90s
     #[arg(long, value_parser = Schedule::parse_every)]
@@ -45,9 +47,17 @@ impl From<bool> for ChromeSource {
 
 impl Args {
     /// The schedule to run on, or None for a single run.
-    pub fn schedule(&self) -> Option<&Schedule> {
-        self.cron.as_ref().or(self.every.as_ref())
+    pub fn schedule(&self) -> anyhow::Result<Option<Schedule>> {
+        if self.cron.is_empty() {
+            return Ok(self.every.clone());
+        }
+        Schedule::parse_crons(&self.cron).map(Some)
     }
+}
+
+/// Checked as the flag is read, so a typo is reported against the flag; the text is kept as it was written.
+fn valid_cron(expression: &str) -> Result<String, String> {
+    Schedule::parse_cron(expression).map(|_| expression.to_owned()).map_err(|e| format!("{e:#}"))
 }
 
 #[derive(clap::Parser)]

@@ -12,6 +12,35 @@ use crate::domain::services::clock::Clock;
 /// long (overnight, say), so this is generous; a Chrome that went away anyway is relaunched.
 pub const PERIODIC_IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// What the schedule means, for a person to check against what they meant: each expression in words,
+/// how many refreshes each of the next days gets (the number that decides battery life), and the next few.
+pub fn schedule_summary(schedule: &Schedule, now: DateTime<Local>) -> Vec<String> {
+    let mut lines = vec!["Schedule:".to_owned()];
+    lines.extend(schedule.describe().into_iter().map(|line| format!("  {line}")));
+    let days: Vec<String> = (0..7)
+        .filter_map(|offset| now.date_naive().checked_add_days(chrono::Days::new(offset)))
+        .map(|day| match schedule.runs_on(day) {
+            Ok(runs) => format!("{} {runs}", day.format("%a")),
+            Err(e) => format!("{} ({e:#})", day.format("%a")),
+        })
+        .collect();
+    lines.push(format!("Refreshes per day: {}", days.join(", ")));
+    match schedule.upcoming(now, 3) {
+        Ok(runs) => {
+            let times: Vec<String> = runs.iter().map(|at| at.format("%a %H:%M:%S").to_string()).collect();
+            lines.push(format!("Next refreshes: {}", times.join(", ")));
+        }
+        Err(e) => lines.push(format!("No next refresh: {e:#}")),
+    }
+    lines
+}
+
+pub fn log_schedule(schedule: &Schedule, now: DateTime<Local>) {
+    for line in schedule_summary(schedule, now) {
+        log::info!("{line}");
+    }
+}
+
 /// How often the loop looks at the clock while it waits for the next run. A wait is worked out from the
 /// clock once, so a clock that is then set (NTP just after boot, a manual correction) would otherwise
 /// leave the loop sleeping for a time that no longer means anything.
@@ -138,6 +167,25 @@ pub async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn the_summary_says_what_the_schedule_does() {
+        use chrono::TimeZone;
+        let schedule = Schedule::parse_crons(["* 7-8 * * 1-5", "0 8-21 * * 6,0"]).unwrap();
+        // Monday 2026-06-15, 06:30.
+        let lines = schedule_summary(&schedule, Local.with_ymd_and_hms(2026, 6, 15, 6, 30, 0).unwrap());
+        assert_eq!(
+            lines,
+            [
+                "Schedule:",
+                "  * 7-8 * * 1-5  Every minute past hour 7 and 8, on Monday, Tuesday, Wednesday, Thursday, and Friday.",
+                "  0 8-21 * * 6,0  At minute 0, of hour 8-21, on Sunday and Saturday.",
+                "Refreshes per day: Mon 120, Tue 120, Wed 120, Thu 120, Fri 120, Sat 14, Sun 14",
+                "Next refreshes: Mon 07:00:00, Mon 07:01:00, Mon 07:02:00",
+            ]
+        );
+    }
+
     use std::sync::Arc;
 
     use std::sync::Mutex;
