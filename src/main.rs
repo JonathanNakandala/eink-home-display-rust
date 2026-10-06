@@ -17,7 +17,7 @@ use eink_home_display_rust::cli;
 use eink_home_display_rust::config::cache::CachePaths;
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::clock::Clock;
-use eink_home_display_rust::scheduler::{run_periodically_from, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
+use eink_home_display_rust::scheduler::{log_schedule, run_periodically_from, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,17 +44,18 @@ async fn main() -> Result<()> {
     let chrome_source = ChromeSource::from(args.bundled_chrome);
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
-    let Some(schedule) = args.schedule() else {
+    let Some(schedule) = args.schedule()? else {
         return bootstrap::from_config(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source, Arc::new(DirectoryImages::new(config.server.directory.clone())), clock)?
             .run(location)
             .await
             .map(|_| ());
     };
     let now = clock.now();
+    log_schedule(&schedule, now);
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
-        && launch::served_image_is_current(images.as_ref(), config.display.image_format.into(), schedule, now).await;
+        && launch::served_image_is_current(images.as_ref(), config.display.image_format.into(), &schedule, now).await;
     let first = launch::first_render_at(
         now,
         args.no_initial_run,
@@ -78,7 +79,7 @@ async fn main() -> Result<()> {
         // end, and whoever then reads /status must see that render's outcome.
         .with_observer(status.clone())
         .with_observer(refresh.clone());
-    let periodic = run_periodically_from(schedule, first, refresh.wake(), clock.as_ref(), shutdown_signal(), || {
+    let periodic = run_periodically_from(&schedule, first, refresh.wake(), clock.as_ref(), shutdown_signal(), || {
         let run = app.run(location);
         async move { run.await.map(|_| ()) }
     });

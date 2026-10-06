@@ -18,6 +18,12 @@ Type=simple
 User=eink
 WorkingDirectory=/opt/eink-home-display
 Environment=RUST_LOG=info
+# --cron can be given more than once; a refresh is due whenever any of them is, so each can cover its own
+# hours and days. The log at start-up says in words what they mean and how many refreshes each day gets
+# (each is a wake of the display, so that number is what drains its battery). For example, a minute-by-minute
+# morning and lunchtime on weekdays, every 5 minutes the rest of the day, every 15 at night, hourly weekends:
+#     --cron "* 7-8,11-12 * * 1-5" --cron "*/5 9-10,13-21 * * 1-5" \
+#     --cron "*/15 22-23,0-6 * * 1-5" --cron "0 8-21 * * 6,0"
 # --restart-cooldown is a second line of defence that holds under any supervisor: after a
 # restart, no render starts until this long after the previous attempt.
 ExecStart=/opt/eink-home-display/eink-home-display-rust \
