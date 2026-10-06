@@ -19,6 +19,11 @@ pub fn load_valid_application_config(path: &Path) -> anyhow::Result<ApplicationC
     config
         .validate()
         .with_context(|| format!("The configuration in {} is invalid", path.display()))?;
+    if let Some(schedule) = &config.schedule {
+        schedule
+            .to_schedule()
+            .with_context(|| format!("The [schedule] in {} is invalid", path.display()))?;
+    }
     Ok(config)
 }
 
@@ -57,6 +62,25 @@ mod tests {
         assert!(format!("{error:#}").contains("is invalid"), "{error:#}");
         // A program that doesn't use weather loads it all the same.
         assert!(load_application_config(&on).is_ok());
+    }
+
+    #[test]
+    fn a_schedule_that_is_not_one_is_refused_and_a_good_one_is_kept() {
+        use crate::config::schedule::ScheduleConfig;
+        let write = |name: &str, cron: Vec<String>| {
+            let mut config = ApplicationConfig::example();
+            config.weather.enabled = false;
+            config.schedule = Some(ScheduleConfig { cron });
+            let path = std::env::temp_dir().join(format!("eink_load_test_{name}.toml"));
+            std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+            path
+        };
+        let good = load_valid_application_config(&write("schedule_good", vec!["*/5 * * * *".into()])).unwrap();
+        assert_eq!(good.schedule.unwrap().cron, ["*/5 * * * *"]);
+
+        let error = load_valid_application_config(&write("schedule_bad", vec!["every day".into()])).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("[schedule]") && error.contains("every day"), "{error}");
     }
 
     #[test]

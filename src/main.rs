@@ -44,7 +44,8 @@ async fn main() -> Result<()> {
     let chrome_source = ChromeSource::from(args.bundled_chrome);
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
-    let Some(schedule) = args.schedule()? else {
+    let configured = config.schedule.as_ref().map(|schedule| schedule.to_schedule()).transpose()?;
+    let Some(schedule) = args.schedule(configured)? else {
         return bootstrap::from_config(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source, Arc::new(DirectoryImages::new(config.server.directory.clone())), clock)?
             .run(location)
             .await

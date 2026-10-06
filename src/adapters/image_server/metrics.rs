@@ -159,6 +159,7 @@ mod tests {
                 failed_wakes: Some(2),
             }],
             next_render: None,
+            schedule: Vec::new(),
             uptime_seconds: 3600,
             version: "1.2.3",
         }

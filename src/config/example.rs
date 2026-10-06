@@ -13,6 +13,7 @@ use crate::config::departures::{
     DepartureBoardConfig, DepartureSource, OpenLdbwsConfig, ProvidersConfig, TflConfig,
     DEFAULT_TFL_HOST_URL,
 };
+use crate::config::schedule::ScheduleConfig;
 use crate::config::server::ServerConfig;
 use crate::config::weather::{OpenWeatherConfig, WeatherConfig, WeatherProvider};
 
@@ -74,6 +75,7 @@ impl ApplicationConfig {
             stale_data: StaleDataConfig::default(),
             limits: LimitsConfig::default(),
             server: ServerConfig::default(),
+            schedule: Some(ScheduleConfig { cron: vec!["*/10 * * * *".to_owned()] }),
         }
     }
 

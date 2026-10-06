@@ -28,7 +28,11 @@ pub struct Args {
     #[arg(long, value_parser = Schedule::parse_every)]
     pub every: Option<Schedule>,
 
-    /// With --cron or --every, wait for the first slot instead of refreshing at startup
+    /// Render once and exit, even if the config has a [schedule]
+    #[arg(long, conflicts_with_all = ["cron", "every"])]
+    pub once: bool,
+
+    /// With a schedule, wait for the first slot instead of refreshing at startup
     #[arg(long)]
     pub no_initial_run: bool,
 
@@ -46,12 +50,17 @@ impl From<bool> for ChromeSource {
 }
 
 impl Args {
-    /// The schedule to run on, or None for a single run.
-    pub fn schedule(&self) -> anyhow::Result<Option<Schedule>> {
-        if self.cron.is_empty() {
-            return Ok(self.every.clone());
+    /// The schedule to run on, or None for a single run. A flag wins over the config file's `[schedule]`, as
+    /// flags do, so a one-off run at another rate needs no edit to the file.
+    pub fn schedule(&self, configured: Option<Schedule>) -> anyhow::Result<Option<Schedule>> {
+        if self.once {
+            return Ok(None);
         }
-        Schedule::parse_crons(&self.cron).map(Some)
+        let from_flags = if self.cron.is_empty() { self.every.clone() } else { Some(Schedule::parse_crons(&self.cron)?) };
+        if from_flags.is_some() && configured.is_some() {
+            log::info!("Using the schedule from the command line, not the [schedule] in the config");
+        }
+        Ok(from_flags.or(configured))
     }
 }
 

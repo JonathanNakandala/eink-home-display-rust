@@ -1,5 +1,6 @@
 pub mod weather;
 pub mod cache;
+pub mod schedule;
 pub mod server;
 pub mod application;
 pub mod example;
