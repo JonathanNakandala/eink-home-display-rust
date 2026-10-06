@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader, Cursor};
 use std::path::Path;
 
 use flate2::read::GzDecoder;
+use secrecy::{ExposeSecret, SecretString};
 use tokio::io::AsyncWriteExt;
 
 use crate::adapters::train_schedule::network_rail::response::RecordEnvelope;
@@ -12,13 +13,13 @@ pub async fn download_full_schedule(
     client: &reqwest::Client,
     feed_url: &str,
     username: &str,
-    password: &str,
+    password: &SecretString,
     dest: &Path,
 ) -> anyhow::Result<()> {
     let response = client
         .get(feed_url)
         .query(&[("type", "CIF_ALL_FULL_DAILY"), ("day", "toc-full")])
-        .basic_auth(username, Some(password))
+        .basic_auth(username, Some(password.expose_secret()))
         .send()
         .await?
         .error_for_status()?;

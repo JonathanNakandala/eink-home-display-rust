@@ -1,5 +1,6 @@
 use anyhow::Context;
 use reqwest::Client;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::adapters::http;
 use crate::domain::models::source_error::SourceError;
@@ -13,7 +14,7 @@ pub const DEFAULT_HOST_URL: &str = "https://api.tfl.gov.uk";
 #[derive(derive_new::new)]
 pub struct TflStopPointServiceAdapter {
     host_url: String,
-    app_key: Option<String>,
+    app_key: Option<SecretString>,
     client: Client,
 }
 
@@ -40,7 +41,7 @@ impl TflStopPointServiceAdapter {
         mut params: Vec<(&'static str, String)>,
     ) -> Result<reqwest::Response, SourceError> {
         if let Some(key) = &self.app_key {
-            params.push(("app_key", key.clone()));
+            params.push(("app_key", key.expose_secret().to_owned()));
         }
         http::send(self.client.get(format!("{}/{}", self.host_url, path)).query(&params)).await
     }

@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let args = TflStopsArgs::parse();
     let service = TflStopPointServiceAdapter::new(
         args.host_url.unwrap_or_else(|| DEFAULT_HOST_URL.to_owned()),
-        args.app_key,
+        args.app_key.map(Into::into),
         reqwest::Client::new(),
     );
 
