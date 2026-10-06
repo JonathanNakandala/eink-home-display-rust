@@ -1,6 +1,9 @@
 use schemars::JsonSchema;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_valid::Validate;
+
+use crate::config::secret;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WeatherConfig {
@@ -37,13 +40,24 @@ pub enum WeatherProvider {
     OpenMeteo,
 }
 
+/// An OpenWeather key is exactly 32 characters; anything else is a placeholder or a typo.
+fn api_key_length(key: &SecretString) -> Result<(), serde_valid::validation::Error> {
+    // The message must not repeat the key, only how long it is.
+    let length = key.expose_secret().chars().count();
+    if length == 32 {
+        Ok(())
+    } else {
+        Err(serde_valid::validation::Error::Custom(format!("the API key must be 32 characters, not {length}")))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Validate, JsonSchema)]
 pub struct OpenWeatherConfig {
     /// 32-character OpenWeather API key.
-    #[validate(max_length = 32)]
-    #[validate(min_length = 32)]
-    #[schemars(length(min = 32, max = 32))]
-    pub api_key: String,
+    #[serde(serialize_with = "secret::serialize")]
+    #[validate(custom = api_key_length)]
+    #[schemars(with = "String", length(min = 32, max = 32))]
+    pub api_key: SecretString,
     pub host_url: String
 }
 
@@ -77,7 +91,7 @@ mod tests {
             enabled,
             provider,
             open_weather: Some(OpenWeatherConfig {
-                api_key: api_key.to_owned(),
+                api_key: api_key.into(),
                 host_url: "https://api.openweathermap.org".to_owned(),
             }),
             open_meteo: None,

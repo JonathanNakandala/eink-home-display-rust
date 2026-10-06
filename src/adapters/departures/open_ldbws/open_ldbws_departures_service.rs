@@ -1,5 +1,7 @@
 use chrono::{DateTime, Local};
+use reqwest::header::HeaderValue;
 use reqwest::Client;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::adapters::http;
 use crate::domain::models::source_error::SourceError;
@@ -17,7 +19,7 @@ use crate::domain::services::departures_service::DeparturesService;
 #[derive(derive_new::new)]
 pub struct OpenLdbwsDeparturesServiceAdapter {
     host_url: String,
-    api_key: String,
+    api_key: SecretString,
     from: String,
     to: String,
     /// Minutes to get to the station; the board is requested as it will be then.
@@ -46,8 +48,11 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
             query.push(("timeOffset", self.travel_minutes.min(MAX_TIME_OFFSET).to_string()));
         }
 
-        let response =
-            http::send(self.client.get(&url).header("x-apikey", &self.api_key).query(&query)).await?;
+        // Marked sensitive, so reqwest and hyper leave it out of any debug output of the request.
+        let mut key = HeaderValue::from_str(self.api_key.expose_secret())
+            .map_err(|_| SourceError::bad_response("the API key has characters a header can't hold"))?;
+        key.set_sensitive(true);
+        let response = http::send(self.client.get(&url).header("x-apikey", key).query(&query)).await?;
         let station_board: StationBoard = http::json(response, "departure board").await?;
 
         let services = station_board.train_services.unwrap_or_default();

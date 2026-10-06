@@ -36,7 +36,7 @@ impl ApplicationConfig {
                 enabled: true,
                 provider: WeatherProvider::OpenWeather,
                 open_weather: Some(OpenWeatherConfig {
-                    api_key: "0".repeat(32),
+                    api_key: "0".repeat(32).into(),
                     host_url: "https://api.openweathermap.org".to_owned(),
                 }),
                 open_meteo: None,
@@ -56,11 +56,11 @@ impl ApplicationConfig {
             ],
             providers: ProvidersConfig {
                 open_ldbws: Some(OpenLdbwsConfig {
-                    api_key: "your-raildata-consumer-key".to_owned(),
+                    api_key: "your-raildata-consumer-key".into(),
                     host_url: "https://api1.raildata.org.uk/1010-live-arrival-and-departure-boards-arr-and-dep1_1/LDBWS/api/20220120/GetArrDepBoardWithDetails".to_owned(),
                 }),
                 tfl: Some(TflConfig {
-                    app_key: Some("your-tfl-app-key".to_owned()),
+                    app_key: Some("your-tfl-app-key".into()),
                     host_url: DEFAULT_TFL_HOST_URL.to_owned(),
                 }),
             },
@@ -94,6 +94,8 @@ impl ApplicationConfig {
 mod tests {
     use std::path::Path;
 
+    use secrecy::ExposeSecret;
+
     use super::*;
 
     #[test]
@@ -103,6 +105,37 @@ mod tests {
         let config = ApplicationConfig::new(&path).expect("example parses");
         config.validate().expect("example is valid");
         assert_eq!(config.departures.len(), 3);
+    }
+
+    #[test]
+    fn keys_never_appear_when_the_config_is_logged_or_when_a_key_is_refused() {
+        let weather_key = "WEATHER-KEY-0123456789-abcdefghi";
+        assert_eq!(weather_key.len(), 32);
+        let mut config = ApplicationConfig::example();
+        config.weather.open_weather.as_mut().unwrap().api_key = weather_key.into();
+        config.providers.open_ldbws.as_mut().unwrap().api_key = "RAIL-KEY-secret".into();
+        config.providers.tfl.as_mut().unwrap().app_key = Some("TFL-KEY-secret".into());
+
+        // What main logs at start-up, and what a stray `{:#?}` would print.
+        for shown in [format!("{config:?}"), format!("{config:#?}")] {
+            for secret in [weather_key, "RAIL-KEY-secret", "TFL-KEY-secret"] {
+                assert!(!shown.contains(secret), "{secret} appeared in {shown}");
+            }
+            assert!(shown.contains("REDACTED"), "{shown}");
+        }
+
+        // They are still written to a file and read back, which is how they are configured.
+        let path = std::env::temp_dir().join("eink_secret_round_trip_test.toml");
+        std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+        let loaded = ApplicationConfig::new(&path).unwrap();
+        assert_eq!(loaded.weather.open_weather.unwrap().api_key.expose_secret(), weather_key);
+        assert_eq!(loaded.providers.open_ldbws.unwrap().api_key.expose_secret(), "RAIL-KEY-secret");
+        assert_eq!(loaded.providers.tfl.unwrap().app_key.unwrap().expose_secret(), "TFL-KEY-secret");
+
+        // A key refused for its length is reported by length, not repeated.
+        config.weather.open_weather.as_mut().unwrap().api_key = "too-short-but-secret".into();
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("32 characters") && !error.contains("too-short-but-secret"), "{error}");
     }
 
     #[test]

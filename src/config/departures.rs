@@ -1,5 +1,8 @@
 use schemars::JsonSchema;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
+
+use crate::config::secret;
 
 pub const DEFAULT_TFL_HOST_URL: &str = "https://api.tfl.gov.uk";
 
@@ -52,7 +55,9 @@ pub struct ProvidersConfig {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OpenLdbwsConfig {
     /// Consumer Key from your raildata.org.uk "Live Arrival and Departure Boards" subscription.
-    pub api_key: String,
+    #[serde(serialize_with = "secret::serialize")]
+    #[schemars(with = "String")]
+    pub api_key: SecretString,
     /// Base path up to and including the operation name; the CRS code is appended as the final path segment.
     pub host_url: String,
 }
@@ -60,8 +65,9 @@ pub struct OpenLdbwsConfig {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TflConfig {
     /// Optional: anonymous requests work but are rate limited.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub app_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", serialize_with = "secret::serialize_option")]
+    #[schemars(with = "Option<String>")]
+    pub app_key: Option<SecretString>,
     /// TfL Unified API base URL.
     #[serde(default = "default_tfl_host_url")]
     pub host_url: String,

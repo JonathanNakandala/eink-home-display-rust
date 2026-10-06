@@ -45,7 +45,7 @@ mod tests {
     fn config_with_weather(name: &str, enabled: bool, api_key: &str) -> std::path::PathBuf {
         let mut config = ApplicationConfig::example();
         config.weather.enabled = enabled;
-        config.weather.open_weather.as_mut().unwrap().api_key = api_key.to_owned();
+        config.weather.open_weather.as_mut().unwrap().api_key = api_key.into();
         let path = std::env::temp_dir().join(format!("eink_load_test_{name}.toml"));
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         path

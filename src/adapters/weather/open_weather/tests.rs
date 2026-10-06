@@ -24,7 +24,7 @@ async fn returns_temperatures_and_condition_at_location() {
 
     let under_test = OpenWeatherWeatherServiceAdapter::new(
         server.base_url(),
-        "apikey".to_owned(),
+        "apikey".into(),
         reqwest::Client::new(),
     );
 

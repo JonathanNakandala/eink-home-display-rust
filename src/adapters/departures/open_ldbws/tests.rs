@@ -57,7 +57,7 @@ async fn returns_parsed_departures_for_station_pair() {
 
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".to_owned(),
+        "apikey".into(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         0,
@@ -110,7 +110,7 @@ async fn asks_for_the_board_as_it_will_be_after_the_travel_time() {
 
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".to_owned(),
+        "apikey".into(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         5,
@@ -137,7 +137,7 @@ async fn caps_the_time_offset_at_what_the_api_accepts() {
 
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".to_owned(),
+        "apikey".into(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         500,

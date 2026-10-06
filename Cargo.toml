@@ -37,6 +37,7 @@ humantime = "2.4.0"
 mdns-sd = "0.21.4"
 socket2 = { version = "0.6", features = ["all"] }
 httpdate = "1.0.3"
+secrecy = { version = "0.10.3", features = ["serde"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

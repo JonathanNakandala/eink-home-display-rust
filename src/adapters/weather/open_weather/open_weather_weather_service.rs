@@ -1,4 +1,5 @@
 use reqwest::Client;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::adapters::http;
 use crate::domain::models::source_error::SourceError;
@@ -10,7 +11,7 @@ use crate::domain::services::weather_service::WeatherService;
 #[derive(derive_new::new)]
 pub struct OpenWeatherWeatherServiceAdapter {
     host_url: String,
-    api_key: String,
+    api_key: SecretString,
     client: Client,
 }
 
@@ -21,7 +22,7 @@ impl WeatherService for OpenWeatherWeatherServiceAdapter {
     ) -> Result<Option<WeatherInformation>, SourceError> {
         let url = format!(
             "{}/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
-            self.host_url, location.latitude, location.longitude, self.api_key
+            self.host_url, location.latitude, location.longitude, self.api_key.expose_secret()
         );
 
         let response = http::send(self.client.get(&url)).await?;

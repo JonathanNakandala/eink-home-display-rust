@@ -24,7 +24,7 @@ async fn download_full_schedule_authenticates_and_writes_body_to_disk() {
         &client,
         &format!("{}/CifFileAuthenticate", server.base_url()),
         "user",
-        "pass",
+        &"pass".into(),
         dest.path(),
     )
     .await
