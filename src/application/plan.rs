@@ -9,6 +9,12 @@ use serde::Serialize;
 
 use crate::domain::models::schedule::Schedule;
 
+/// The longest a display is told to sleep. It is also the longest the display itself will sleep, so a
+/// longer figure would put the time the server expects it back after the time it really comes, and a
+/// display that died during a long quiet spell (a weekend with no refreshes) wouldn't be missed until
+/// the spell ended. At most one extra wake a day, and an unchanged picture is neither downloaded nor drawn.
+pub const MAX_SLEEP: Duration = Duration::from_secs(24 * 3600);
+
 #[derive(Debug, Clone, Copy)]
 pub struct PlanTiming {
     /// Added to the next scheduled render, so the display arrives after it has finished.
@@ -90,7 +96,7 @@ pub fn compute(
         changed: have != Some(version),
         stale,
         pending,
-        next_seconds: (wait + timing.wake_delay.as_secs()).max(1),
+        next_seconds: wait.saturating_add(timing.wake_delay.as_secs()).clamp(1, MAX_SLEEP.as_secs()),
         age_seconds: (now - rendered_at).num_seconds().max(0) as u64,
     })
 }
@@ -204,6 +210,18 @@ mod tests {
         let schedule = Schedule::parse_every("10m").unwrap();
         let plan = compute(at(15, 12, 4, 0), at(15, 12, 0, 0), &schedule, TIMING, None).unwrap();
         assert_eq!(plan.next_seconds, 6 * 60 + 30);
+    }
+
+    #[test]
+    fn a_long_quiet_spell_is_slept_through_a_day_at_a_time() {
+        // Mondays only, and it is Monday evening: the next render is nearly a week away.
+        let schedule = Schedule::parse_cron("0 8 * * 1").unwrap();
+        let plan = compute(at(15, 20, 0, 0), at(15, 8, 0, 5), &schedule, TIMING, None).unwrap();
+        assert_eq!(plan.next_seconds, MAX_SLEEP.as_secs());
+        assert!(!plan.stale && !plan.pending);
+        // A wait that fits is untouched: Sunday evening to Monday at eight.
+        let plan = compute(at(21, 20, 0, 0), at(15, 8, 0, 5), &schedule, TIMING, None).unwrap();
+        assert_eq!(plan.next_seconds, 12 * 3600 + 30);
     }
 
     #[test]
