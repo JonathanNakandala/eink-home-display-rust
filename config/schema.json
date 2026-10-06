@@ -40,6 +40,18 @@
       "$ref": "#/$defs/ProvidersConfig",
       "default": {}
     },
+    "schedule": {
+      "description": "When to refresh. Left out, the program renders once and exits unless `--cron` or `--every` say otherwise.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScheduleConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "server": {
       "description": "Serves the rendered image to displays that fetch it, like the reTerminal E1003.",
       "$ref": "#/$defs/ServerConfig",
@@ -362,6 +374,22 @@
           ]
         }
       }
+    },
+    "ScheduleConfig": {
+      "description": "When to refresh the dashboard. With this section the program keeps running and refreshes on the schedule;\nwithout it (and without `--cron` or `--every`) it renders once and exits. `--cron` and `--every` on the\ncommand line take the place of it, and `--once` ignores it.",
+      "type": "object",
+      "properties": {
+        "cron": {
+          "description": "Cron expressions in local time (minute, hour, day of month, month, day of week), e.g. `*/10 * * * *`.\nA refresh is due whenever any of them is, so each can cover its own hours and days. For example, every\nminute on weekday mornings, every 15 minutes the rest of the time on weekdays, and hourly at weekends:\n`[\"* 7-8 * * 1-5\", \"*/15 * * * 1-5\", \"0 8-21 * * 6,0\"]`. The start-up log says what they mean in words\nand how many refreshes each day gets; each one is a wake of the display, which is what drains its battery.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "cron"
+      ]
     },
     "ServerConfig": {
       "description": "The HTTP server that hands the latest rendered image to displays that fetch it.",

@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::cache::CacheConfig;
+use crate::config::schedule::ScheduleConfig;
 use crate::config::server::ServerConfig;
 use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::weather::WeatherConfig;
@@ -34,6 +35,9 @@ pub struct ApplicationConfig {
     /// Serves the rendered image to displays that fetch it, like the reTerminal E1003.
     #[serde(default)]
     pub server: ServerConfig,
+    /// When to refresh. Left out, the program renders once and exits unless `--cron` or `--every` say otherwise.
+    #[serde(default)]
+    pub schedule: Option<ScheduleConfig>,
 }
 
 /// When a source fails, the dashboard shows what it said last time, labelled with its age, until it

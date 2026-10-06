@@ -48,6 +48,8 @@ pub struct Status {
     /// The displays that have checked in, with their battery and whether any has gone quiet.
     pub devices: Vec<DeviceStatus>,
     pub next_render: Option<DateTime<Local>>,
+    /// The refresh schedule in words, one line per cron expression.
+    pub schedule: Vec<String>,
     pub uptime_seconds: u64,
     pub version: &'static str,
 }
@@ -170,6 +172,7 @@ impl StatusBoard {
             sources: record.last_success.as_ref().map(|s| s.report.sources.clone()).unwrap_or_default(),
             devices: Vec::new(),
             next_render: schedule.next_after(now).ok(),
+            schedule: schedule.describe(),
             uptime_seconds: uptime.num_seconds().unsigned_abs(),
             version: env!("CARGO_PKG_VERSION"),
         })
@@ -307,6 +310,7 @@ mod tests {
         assert_eq!(status.image.as_ref().unwrap().version, version_of(at(12, 0, 5)));
         assert_eq!(status.last_success.as_ref().unwrap().age_seconds, 240);
         assert_eq!(status.next_render, Some(at(12, 10, 0)));
+        assert_eq!(status.schedule, ["*/10 * * * *  At every 10 minutes."]);
         assert_eq!(status.uptime_seconds, 3845);
         assert_eq!(status.version, env!("CARGO_PKG_VERSION"));
     }
