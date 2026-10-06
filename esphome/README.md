@@ -68,6 +68,8 @@ schedule. The device asks it on every wake.
   it already shows needs no refresh.
 - `next_seconds`: how long to sleep: until the next scheduled render plus `server.wake_delay_seconds` (30).
   With a cron such as `*/10 6-22 * * *` the device sleeps until morning.
+  Never more than a day: over a longer quiet spell (a weekend with no refreshes) the device wakes once a day,
+  finds the picture unchanged and sleeps again, and the server still notices a display that has gone quiet.
 - `pending`: a render is due or running, so `next_seconds` is just the wake delay. Ask again then.
 - `stale`: a scheduled render came more than `server.stale_grace_seconds` (300) late. `next_seconds` then points at the next slot.
 - `age_seconds`: time since the image was rendered.
