@@ -39,16 +39,25 @@ pub enum SourceError {
 
 impl SourceError {
     pub fn bad_response(detail: impl Into<String>) -> Self {
-        Self::BadResponse { detail: detail.into(), source: None }
+        Self::BadResponse {
+            detail: detail.into(),
+            source: None,
+        }
     }
 
     pub fn bad_response_from(detail: impl Into<String>, source: impl Into<BoxError>) -> Self {
-        Self::BadResponse { detail: detail.into(), source: Some(source.into()) }
+        Self::BadResponse {
+            detail: detail.into(),
+            source: Some(source.into()),
+        }
     }
 
     /// Whether trying again shortly may well work.
     pub fn is_transient(&self) -> bool {
-        matches!(self, Self::Timeout | Self::Unreachable(_) | Self::RateLimited | Self::Upstream { .. })
+        matches!(
+            self,
+            Self::Timeout | Self::Unreachable(_) | Self::RateLimited | Self::Upstream { .. }
+        )
     }
 
     /// Whether this won't clear by itself, because the key, the URL or the settings are wrong.
@@ -102,7 +111,10 @@ mod tests {
     #[test]
     fn the_message_and_the_cause_are_kept() {
         let error = SourceError::bad_response_from("could not read the forecast", std::fmt::Error);
-        assert_eq!(error.to_string(), "unusable response: could not read the forecast");
+        assert_eq!(
+            error.to_string(),
+            "unusable response: could not read the forecast"
+        );
         assert!(std::error::Error::source(&error).is_some());
         assert!(std::error::Error::source(&unreachable()).is_some());
         assert!(std::error::Error::source(&SourceError::Timeout).is_none());
@@ -110,7 +122,10 @@ mod tests {
 
     #[test]
     fn each_kind_has_a_short_reason_for_the_display() {
-        assert_eq!(SourceError::Unauthorized { status: 401 }.reason(), "key rejected");
+        assert_eq!(
+            SourceError::Unauthorized { status: 401 }.reason(),
+            "key rejected"
+        );
         assert_eq!(SourceError::Timeout.reason(), "timed out");
         assert_eq!(unreachable().reason(), "no connection");
     }

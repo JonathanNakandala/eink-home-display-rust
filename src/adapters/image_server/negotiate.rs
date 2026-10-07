@@ -18,7 +18,11 @@ struct Range {
 
 /// The formats from `available`, in the order they would be chosen for `accept`, best first and
 /// without any the client refuses. `preferred` breaks ties.
-pub fn acceptable(accept: Option<&str>, preferred: ImageFormat, available: &[ImageFormat]) -> Vec<ImageFormat> {
+pub fn acceptable(
+    accept: Option<&str>,
+    preferred: ImageFormat,
+    available: &[ImageFormat],
+) -> Vec<ImageFormat> {
     let mut candidates: Vec<(u16, usize, ImageFormat)> = available
         .iter()
         .copied()
@@ -26,11 +30,18 @@ pub fn acceptable(accept: Option<&str>, preferred: ImageFormat, available: &[Ima
         .filter_map(|(order, format)| {
             let weight = weight_of(accept, format)?;
             // Higher weight first, then the preferred format, then the order given.
-            Some((weight, usize::from(format != preferred) * 1000 + order, format))
+            Some((
+                weight,
+                usize::from(format != preferred) * 1000 + order,
+                format,
+            ))
         })
         .collect();
     candidates.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    candidates.into_iter().map(|(_, _, format)| format).collect()
+    candidates
+        .into_iter()
+        .map(|(_, _, format)| format)
+        .collect()
 }
 
 /// The weight (0 to 1000) the client gives `format`, or None if it is refused (not listed, or q=0).
@@ -70,7 +81,11 @@ fn parse_range(item: &str) -> Option<Range> {
         if let Some((name, value)) = parameter.split_once('=') {
             if name.trim().eq_ignore_ascii_case("q") {
                 // A malformed weight makes the range unusable rather than guessing what was meant.
-                let q: f32 = value.trim().parse().ok().filter(|q| (0.0..=1.0).contains(q))?;
+                let q: f32 = value
+                    .trim()
+                    .parse()
+                    .ok()
+                    .filter(|q| (0.0..=1.0).contains(q))?;
                 weight = (q * 1000.0).round() as u16;
             }
         }
@@ -80,7 +95,11 @@ fn parse_range(item: &str) -> Option<Range> {
         (_, "*") => 1,
         _ => 2,
     };
-    Some(Range { specificity, media, weight })
+    Some(Range {
+        specificity,
+        media,
+        weight,
+    })
 }
 
 #[cfg(test)]
@@ -120,7 +139,10 @@ mod tests {
     #[test]
     fn weights_decide_between_formats_the_client_accepts() {
         assert_eq!(pick(Some("image/bmp;q=0.5, image/png"), Bmp), [Png, Bmp]);
-        assert_eq!(pick(Some("image/png;q=0.2, image/bmp;q=0.9"), Png), [Bmp, Png]);
+        assert_eq!(
+            pick(Some("image/png;q=0.2, image/bmp;q=0.9"), Png),
+            [Bmp, Png]
+        );
     }
 
     #[test]
@@ -132,8 +154,14 @@ mod tests {
     #[test]
     fn the_most_specific_range_decides_not_the_first_or_the_widest() {
         // bmp is named, so its own weight applies, not the wildcard's.
-        assert_eq!(pick(Some("image/*;q=0.3, image/bmp;q=0.9"), Png), [Bmp, Png]);
-        assert_eq!(pick(Some("*/*;q=0.1, image/*;q=0.5, image/png"), Bmp), [Png, Bmp]);
+        assert_eq!(
+            pick(Some("image/*;q=0.3, image/bmp;q=0.9"), Png),
+            [Bmp, Png]
+        );
+        assert_eq!(
+            pick(Some("*/*;q=0.1, image/*;q=0.5, image/png"), Bmp),
+            [Png, Bmp]
+        );
         // Naming a type with q=0 refuses it even though a wildcard would allow it.
         assert_eq!(pick(Some("*/*, image/png;q=0"), Png), [Bmp]);
     }
@@ -142,13 +170,25 @@ mod tests {
     fn qoi_is_offered_like_any_other_format() {
         let all = ImageFormat::ALL;
         assert_eq!(acceptable(Some("image/qoi"), Bmp, &all), [Qoi]);
-        assert_eq!(acceptable(Some("image/qoi, image/png;q=0.5"), Bmp, &all), [Qoi, Png]);
+        assert_eq!(
+            acceptable(Some("image/qoi, image/png;q=0.5"), Bmp, &all),
+            [Qoi, Png]
+        );
         // Equal weights: the server's preference, then the order of ALL.
-        assert_eq!(acceptable(Some("image/bmp, image/png, image/qoi"), Qoi, &all), [Qoi, Bmp, Png]);
+        assert_eq!(
+            acceptable(Some("image/bmp, image/png, image/qoi"), Qoi, &all),
+            [Qoi, Bmp, Png]
+        );
         assert_eq!(acceptable(Some("image/*"), Bmp, &all), [Bmp, Png, Qoi]);
         // A device that can't decode it never gets it.
-        assert_eq!(acceptable(Some("image/bmp, image/png"), Qoi, &all), [Bmp, Png]);
-        assert_eq!(acceptable(Some("*/*, image/qoi;q=0"), Qoi, &all), [Bmp, Png]);
+        assert_eq!(
+            acceptable(Some("image/bmp, image/png"), Qoi, &all),
+            [Bmp, Png]
+        );
+        assert_eq!(
+            acceptable(Some("*/*, image/qoi;q=0"), Qoi, &all),
+            [Bmp, Png]
+        );
     }
 
     #[test]
@@ -167,7 +207,10 @@ mod tests {
 
     #[test]
     fn is_case_insensitive_and_tolerant_of_spacing() {
-        assert_eq!(pick(Some("IMAGE/PNG ; Q=0.5 ,  Image/Bmp"), Png), [Bmp, Png]);
+        assert_eq!(
+            pick(Some("IMAGE/PNG ; Q=0.5 ,  Image/Bmp"), Png),
+            [Bmp, Png]
+        );
     }
 
     #[test]
@@ -175,6 +218,9 @@ mod tests {
         assert_eq!(pick(Some("garbage, image/png"), Bmp), [Png]);
         assert_eq!(pick(Some("image/png;q=lots, image/bmp"), Png), [Bmp]);
         assert_eq!(pick(Some("image/png;q=1.5, image/bmp"), Png), [Bmp]);
-        assert_eq!(pick(Some("*/png, /bmp, image/"), Png), Vec::<ImageFormat>::new());
+        assert_eq!(
+            pick(Some("*/png, /bmp, image/"), Png),
+            Vec::<ImageFormat>::new()
+        );
     }
 }

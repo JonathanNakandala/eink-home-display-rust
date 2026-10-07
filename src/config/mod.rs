@@ -1,10 +1,10 @@
-pub mod weather;
+pub mod application;
 pub mod cache;
+pub mod departures;
+pub mod example;
+pub mod network_rail;
+pub mod quiet_times;
 pub mod schedule;
 pub mod secret;
 pub mod server;
-pub mod application;
-pub mod example;
-pub mod departures;
-pub mod network_rail;
-pub mod quiet_times;
+pub mod weather;

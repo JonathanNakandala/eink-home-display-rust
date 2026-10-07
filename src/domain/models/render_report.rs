@@ -29,7 +29,9 @@ pub struct RenderReport {
 impl RenderReport {
     /// Whether any source was shown from old data or left off.
     pub fn is_degraded(&self) -> bool {
-        self.sources.iter().any(|source| source.state != SourceState::Fresh)
+        self.sources
+            .iter()
+            .any(|source| source.state != SourceState::Fresh)
     }
 }
 
@@ -42,7 +44,10 @@ mod tests {
             sources: states
                 .into_iter()
                 .enumerate()
-                .map(|(i, state)| SourceReport { name: format!("source {i}"), state })
+                .map(|(i, state)| SourceReport {
+                    name: format!("source {i}"),
+                    state,
+                })
                 .collect(),
         }
     }
@@ -51,18 +56,37 @@ mod tests {
     fn degraded_means_any_source_that_is_not_fresh() {
         assert!(!RenderReport::default().is_degraded());
         assert!(!report(vec![SourceState::Fresh, SourceState::Fresh]).is_degraded());
-        assert!(report(vec![SourceState::Fresh, SourceState::Stale { age_seconds: 60 }]).is_degraded());
-        assert!(report(vec![SourceState::Unavailable { reason: "timed out".into() }]).is_degraded());
+        assert!(
+            report(vec![
+                SourceState::Fresh,
+                SourceState::Stale { age_seconds: 60 }
+            ])
+            .is_degraded()
+        );
+        assert!(
+            report(vec![SourceState::Unavailable {
+                reason: "timed out".into()
+            }])
+            .is_degraded()
+        );
     }
 
     #[test]
     fn serialises_flat_with_a_state_tag() {
-        let source = SourceReport { name: "weather".into(), state: SourceState::Unavailable { reason: "key rejected".into() } };
+        let source = SourceReport {
+            name: "weather".into(),
+            state: SourceState::Unavailable {
+                reason: "key rejected".into(),
+            },
+        };
         assert_eq!(
             serde_json::to_value(&source).unwrap(),
             serde_json::json!({"name": "weather", "state": "unavailable", "reason": "key rejected"})
         );
-        let stale = SourceReport { name: "NORTHBOUND".into(), state: SourceState::Stale { age_seconds: 480 } };
+        let stale = SourceReport {
+            name: "NORTHBOUND".into(),
+            state: SourceState::Stale { age_seconds: 480 },
+        };
         assert_eq!(
             serde_json::to_value(&stale).unwrap(),
             serde_json::json!({"name": "NORTHBOUND", "state": "stale", "age_seconds": 480})

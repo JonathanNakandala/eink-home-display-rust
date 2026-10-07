@@ -163,10 +163,7 @@ mod tests {
     }
 
     fn passage_at(date: NaiveDate, hh: u32, mm: u32) -> TrainPassage {
-        TrainPassage::new(
-            "UID1".to_owned(),
-            date.and_hms_opt(hh, mm, 0).unwrap(),
-        )
+        TrainPassage::new("UID1".to_owned(), date.and_hms_opt(hh, mm, 0).unwrap())
     }
 
     fn wed() -> NaiveDate {

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use async_trait::async_trait;
 use image::codecs::bmp::BmpEncoder;
 use image::codecs::png::PngEncoder;
@@ -9,7 +9,7 @@ use image::codecs::qoi::QoiEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 
 use crate::adapters::image_display_service::quantise::quantise_grey;
-use crate::domain::models::display::{Dither, DisplayProfile, ImageFormat, Palette};
+use crate::domain::models::display::{DisplayProfile, Dither, ImageFormat, Palette};
 use crate::domain::models::image::ImageData;
 use crate::domain::services::image_display_service::ImageDisplayService;
 use crate::domain::services::published_images::PublishedImages;
@@ -32,14 +32,19 @@ pub struct ReTerminalE1003Adapter {
 #[async_trait]
 impl ImageDisplayService for ReTerminalE1003Adapter {
     fn profile(&self) -> DisplayProfile {
-        DisplayProfile { width: WIDTH, height: HEIGHT, palette: Palette::Grey(GREY_LEVELS) }
+        DisplayProfile {
+            width: WIDTH,
+            height: HEIGHT,
+            palette: Palette::Grey(GREY_LEVELS),
+        }
     }
 
     async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
         let encoded = data.data.clone();
         let (dither, preferred) = (self.dither, self.format);
         // Dithering a 2.6 megapixel image is too much work to do on the async threads.
-        let files = tokio::task::spawn_blocking(move || encode_all(&encoded, dither, preferred)).await??;
+        let files =
+            tokio::task::spawn_blocking(move || encode_all(&encoded, dither, preferred)).await??;
         for (format, bytes) in files {
             self.images.publish(format, &bytes).await?;
         }
@@ -49,11 +54,21 @@ impl ImageDisplayService for ReTerminalE1003Adapter {
 
 /// Every format of the picture, with `preferred` last: its file's date is the render's version, so
 /// when it changes the others are already in place.
-fn encode_all(encoded: &[u8], dither: Dither, preferred: ImageFormat) -> anyhow::Result<Vec<(ImageFormat, Vec<u8>)>> {
+fn encode_all(
+    encoded: &[u8],
+    dither: Dither,
+    preferred: ImageFormat,
+) -> anyhow::Result<Vec<(ImageFormat, Vec<u8>)>> {
     let grey = quantise_for_panel(encoded, dither)?;
-    let mut formats: Vec<ImageFormat> = ImageFormat::ALL.into_iter().filter(|format| *format != preferred).collect();
+    let mut formats: Vec<ImageFormat> = ImageFormat::ALL
+        .into_iter()
+        .filter(|format| *format != preferred)
+        .collect();
     formats.push(preferred);
-    formats.into_iter().map(|format| Ok((format, encode(&grey, format)?))).collect()
+    formats
+        .into_iter()
+        .map(|format| Ok((format, encode(&grey, format)?)))
+        .collect()
 }
 
 /// Decodes the rendered image and reduces it to the panel's 16 greys, so what the device
@@ -61,7 +76,11 @@ fn encode_all(encoded: &[u8], dither: Dither, preferred: ImageFormat) -> anyhow:
 fn quantise_for_panel(encoded: &[u8], dither: Dither) -> anyhow::Result<image::GrayImage> {
     let image = image::load_from_memory(encoded).context("Failed to decode display image")?;
     if (image.width(), image.height()) != (WIDTH, HEIGHT) {
-        bail!("Image is {}x{}, but the panel is {WIDTH}x{HEIGHT}", image.width(), image.height());
+        bail!(
+            "Image is {}x{}, but the panel is {WIDTH}x{HEIGHT}",
+            image.width(),
+            image.height()
+        );
     }
     Ok(quantise_grey(&image.to_luma8(), GREY_LEVELS, dither))
 }
@@ -69,11 +88,22 @@ fn quantise_for_panel(encoded: &[u8], dither: Dither) -> anyhow::Result<image::G
 fn encode(grey: &image::GrayImage, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
     let mut out = Cursor::new(Vec::new());
     match format {
-        ImageFormat::Bmp => BmpEncoder::new(&mut out).encode(grey.as_raw(), WIDTH, HEIGHT, ExtendedColorType::L8),
-        ImageFormat::Png => PngEncoder::new(&mut out).write_image(grey.as_raw(), WIDTH, HEIGHT, ExtendedColorType::L8),
+        ImageFormat::Bmp => {
+            BmpEncoder::new(&mut out).encode(grey.as_raw(), WIDTH, HEIGHT, ExtendedColorType::L8)
+        }
+        ImageFormat::Png => PngEncoder::new(&mut out).write_image(
+            grey.as_raw(),
+            WIDTH,
+            HEIGHT,
+            ExtendedColorType::L8,
+        ),
         // QOI has only RGB and RGBA, so each grey becomes a pixel with three equal channels.
         ImageFormat::Qoi => {
-            let rgb: Vec<u8> = grey.as_raw().iter().flat_map(|&level| [level, level, level]).collect();
+            let rgb: Vec<u8> = grey
+                .as_raw()
+                .iter()
+                .flat_map(|&level| [level, level, level])
+                .collect();
             QoiEncoder::new(&mut out).write_image(&rgb, WIDTH, HEIGHT, ExtendedColorType::Rgb8)
         }
     }
@@ -88,7 +118,11 @@ mod tests {
     use super::*;
     use crate::adapters::published_images::DirectoryImages;
 
-    fn encode_for_panel(encoded: &[u8], dither: Dither, format: ImageFormat) -> anyhow::Result<Vec<u8>> {
+    fn encode_for_panel(
+        encoded: &[u8],
+        dither: Dither,
+        format: ImageFormat,
+    ) -> anyhow::Result<Vec<u8>> {
         encode(&quantise_for_panel(encoded, dither)?, format)
     }
 
@@ -118,14 +152,24 @@ mod tests {
     fn png_is_far_smaller_than_bmp() {
         let bmp = encode_for_panel(&rendered(), Dither::None, ImageFormat::Bmp).unwrap();
         let png = encode_for_panel(&rendered(), Dither::None, ImageFormat::Png).unwrap();
-        assert!(png.len() * 10 < bmp.len(), "png {} bmp {}", png.len(), bmp.len());
+        assert!(
+            png.len() * 10 < bmp.len(),
+            "png {} bmp {}",
+            png.len(),
+            bmp.len()
+        );
     }
 
     #[test]
     fn qoi_is_far_smaller_than_bmp_and_the_same_picture() {
         let bmp = encode_for_panel(&rendered(), Dither::None, ImageFormat::Bmp).unwrap();
         let qoi = encode_for_panel(&rendered(), Dither::None, ImageFormat::Qoi).unwrap();
-        assert!(qoi.len() * 4 < bmp.len(), "qoi {} bmp {}", qoi.len(), bmp.len());
+        assert!(
+            qoi.len() * 4 < bmp.len(),
+            "qoi {} bmp {}",
+            qoi.len(),
+            bmp.len()
+        );
         // The same pixels as BMP, not merely the same number of levels.
         let decode = |bytes: &[u8]| image::load_from_memory(bytes).unwrap().to_luma8();
         assert_eq!(decode(&qoi), decode(&bmp));
@@ -150,7 +194,11 @@ mod tests {
         // Every format is published, so the display can ask for any of them.
         for file in ["image.png", "image.bmp", "image.qoi"] {
             let published = std::fs::read(tmp.path().join("out").join(file)).unwrap();
-            assert_eq!(image::load_from_memory(&published).unwrap().width(), WIDTH, "{file}");
+            assert_eq!(
+                image::load_from_memory(&published).unwrap().width(),
+                WIDTH,
+                "{file}"
+            );
         }
     }
 }

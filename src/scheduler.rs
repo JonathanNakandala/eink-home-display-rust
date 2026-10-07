@@ -1,12 +1,12 @@
 use std::future::Future;
 use std::time::Duration;
 
-use chrono::{DateTime};
+use chrono::DateTime;
 use chrono_tz::Tz;
 use tokio::sync::Notify;
 
-pub use crate::domain::models::schedule::Schedule;
 use crate::domain::models::freshness::format_age;
+pub use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
 
 /// How long an idle Chrome stays connected between periodic renders. Cron gaps can be
@@ -17,7 +17,12 @@ pub const PERIODIC_IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 /// how many refreshes each of the next days gets (the number that decides battery life), and the next few.
 pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
     let mut lines = vec!["Schedule:".to_owned()];
-    lines.extend(schedule.describe().into_iter().map(|line| format!("  {line}")));
+    lines.extend(
+        schedule
+            .describe()
+            .into_iter()
+            .map(|line| format!("  {line}")),
+    );
     let days: Vec<String> = (0..7)
         .filter_map(|offset| now.date_naive().checked_add_days(chrono::Days::new(offset)))
         .map(|day| match schedule.runs_on(day, now.timezone()) {
@@ -28,7 +33,10 @@ pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
     lines.push(format!("Refreshes per day: {}", days.join(", ")));
     match schedule.upcoming(now, 3) {
         Ok(runs) => {
-            let times: Vec<String> = runs.iter().map(|at| at.format("%a %H:%M:%S").to_string()).collect();
+            let times: Vec<String> = runs
+                .iter()
+                .map(|at| at.format("%a %H:%M:%S").to_string())
+                .collect();
             lines.push(format!("Next refreshes: {}", times.join(", ")));
         }
         Err(e) => lines.push(format!("No next refresh: {e:#}")),
@@ -64,7 +72,15 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    run_periodically_from(schedule, run_now.then(|| clock.now()), &Notify::new(), clock, shutdown, tick).await
+    run_periodically_from(
+        schedule,
+        run_now.then(|| clock.now()),
+        &Notify::new(),
+        clock,
+        shutdown,
+        tick,
+    )
+    .await
 }
 
 /// Like `run_periodically`, but the first run is at `first` (immediately if that is already
@@ -150,7 +166,7 @@ where
 pub async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         match signal(SignalKind::terminate()) {
             Ok(mut term) => {
                 tokio::select! {
@@ -175,7 +191,10 @@ mod tests {
         use chrono::TimeZone;
         let schedule = Schedule::parse_crons(["* 7-8 * * 1-5", "0 8-21 * * 6,0"]).unwrap();
         // Monday 2026-06-15, 06:30.
-        let lines = schedule_summary(&schedule, London.with_ymd_and_hms(2026, 6, 15, 6, 30, 0).unwrap());
+        let lines = schedule_summary(
+            &schedule,
+            London.with_ymd_and_hms(2026, 6, 15, 6, 30, 0).unwrap(),
+        );
         assert_eq!(
             lines,
             [
@@ -220,7 +239,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(runs.load(Ordering::SeqCst) >= 3, "ran {} times", runs.load(Ordering::SeqCst));
+        assert!(
+            runs.load(Ordering::SeqCst) >= 3,
+            "ran {} times",
+            runs.load(Ordering::SeqCst)
+        );
     }
 
     #[tokio::test]
@@ -235,10 +258,17 @@ mod tests {
             waker.notify_one();
         });
 
-        run_periodically_from(&schedule, None, &wake, &SystemClock::new(London), tokio::time::sleep(Duration::from_millis(300)), move || {
-            counter.fetch_add(1, Ordering::SeqCst);
-            async { Ok(()) }
-        })
+        run_periodically_from(
+            &schedule,
+            None,
+            &wake,
+            &SystemClock::new(London),
+            tokio::time::sleep(Duration::from_millis(300)),
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+        )
         .await
         .unwrap();
 
@@ -307,7 +337,11 @@ mod tests {
 
     impl SteppedClock {
         fn new(start: DateTime<Tz>) -> Self {
-            Self { start, origin: tokio::time::Instant::now(), offset: Mutex::new(chrono::Duration::zero()) }
+            Self {
+                start,
+                origin: tokio::time::Instant::now(),
+                offset: Mutex::new(chrono::Duration::zero()),
+            }
         }
 
         fn step(&self, by: chrono::Duration) {
@@ -317,7 +351,9 @@ mod tests {
 
     impl Clock for SteppedClock {
         fn now(&self) -> DateTime<Tz> {
-            self.start + chrono::Duration::from_std(self.origin.elapsed()).unwrap() + *self.offset.lock().unwrap()
+            self.start
+                + chrono::Duration::from_std(self.origin.elapsed()).unwrap()
+                + *self.offset.lock().unwrap()
         }
     }
 
@@ -352,7 +388,10 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn without_a_step_runs_come_hourly() {
-        assert_eq!(runs_with_a_step(chrono::Duration::zero()).await, [60, 120, 180]);
+        assert_eq!(
+            runs_with_a_step(chrono::Duration::zero()).await,
+            [60, 120, 180]
+        );
     }
 
     #[tokio::test(start_paused = true)]

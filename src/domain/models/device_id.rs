@@ -41,7 +41,10 @@ impl DeviceId {
         if name.len() > MAX_LEN {
             return Err(InvalidDeviceId::TooLong);
         }
-        if !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
             return Err(InvalidDeviceId::BadCharacter);
         }
         Ok(Self(name.to_owned()))
@@ -72,7 +75,12 @@ mod tests {
 
     #[test]
     fn a_plain_short_name_is_kept_trimmed() {
-        for name in ["kitchen", "reterminal-e1003-a1b2c3", "a.b_c-d", &"x".repeat(MAX_LEN)] {
+        for name in [
+            "kitchen",
+            "reterminal-e1003-a1b2c3",
+            "a.b_c-d",
+            &"x".repeat(MAX_LEN),
+        ] {
             assert_eq!(DeviceId::parse(name).unwrap().as_str(), name);
         }
         assert_eq!(DeviceId::parse("  kitchen\n").unwrap().as_str(), "kitchen");
@@ -82,9 +90,24 @@ mod tests {
     fn anything_else_is_refused_and_says_why() {
         assert_eq!(DeviceId::parse(""), Err(InvalidDeviceId::Empty));
         assert_eq!(DeviceId::parse("   "), Err(InvalidDeviceId::Empty));
-        assert_eq!(DeviceId::parse(&"x".repeat(MAX_LEN + 1)), Err(InvalidDeviceId::TooLong));
-        for bad in ["has space", "quote\"d", "new\nline", "a/b", "emoji🔋", "a;b", "{x}"] {
-            assert_eq!(DeviceId::parse(bad), Err(InvalidDeviceId::BadCharacter), "{bad:?}");
+        assert_eq!(
+            DeviceId::parse(&"x".repeat(MAX_LEN + 1)),
+            Err(InvalidDeviceId::TooLong)
+        );
+        for bad in [
+            "has space",
+            "quote\"d",
+            "new\nline",
+            "a/b",
+            "emoji🔋",
+            "a;b",
+            "{x}",
+        ] {
+            assert_eq!(
+                DeviceId::parse(bad),
+                Err(InvalidDeviceId::BadCharacter),
+                "{bad:?}"
+            );
         }
     }
 

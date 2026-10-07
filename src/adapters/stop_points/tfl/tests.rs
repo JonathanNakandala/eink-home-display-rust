@@ -47,7 +47,15 @@ async fn finds_nearby_bus_stops_sorted_by_distance() {
 
     mock.assert();
     assert_that(&result).is_ok_containing(vec![
-        StopPoint::new("490000001A".into(), "Near Road".into(), None, Some(20.0), vec![], 51.59, -0.12),
+        StopPoint::new(
+            "490000001A".into(),
+            "Near Road".into(),
+            None,
+            Some(20.0),
+            vec![],
+            51.59,
+            -0.12,
+        ),
         StopPoint::new(
             "490000002B".into(),
             "Far Road".into(),
@@ -67,7 +75,9 @@ async fn finds_nearby_underground_stations_using_metro_stop_type() {
         when.method(GET)
             .path("/StopPoint")
             .query_param("stopTypes", "NaptanMetroStation");
-        then.status(200).header("content-type", "application/json").body(r#"{"stopPoints": []}"#);
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(r#"{"stopPoints": []}"#);
     });
 
     let result = adapter(&server)
@@ -91,7 +101,9 @@ async fn searches_underground_stations_by_name() {
         );
     });
 
-    let result = adapter(&server).search_by_name("finsbury", StopKind::Underground).await;
+    let result = adapter(&server)
+        .search_by_name("finsbury", StopKind::Underground)
+        .await;
 
     mock.assert();
     assert_that(&result).is_ok_containing(vec![StopPoint::new(
@@ -125,7 +137,15 @@ async fn returns_arrivals_soonest_first() {
 
     mock.assert();
     assert_that(&result).is_ok_containing(vec![
-        Arrival::new("12".into(), "".into(), "Marble Arch".into(), "RC".into(), "".into(), 60, "".into()),
+        Arrival::new(
+            "12".into(),
+            "".into(),
+            "Marble Arch".into(),
+            "RC".into(),
+            "".into(),
+            60,
+            "".into(),
+        ),
         Arrival::new(
             "Piccadilly".into(),
             "Cockfosters Underground Station".into(),

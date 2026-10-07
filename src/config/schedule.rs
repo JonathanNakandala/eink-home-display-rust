@@ -29,13 +29,20 @@ mod tests {
 
     #[test]
     fn the_expressions_make_one_schedule() {
-        let config = ScheduleConfig { cron: vec!["*/10 * * * *".into(), "0 8 * * 6,0".into()] };
+        let config = ScheduleConfig {
+            cron: vec!["*/10 * * * *".into(), "0 8 * * 6,0".into()],
+        };
         assert_eq!(config.to_schedule().unwrap().describe().len(), 2);
     }
 
     #[test]
     fn a_bad_or_empty_list_is_an_error() {
-        let error = ScheduleConfig { cron: vec!["every day".into()] }.to_schedule().unwrap_err().to_string();
+        let error = ScheduleConfig {
+            cron: vec!["every day".into()],
+        }
+        .to_schedule()
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("every day"), "{error}");
         assert!(ScheduleConfig { cron: vec![] }.to_schedule().is_err());
     }

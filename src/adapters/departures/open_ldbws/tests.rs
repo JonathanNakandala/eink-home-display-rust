@@ -1,5 +1,5 @@
-use chrono_tz::Europe::London;
 use chrono::{DateTime, TimeZone};
+use chrono_tz::Europe::London;
 use chrono_tz::Tz;
 use httpmock::prelude::*;
 use speculoos::prelude::*;
@@ -72,28 +72,28 @@ async fn returns_parsed_departures_for_station_pair() {
     assert_that(&result).is_ok_containing(Departures::new(
         "Hornsey".to_owned(),
         vec![
-        DepartureService::new(
-            "18:04".to_owned(),
-            "Welwyn Garden City".to_owned(),
-            DepartureStatus::OnTime,
-            String::new(),
-            "4 min".to_owned(),
-        ),
-        DepartureService::new(
-            "18:19".to_owned(),
-            "Welwyn Garden City".to_owned(),
-            DepartureStatus::Delayed,
-            "18:27".to_owned(),
-            "27 min".to_owned(),
-        ),
-        DepartureService::new(
-            "18:34".to_owned(),
-            "Welwyn Garden City".to_owned(),
-            DepartureStatus::Cancelled,
-            String::new(),
-            String::new(),
-        ),
-    ],
+            DepartureService::new(
+                "18:04".to_owned(),
+                "Welwyn Garden City".to_owned(),
+                DepartureStatus::OnTime,
+                String::new(),
+                "4 min".to_owned(),
+            ),
+            DepartureService::new(
+                "18:19".to_owned(),
+                "Welwyn Garden City".to_owned(),
+                DepartureStatus::Delayed,
+                "18:27".to_owned(),
+                "27 min".to_owned(),
+            ),
+            DepartureService::new(
+                "18:34".to_owned(),
+                "Welwyn Garden City".to_owned(),
+                DepartureStatus::Cancelled,
+                String::new(),
+                String::new(),
+            ),
+        ],
     ));
 }
 

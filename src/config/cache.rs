@@ -20,7 +20,9 @@ fn default_directory() -> PathBuf {
 
 impl Default for CacheConfig {
     fn default() -> Self {
-        Self { directory: default_directory() }
+        Self {
+            directory: default_directory(),
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::domain::models::display::{Dither, DisplayProfile, Palette};
+use crate::domain::models::display::{DisplayProfile, Dither, Palette};
 use crate::domain::models::image::ImageData;
 use crate::domain::services::image_display_service::ImageDisplayService;
 
@@ -16,7 +16,11 @@ pub struct EinkWaveshareAdapter {
 #[async_trait]
 impl ImageDisplayService for EinkWaveshareAdapter {
     fn profile(&self) -> DisplayProfile {
-        DisplayProfile { width: WIDTH, height: HEIGHT, palette: Palette::Mono }
+        DisplayProfile {
+            width: WIDTH,
+            height: HEIGHT,
+            palette: Palette::Mono,
+        }
     }
 
     async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
@@ -35,7 +39,9 @@ fn show_frame(frame: &[u8]) -> anyhow::Result<()> {
     let panel = &mut hardware.panel;
     panel.init().context("Failed to initialise e-paper panel")?;
     panel.display(frame).context("Failed to display frame")?;
-    panel.sleep().context("Failed to put e-paper panel to sleep")?;
+    panel
+        .sleep()
+        .context("Failed to put e-paper panel to sleep")?;
     Ok(())
 }
 

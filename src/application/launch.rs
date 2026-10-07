@@ -36,7 +36,11 @@ pub fn first_render_at(
     // corrected since). Counted from there, the cooldown would hold off every render until then, so it
     // is counted from now instead.
     let earliest = last_attempt.and_then(|at| {
-        chrono::Duration::from_std(cooldown).ok().and_then(|c| at.with_timezone(&now.timezone()).min(now).checked_add_signed(c))
+        chrono::Duration::from_std(cooldown).ok().and_then(|c| {
+            at.with_timezone(&now.timezone())
+                .min(now)
+                .checked_add_signed(c)
+        })
     });
     Some(earliest.map_or(now, |earliest| earliest.max(now)))
 }
@@ -53,7 +57,9 @@ pub async fn served_image_is_current(
         .await
         .ok()
         .flatten()
-        .and_then(|rendered| render_due(now, rendered.with_timezone(&now.timezone()), schedule).ok())
+        .and_then(|rendered| {
+            render_due(now, rendered.with_timezone(&now.timezone()), schedule).ok()
+        })
         .is_some_and(|due| !due)
 }
 
@@ -73,7 +79,10 @@ impl AttemptMarker {
 impl RenderObserver for AttemptMarker {
     fn render_started(&self) {
         if let Err(e) = std::fs::write(&self.path, self.clock.now().to_rfc3339()) {
-            log::warn!("Could not record the render attempt in {}: {e}", self.path.display());
+            log::warn!(
+                "Could not record the render attempt in {}: {e}",
+                self.path.display()
+            );
         }
     }
 
@@ -85,13 +94,15 @@ impl RenderObserver for AttemptMarker {
 /// When the last render was started, from the marker; None if there is none or it can't be read.
 pub fn last_attempt(marker: &Path) -> Option<DateTime<Utc>> {
     let text = std::fs::read_to_string(marker).ok()?;
-    DateTime::parse_from_rfc3339(text.trim()).ok().map(|at| at.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(text.trim())
+        .ok()
+        .map(|at| at.with_timezone(&Utc))
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
     use crate::adapters::published_images::DirectoryImages;
@@ -109,38 +120,59 @@ mod tests {
 
     #[test]
     fn renders_at_once_on_a_first_start() {
-        assert_eq!(first_render_at(at(12, 0, 0), false, false, None, COOLDOWN), Some(at(12, 0, 0)));
+        assert_eq!(
+            first_render_at(at(12, 0, 0), false, false, None, COOLDOWN),
+            Some(at(12, 0, 0))
+        );
     }
 
     #[test]
     fn waits_out_the_cooldown_after_a_recent_attempt() {
         let recent = Some(utc(11, 59, 30));
-        assert_eq!(first_render_at(at(12, 0, 0), false, false, recent, COOLDOWN), Some(at(12, 1, 30)));
+        assert_eq!(
+            first_render_at(at(12, 0, 0), false, false, recent, COOLDOWN),
+            Some(at(12, 1, 30))
+        );
     }
 
     #[test]
     fn an_attempt_in_the_future_counts_from_now_not_from_then() {
         // Written while the clock was a day ahead: the render must not wait a day for it.
         let future = Some(utc(12, 0, 0) + chrono::Duration::days(1));
-        assert_eq!(first_render_at(at(12, 0, 0), false, false, future, COOLDOWN), Some(at(12, 2, 0)));
+        assert_eq!(
+            first_render_at(at(12, 0, 0), false, false, future, COOLDOWN),
+            Some(at(12, 2, 0))
+        );
     }
 
     #[test]
     fn a_cooldown_too_large_to_add_is_ignored_not_a_panic() {
         let huge = Duration::from_secs(u64::MAX / 2);
-        assert_eq!(first_render_at(at(12, 0, 0), false, false, Some(utc(11, 59, 0)), huge), Some(at(12, 0, 0)));
+        assert_eq!(
+            first_render_at(at(12, 0, 0), false, false, Some(utc(11, 59, 0)), huge),
+            Some(at(12, 0, 0))
+        );
     }
 
     #[test]
     fn an_old_attempt_does_not_delay_anything() {
         let old = Some(utc(11, 0, 0));
-        assert_eq!(first_render_at(at(12, 0, 0), false, false, old, COOLDOWN), Some(at(12, 0, 0)));
+        assert_eq!(
+            first_render_at(at(12, 0, 0), false, false, old, COOLDOWN),
+            Some(at(12, 0, 0))
+        );
     }
 
     #[test]
     fn a_current_image_or_the_skip_flag_waits_for_the_first_slot() {
-        assert_eq!(first_render_at(at(12, 0, 0), false, true, None, COOLDOWN), None);
-        assert_eq!(first_render_at(at(12, 0, 0), true, false, None, COOLDOWN), None);
+        assert_eq!(
+            first_render_at(at(12, 0, 0), false, true, None, COOLDOWN),
+            None
+        );
+        assert_eq!(
+            first_render_at(at(12, 0, 0), true, false, None, COOLDOWN),
+            None
+        );
     }
 
     #[test]
@@ -179,6 +211,14 @@ mod tests {
 
         images.publish(ImageFormat::Bmp, b"x").await.unwrap();
         assert!(served_image_is_current(&images, ImageFormat::Bmp, &schedule, now).await);
-        assert!(!served_image_is_current(&images, ImageFormat::Bmp, &schedule, now + chrono::Duration::hours(2)).await);
+        assert!(
+            !served_image_is_current(
+                &images,
+                ImageFormat::Bmp,
+                &schedule,
+                now + chrono::Duration::hours(2)
+            )
+            .await
+        );
     }
 }

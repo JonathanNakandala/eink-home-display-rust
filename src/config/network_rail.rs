@@ -32,6 +32,9 @@ timing_points = ["HRNSY"]"#,
         )
         .unwrap();
         let shown = format!("{config:?}");
-        assert!(!shown.contains("hunter2-secret") && shown.contains("REDACTED"), "{shown}");
+        assert!(
+            !shown.contains("hunter2-secret") && shown.contains("REDACTED"),
+            "{shown}"
+        );
     }
 }

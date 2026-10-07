@@ -1,10 +1,13 @@
 use anyhow::bail;
 
+use crate::adapters::weather::WeatherServiceImpl;
 use crate::adapters::weather::no_op::no_op_weather_service::NoOpWeatherServiceAdapter;
 use crate::adapters::weather::open_meteo::open_meteo_weather_service::OpenMeteoWeatherServiceAdapter;
 use crate::adapters::weather::open_weather::open_weather_weather_service::OpenWeatherWeatherServiceAdapter;
-use crate::adapters::weather::WeatherServiceImpl;
-use crate::config::weather::{WeatherConfig, WeatherProvider, DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL, DEFAULT_OPEN_METEO_HOST_URL};
+use crate::config::weather::{
+    DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL, DEFAULT_OPEN_METEO_HOST_URL, WeatherConfig,
+    WeatherProvider,
+};
 
 pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherServiceImpl> {
     if !config.enabled {
@@ -33,12 +36,14 @@ pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherSe
                     false,
                 ),
             };
-            Ok(WeatherServiceImpl::OpenMeteo(OpenMeteoWeatherServiceAdapter::new(
-                host_url,
-                air_quality_host_url,
-                pollen,
-                crate::adapters::http::client(),
-            )))
+            Ok(WeatherServiceImpl::OpenMeteo(
+                OpenMeteoWeatherServiceAdapter::new(
+                    host_url,
+                    air_quality_host_url,
+                    pollen,
+                    crate::adapters::http::client(),
+                ),
+            ))
         }
     }
 }

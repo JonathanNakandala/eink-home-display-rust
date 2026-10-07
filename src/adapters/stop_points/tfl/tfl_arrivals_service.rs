@@ -7,7 +7,9 @@ use crate::domain::services::arrivals_service::ArrivalsService;
 
 impl ArrivalsService for TflStopPointServiceAdapter {
     async fn get_arrivals(&self, stop_id: &str) -> Result<Vec<Arrival>, SourceError> {
-        let response = self.get(&format!("StopPoint/{stop_id}/Arrivals"), Vec::new()).await?;
+        let response = self
+            .get(&format!("StopPoint/{stop_id}/Arrivals"), Vec::new())
+            .await?;
         let predictions: Vec<Prediction> = http::json(response, "TfL arrivals").await?;
 
         let mut arrivals: Vec<Arrival> = predictions.into_iter().map(to_domain).collect();

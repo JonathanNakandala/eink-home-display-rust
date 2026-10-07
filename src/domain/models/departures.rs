@@ -28,7 +28,11 @@ impl DepartureService {
     /// When it leaves, as a clock time: the new time for a delayed service that has one.
     fn leaves_at(&self) -> &str {
         match self.status {
-            DepartureStatus::Delayed if NaiveTime::parse_from_str(&self.expected, "%H:%M").is_ok() => &self.expected,
+            DepartureStatus::Delayed
+                if NaiveTime::parse_from_str(&self.expected, "%H:%M").is_ok() =>
+            {
+                &self.expected
+            }
             _ => &self.time,
         }
     }
@@ -62,7 +66,11 @@ impl Departures {
     pub fn as_of(&self, now: DateTime<Tz>) -> Self {
         Self {
             station: self.station.clone(),
-            services: self.services.iter().filter_map(|service| service.as_of(now)).collect(),
+            services: self
+                .services
+                .iter()
+                .filter_map(|service| service.as_of(now))
+                .collect(),
         }
     }
 }
@@ -91,13 +99,15 @@ pub fn countdown(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
 
     fn at(hour: u32, minute: u32, second: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2024, 1, 10, hour, minute, second).unwrap()
+        London
+            .with_ymd_and_hms(2024, 1, 10, hour, minute, second)
+            .unwrap()
     }
 
     #[test]
@@ -120,7 +130,10 @@ mod tests {
     fn the_nearest_day_is_chosen_at_the_edges() {
         assert_eq!(seconds_until(at(12, 0, 0), "12:00"), Some(0));
         // Just under twelve hours ahead stays ahead; twelve hours or more behind is the next day.
-        assert_eq!(seconds_until(at(12, 0, 0), "23:59"), Some(11 * 3600 + 59 * 60));
+        assert_eq!(
+            seconds_until(at(12, 0, 0), "23:59"),
+            Some(11 * 3600 + 59 * 60)
+        );
         assert_eq!(seconds_until(at(12, 0, 0), "00:00"), Some(-12 * 3600));
     }
 
@@ -134,8 +147,19 @@ mod tests {
         assert_eq!(seconds_until(at(9, 0, 0), "Delayed"), None);
     }
 
-    fn service(time: &str, status: DepartureStatus, expected: &str, countdown: &str) -> DepartureService {
-        DepartureService::new(time.into(), "X".into(), status, expected.into(), countdown.into())
+    fn service(
+        time: &str,
+        status: DepartureStatus,
+        expected: &str,
+        countdown: &str,
+    ) -> DepartureService {
+        DepartureService::new(
+            time.into(),
+            "X".into(),
+            status,
+            expected.into(),
+            countdown.into(),
+        )
     }
 
     #[test]
@@ -151,7 +175,11 @@ mod tests {
 
         let later = departures.as_of(at(9, 5, 0));
         assert_eq!(later.station, "Hornsey");
-        let countdowns: Vec<_> = later.services.iter().map(|s| s.countdown.as_str()).collect();
+        let countdowns: Vec<_> = later
+            .services
+            .iter()
+            .map(|s| s.countdown.as_str())
+            .collect();
         // 09:00 has gone; the delayed one counts to its new time.
         assert_eq!(later.services.len(), 2);
         assert_eq!(countdowns, ["5 min", "22 min"]);
@@ -170,7 +198,11 @@ mod tests {
 
         // Fetched at 23:45 and shown at 00:05, because the source has been down since.
         let later = departures.as_of(at(0, 5, 0));
-        let countdowns: Vec<_> = later.services.iter().map(|s| s.countdown.as_str()).collect();
+        let countdowns: Vec<_> = later
+            .services
+            .iter()
+            .map(|s| s.countdown.as_str())
+            .collect();
         assert_eq!(countdowns, ["5 min"], "the 23:55 left ten minutes ago");
     }
 

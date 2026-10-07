@@ -80,7 +80,10 @@ impl AirQuality {
             Some(score) => AirQualityReading::new("Overall", score),
             None => AirQualityReading::new("Overall", f64::from(pollutants.first()?.score)),
         };
-        Some(Self { overall, pollutants })
+        Some(Self {
+            overall,
+            pollutants,
+        })
     }
 }
 
@@ -93,8 +96,19 @@ mod tests {
         let band = |score| AirQualityBand::from_score(score).label();
         assert_eq!(
             [0, 19, 20, 39, 40, 59, 60, 79, 80, 100, 101].map(band),
-            ["Good", "Good", "Fair", "Fair", "Moderate", "Moderate", "Poor", "Poor",
-             "Very poor", "Very poor", "Extremely poor"]
+            [
+                "Good",
+                "Good",
+                "Fair",
+                "Fair",
+                "Moderate",
+                "Moderate",
+                "Poor",
+                "Poor",
+                "Very poor",
+                "Very poor",
+                "Extremely poor"
+            ]
         );
     }
 
@@ -102,7 +116,12 @@ mod tests {
     fn lists_pollutants_worst_first_and_marks_good_ones() {
         let air = AirQuality::new(
             Some(62.0),
-            &[("PM2.5", Some(31.0)), ("PM10", Some(62.0)), ("Ozone", Some(18.0)), ("SO₂", None)],
+            &[
+                ("PM2.5", Some(31.0)),
+                ("PM10", Some(62.0)),
+                ("Ozone", Some(18.0)),
+                ("SO₂", None),
+            ],
         )
         .unwrap();
         assert_eq!(air.overall.band, "Poor");

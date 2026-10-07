@@ -1,4 +1,4 @@
-use chrono::{DateTime};
+use chrono::DateTime;
 use chrono_tz::Tz;
 
 /// What time it is. Asked for instead of read from the system, so what depends on the time

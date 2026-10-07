@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use anyhow::Context;
 use handlebars::Handlebars;
-use url::Url;
+use headless_chrome::browser::default_executable;
 use headless_chrome::protocol::cdp::Emulation::SetDeviceMetricsOverride;
 use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
-use headless_chrome::browser::default_executable;
 use headless_chrome::{Browser, FetcherOptions, LaunchOptions, Tab};
+use url::Url;
 
+use crate::domain::models::GlanceData;
 use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::image::ImageData;
-use crate::domain::models::GlanceData;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -41,12 +41,30 @@ const ASSETS: &[(&str, &[u8])] = &[
 
 /// Inline SVGs, available in the template as partials named after `WeatherCondition`.
 const ICONS: &[(&str, &str)] = &[
-    ("clear", include_str!("../../../../templates/weather_icons/013-sun-8.svg")),
-    ("clouds", include_str!("../../../../templates/weather_icons/051-cloud-3.svg")),
-    ("drizzle", include_str!("../../../../templates/weather_icons/099-rain-4.svg")),
-    ("rain", include_str!("../../../../templates/weather_icons/067-storm-6.svg")),
-    ("thunderstorm", include_str!("../../../../templates/weather_icons/057-storm-7.svg")),
-    ("snow", include_str!("../../../../templates/weather_icons/047-snow-4.svg")),
+    (
+        "clear",
+        include_str!("../../../../templates/weather_icons/013-sun-8.svg"),
+    ),
+    (
+        "clouds",
+        include_str!("../../../../templates/weather_icons/051-cloud-3.svg"),
+    ),
+    (
+        "drizzle",
+        include_str!("../../../../templates/weather_icons/099-rain-4.svg"),
+    ),
+    (
+        "rain",
+        include_str!("../../../../templates/weather_icons/067-storm-6.svg"),
+    ),
+    (
+        "thunderstorm",
+        include_str!("../../../../templates/weather_icons/057-storm-7.svg"),
+    ),
+    (
+        "snow",
+        include_str!("../../../../templates/weather_icons/047-snow-4.svg"),
+    ),
 ];
 
 /// Which Chrome to render with.
@@ -94,7 +112,11 @@ struct AbandonGuard {
 
 impl AbandonGuard {
     fn new(inner: Arc<Inner>, abandoned: Arc<AtomicBool>) -> Self {
-        Self { inner, abandoned, armed: true }
+        Self {
+            inner,
+            abandoned,
+            armed: true,
+        }
     }
 
     /// The render has ended, one way or the other: leave Chrome alone.
@@ -111,7 +133,9 @@ impl Drop for AbandonGuard {
         self.abandoned.store(true, Ordering::SeqCst);
         let pid = self.inner.chrome_pid.load(Ordering::SeqCst);
         if pid != 0 {
-            log::warn!("The render was given up on while Chrome (pid {pid}) was still working: stopping it");
+            log::warn!(
+                "The render was given up on while Chrome (pid {pid}) was still working: stopping it"
+            );
             kill_process(pid);
         }
     }
@@ -128,7 +152,9 @@ fn kill_process(pid: u32) {
 
 #[cfg(not(unix))]
 fn kill_process(pid: u32) {
-    log::warn!("Can't stop Chrome (pid {pid}) on this platform; it will end when its calls time out");
+    log::warn!(
+        "Can't stop Chrome (pid {pid}) on this platform; it will end when its calls time out"
+    );
 }
 
 struct LaunchedBrowser {
@@ -148,11 +174,19 @@ fn find_system_chrome() -> Option<PathBuf> {
     match Command::new(&path).arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout);
-            log::info!("Found system Chrome at {}: {}", path.display(), version.trim());
+            log::info!(
+                "Found system Chrome at {}: {}",
+                path.display(),
+                version.trim()
+            );
             Some(path)
         }
         Ok(output) => {
-            log::warn!("{} --version failed ({}); ignoring it", path.display(), output.status);
+            log::warn!(
+                "{} --version failed ({}); ignoring it",
+                path.display(),
+                output.status
+            );
             None
         }
         Err(e) => {
@@ -206,7 +240,12 @@ impl Inner {
     ///
     /// `abandoned` is set if the render has been given up on, in which case it stops rather than
     /// launch a Chrome nobody is waiting for.
-    fn capture(&self, page: &Path, profile: &DisplayProfile, abandoned: &AtomicBool) -> anyhow::Result<Vec<u8>> {
+    fn capture(
+        &self,
+        page: &Path,
+        profile: &DisplayProfile,
+        abandoned: &AtomicBool,
+    ) -> anyhow::Result<Vec<u8>> {
         let window = (profile.width, profile.height);
         let mut slot = self.browser.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -217,12 +256,16 @@ impl Inner {
             }
         }
 
-        anyhow::ensure!(!abandoned.load(Ordering::SeqCst), "The render was given up on");
+        anyhow::ensure!(
+            !abandoned.load(Ordering::SeqCst),
+            "The render was given up on"
+        );
         // Drop the old one first so its process is gone before the next starts.
         *slot = None;
         self.chrome_pid.store(0, Ordering::SeqCst);
         let browser = self.launch(window)?;
-        self.chrome_pid.store(browser.get_process_id().unwrap_or(0), Ordering::SeqCst);
+        self.chrome_pid
+            .store(browser.get_process_id().unwrap_or(0), Ordering::SeqCst);
         match capture_in_new_tab(&browser, page, profile) {
             Ok(png) => {
                 *slot = Some(LaunchedBrowser { browser, window });
@@ -248,7 +291,10 @@ impl Inner {
             .path(match self.source {
                 ChromeSource::PreferSystem => find_system_chrome(),
                 ChromeSource::Bundled => {
-                    log::info!("Using the bundled Chrome in {}", self.chrome_install_dir.display());
+                    log::info!(
+                        "Using the bundled Chrome in {}",
+                        self.chrome_install_dir.display()
+                    );
                     None
                 }
             })
@@ -258,7 +304,11 @@ impl Inner {
         let browser =
             Browser::new(launcher_options).context("Failed to create browser instance")?;
         match browser.get_version() {
-            Ok(v) => log::info!("Rendering with {} (protocol {})", v.product, v.protocol_version),
+            Ok(v) => log::info!(
+                "Rendering with {} (protocol {})",
+                v.product,
+                v.protocol_version
+            ),
             Err(e) => log::warn!("Could not read Chrome version: {e}"),
         }
         browser.set_default_timeout(RENDER_TIMEOUT);
@@ -267,7 +317,11 @@ impl Inner {
 }
 
 /// Renders in a tab of its own and always closes it, so a kept Chrome doesn't pile them up.
-fn capture_in_new_tab(browser: &Browser, page: &Path, profile: &DisplayProfile) -> anyhow::Result<Vec<u8>> {
+fn capture_in_new_tab(
+    browser: &Browser,
+    page: &Path,
+    profile: &DisplayProfile,
+) -> anyhow::Result<Vec<u8>> {
     let tab = browser.new_tab().context("Failed to create new tab")?;
     let result = capture_in_tab(&tab, page, profile);
     // Not close(false): the pinned Chromium never answers Target.closeTarget, so that call
@@ -330,7 +384,8 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
         let profile = profile.clone();
         let abandoned = Arc::new(AtomicBool::new(false));
         let mut guard = AbandonGuard::new(Arc::clone(&inner), Arc::clone(&abandoned));
-        let rendered = tokio::task::spawn_blocking(move || inner.capture(&page, &profile, &abandoned)).await;
+        let rendered =
+            tokio::task::spawn_blocking(move || inner.capture(&page, &profile, &abandoned)).await;
         guard.disarm();
         let png = rendered.context("Render task panicked")??;
         drop(dir);
@@ -340,10 +395,10 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use crate::domain::models::DateInfo;
     use crate::domain::models::display::Palette;
     use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
+    use chrono_tz::Europe::London;
 
     use super::*;
 
@@ -358,7 +413,9 @@ mod tests {
 
     #[test]
     fn a_fresh_dashboard_carries_no_staleness_markers() {
-        let html = html_for(&GlanceData::sample(chrono::Utc::now().with_timezone(&London)));
+        let html = html_for(&GlanceData::sample(
+            chrono::Utc::now().with_timezone(&London),
+        ));
         assert!(!html.contains(" ago<"), "no age label expected");
         assert!(!html.contains("Unavailable"));
         assert!(!html.contains("Weather unavailable"));
@@ -367,7 +424,9 @@ mod tests {
 
     #[test]
     fn degraded_data_shows_ages_and_unavailable_parts() {
-        let html = html_for(&GlanceData::sample_degraded(chrono::Utc::now().with_timezone(&London)));
+        let html = html_for(&GlanceData::sample_degraded(
+            chrono::Utc::now().with_timezone(&London),
+        ));
         assert!(html.contains("8 min ago</span>"));
         assert!(html.contains("Updated 40 min ago"));
         assert!(html.contains(">Unavailable: service error</div>"));
@@ -375,13 +434,22 @@ mod tests {
 
     #[test]
     fn unavailable_weather_keeps_its_column_and_says_so() {
-        let data = GlanceData::new(None, vec![], DateInfo::new(chrono::Utc::now().with_timezone(&London))).with_weather_unavailable("timed out");
+        let data = GlanceData::new(
+            None,
+            vec![],
+            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+        )
+        .with_weather_unavailable("timed out");
         let html = html_for(&data);
         assert!(html.contains("Weather unavailable: timed out"));
         assert!(html.contains("container has-weather"));
 
         // Weather that is simply switched off leaves no column and no message.
-        let off = html_for(&GlanceData::new(None, vec![], DateInfo::new(chrono::Utc::now().with_timezone(&London))));
+        let off = html_for(&GlanceData::new(
+            None,
+            vec![],
+            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+        ));
         assert!(!off.contains("Weather unavailable"));
         assert!(!off.contains("container has-weather"));
     }
@@ -390,7 +458,10 @@ mod tests {
     fn file_urls_encode_characters_that_need_it() {
         let url = file_url(Path::new("/tmp/my render/dashboard é.html")).unwrap();
 
-        assert_eq!(url.as_str(), "file:///tmp/my%20render/dashboard%20%C3%A9.html");
+        assert_eq!(
+            url.as_str(),
+            "file:///tmp/my%20render/dashboard%20%C3%A9.html"
+        );
     }
 
     #[test]
@@ -400,10 +471,19 @@ mod tests {
 
     #[cfg(unix)]
     fn a_stand_in_for_chrome() -> (Arc<Inner>, std::process::Child) {
-        let generator =
-            ChromeRenderDisplayImageGenerator::new(PathBuf::from("unused"), DEFAULT_IDLE_TIMEOUT, ChromeSource::PreferSystem);
-        let child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
-        generator.inner.chrome_pid.store(child.id(), Ordering::SeqCst);
+        let generator = ChromeRenderDisplayImageGenerator::new(
+            PathBuf::from("unused"),
+            DEFAULT_IDLE_TIMEOUT,
+            ChromeSource::PreferSystem,
+        );
+        let child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        generator
+            .inner
+            .chrome_pid
+            .store(child.id(), Ordering::SeqCst);
         (generator.inner, child)
     }
 
@@ -430,7 +510,10 @@ mod tests {
         guard.disarm();
         drop(guard);
 
-        assert!(child.try_wait().unwrap().is_none(), "Chrome should still be running");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "Chrome should still be running"
+        );
         assert!(!abandoned.load(Ordering::SeqCst));
         child.kill().unwrap();
         child.wait().unwrap();
@@ -438,11 +521,25 @@ mod tests {
 
     #[test]
     fn an_abandoned_render_does_not_launch_a_chrome_for_nobody() {
-        let generator =
-            ChromeRenderDisplayImageGenerator::new(PathBuf::from("unused"), DEFAULT_IDLE_TIMEOUT, ChromeSource::PreferSystem);
-        let profile = DisplayProfile { width: 10, height: 10, palette: Palette::Mono };
+        let generator = ChromeRenderDisplayImageGenerator::new(
+            PathBuf::from("unused"),
+            DEFAULT_IDLE_TIMEOUT,
+            ChromeSource::PreferSystem,
+        );
+        let profile = DisplayProfile {
+            width: 10,
+            height: 10,
+            palette: Palette::Mono,
+        };
 
-        let error = generator.inner.capture(Path::new("/nonexistent.html"), &profile, &AtomicBool::new(true)).unwrap_err();
+        let error = generator
+            .inner
+            .capture(
+                Path::new("/nonexistent.html"),
+                &profile,
+                &AtomicBool::new(true),
+            )
+            .unwrap_err();
 
         assert!(format!("{error}").contains("given up on"), "{error}");
     }
@@ -452,20 +549,25 @@ mod tests {
     #[ignore]
     async fn renders_a_png_at_the_profile_size() {
         let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
-        let profile = DisplayProfile { width: 800, height: 480, palette: Palette::Mono };
+        let profile = DisplayProfile {
+            width: 800,
+            height: 480,
+            palette: Palette::Mono,
+        };
         let data = GlanceData::new(
             Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
             vec![],
-            DateInfo::new(chrono::Utc::now().with_timezone(&London)));
+            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+        );
 
         let image = ChromeRenderDisplayImageGenerator::new(
             std::env::temp_dir().join("eink_test_chrome"),
             DEFAULT_IDLE_TIMEOUT,
             ChromeSource::PreferSystem,
         )
-            .generate(data, &profile)
-            .await
-            .unwrap();
+        .generate(data, &profile)
+        .await
+        .unwrap();
 
         let decoded = image::load_from_memory(&image.data).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (800, 480));
@@ -490,7 +592,11 @@ mod tests {
     #[ignore]
     async fn keeps_one_chrome_across_renders_and_relaunches_when_it_dies() {
         let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
-        let profile = DisplayProfile { width: 800, height: 480, palette: Palette::Mono };
+        let profile = DisplayProfile {
+            width: 800,
+            height: 480,
+            palette: Palette::Mono,
+        };
         let generator = ChromeRenderDisplayImageGenerator::new(
             std::env::temp_dir().join("eink_test_chrome"),
             Duration::from_secs(300),
@@ -502,7 +608,14 @@ mod tests {
         generator.generate(sample_data(), &profile).await.unwrap();
         assert_eq!(kept_pid(&generator), Some(first), "second render reused it");
 
-        assert!(Command::new("kill").arg("-9").arg(first.to_string()).status().unwrap().success());
+        assert!(
+            Command::new("kill")
+                .arg("-9")
+                .arg(first.to_string())
+                .status()
+                .unwrap()
+                .success()
+        );
         std::thread::sleep(Duration::from_millis(500));
         generator.generate(sample_data(), &profile).await.unwrap();
         let relaunched = kept_pid(&generator).expect("Chrome is kept after relaunch");
@@ -514,7 +627,11 @@ mod tests {
     #[ignore]
     async fn renders_and_reuses_the_bundled_chrome() {
         let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
-        let profile = DisplayProfile { width: 800, height: 480, palette: Palette::Mono };
+        let profile = DisplayProfile {
+            width: 800,
+            height: 480,
+            palette: Palette::Mono,
+        };
         let generator = ChromeRenderDisplayImageGenerator::new(
             std::env::temp_dir().join("eink_test_chrome"),
             Duration::from_secs(300),

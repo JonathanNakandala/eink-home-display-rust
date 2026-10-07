@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use crate::adapters::image_display_service::DisplayImpl;
 use crate::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter;
 use crate::adapters::image_display_service::reterminal_e1003::ReTerminalE1003Adapter;
-use crate::adapters::image_display_service::DisplayImpl;
 use crate::config::application::{DisplayConfig, DisplayKind};
 use crate::domain::services::published_images::PublishedImages;
 

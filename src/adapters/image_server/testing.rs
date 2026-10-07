@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use tokio::net::TcpListener;
 
-use super::{router, Handles};
+use super::{Handles, router};
 use crate::adapters::clock::SystemClock;
 use crate::adapters::published_images::DirectoryImages;
 use crate::application::devices::DeviceBoard;
@@ -19,7 +19,11 @@ use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::published_images::PublishedImages;
 
-pub(super) async fn publish(directory: &Path, format: ImageFormat, bytes: &[u8]) -> anyhow::Result<()> {
+pub(super) async fn publish(
+    directory: &Path,
+    format: ImageFormat,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
     DirectoryImages::new(directory).publish(format, bytes).await
 }
 
@@ -28,7 +32,10 @@ pub(super) async fn start(directory: PathBuf, format: ImageFormat) -> String {
 }
 
 /// Also hands back the status board, to play the render loop's part.
-pub(super) async fn start_with_status(directory: PathBuf, format: ImageFormat) -> (String, Arc<StatusBoard>) {
+pub(super) async fn start_with_status(
+    directory: PathBuf,
+    format: ImageFormat,
+) -> (String, Arc<StatusBoard>) {
     start_with_clock(directory, format, Arc::new(SystemClock::new(London))).await
 }
 
@@ -49,17 +56,34 @@ pub(super) async fn start_with(
 ) -> (String, Arc<StatusBoard>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let timing = PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
+    let timing = PlanTiming {
+        wake_delay: Duration::from_secs(30),
+        stale_grace: Duration::from_secs(300),
+    };
     let schedule = Schedule::parse_every("1h").unwrap();
     let status = StatusBoard::new(chrono::Utc::now().with_timezone(&London));
-    let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };
-    tokio::spawn(async move { axum::serve(listener, router(images, format, schedule, timing, handles, clock)).await });
+    let handles = Handles {
+        refresh: RefreshControl::new(Duration::from_secs(30)),
+        status: Arc::clone(&status),
+        devices: DeviceBoard::new(Duration::from_secs(900)),
+    };
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router(images, format, schedule, timing, handles, clock),
+        )
+        .await
+    });
     (format!("http://{address}"), status)
 }
 
 pub(super) fn set_age(directory: &Path, seconds: u64) {
-    let file = std::fs::File::options().write(true).open(directory.join("image.bmp")).unwrap();
-    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds)).unwrap();
+    let file = std::fs::File::options()
+        .write(true)
+        .open(directory.join("image.bmp"))
+        .unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds))
+        .unwrap();
 }
 
 /// A directory of images where one format fails to be inspected, and one fails to be read.
@@ -75,7 +99,10 @@ impl PublishedImages for Faulty {
         self.inner.publish(format, bytes).await
     }
 
-    async fn published_at(&self, format: ImageFormat) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
+    async fn published_at(
+        &self,
+        format: ImageFormat,
+    ) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
         anyhow::ensure!(self.cannot_inspect != Some(format), "permission denied");
         self.inner.published_at(format).await
     }

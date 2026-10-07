@@ -249,7 +249,12 @@ impl PrecipitationOutlook {
                     peak_index = i;
                 }
                 let height = (amount(slot) / scale * HEIGHT).clamp(4.0, HEIGHT);
-                Bar { x: LEFT + i as f64 * slot_width, y: BASE - height, width: slot_width, height }
+                Bar {
+                    x: LEFT + i as f64 * slot_width,
+                    y: BASE - height,
+                    width: slot_width,
+                    height,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -261,8 +266,8 @@ impl PrecipitationOutlook {
             slots[first].starts_at.format("%H:%M").to_string()
         };
 
-        let peak_x = (LEFT + (peak_index as f64 + 0.5) * slot_width)
-            .clamp(LEFT + LABEL_HALF_WIDTH, edge);
+        let peak_x =
+            (LEFT + (peak_index as f64 + 0.5) * slot_width).clamp(LEFT + LABEL_HALF_WIDTH, edge);
         let peak_height = (amount(&slots[peak_index]) / scale * HEIGHT).clamp(4.0, HEIGHT);
         let clash = (peak_x - start_x).abs() < LABEL_CLASH;
         let peak_y = BASE - peak_height - if clash { 22.0 } else { 5.0 };
@@ -284,15 +289,17 @@ impl PrecipitationOutlook {
             })
             .collect::<Vec<_>>();
         let ticks = (0..=slots.len())
-            .map(|i| match ticks.iter().find(|t| t.x == LEFT + i as f64 * slot_width) {
-                Some(tick) => tick.clone(),
-                None => Tick {
-                    x: LEFT + i as f64 * slot_width,
-                    labelled: false,
-                    label: String::new(),
-                    anchor: "middle",
+            .map(
+                |i| match ticks.iter().find(|t| t.x == LEFT + i as f64 * slot_width) {
+                    Some(tick) => tick.clone(),
+                    None => Tick {
+                        x: LEFT + i as f64 * slot_width,
+                        labelled: false,
+                        label: String::new(),
+                        anchor: "middle",
+                    },
                 },
-            })
+            )
             .collect();
 
         Some(Self {
@@ -325,7 +332,10 @@ mod tests {
     use super::*;
 
     fn at(hour: u32, minute: u32) -> NaiveDateTime {
-        NaiveDate::from_ymd_opt(2026, 10, 1).unwrap().and_hms_opt(hour, minute, 0).unwrap()
+        NaiveDate::from_ymd_opt(2026, 10, 1)
+            .unwrap()
+            .and_hms_opt(hour, minute, 0)
+            .unwrap()
     }
 
     /// Eight slots from 11:15, with the given mm/h for each.
@@ -334,7 +344,12 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, rate)| {
-                PrecipitationSlot::new(at(11, 15) + Duration::minutes(15 * i as i64), *rate, *rate, kind)
+                PrecipitationSlot::new(
+                    at(11, 15) + Duration::minutes(15 * i as i64),
+                    *rate,
+                    *rate,
+                    kind,
+                )
             })
             .collect()
     }
@@ -357,62 +372,130 @@ mod tests {
 
     #[test]
     fn sun_times_are_shown_as_hours_and_minutes() {
-        let at = |h, m| NaiveDate::from_ymd_opt(2026, 10, 1).unwrap().and_hms_opt(h, m, 59).unwrap();
+        let at = |h, m| {
+            NaiveDate::from_ymd_opt(2026, 10, 1)
+                .unwrap()
+                .and_hms_opt(h, m, 59)
+                .unwrap()
+        };
         assert_eq!(
             SunTimes::new(at(6, 51), at(18, 29)),
-            SunTimes { sunrise: "06:51".into(), sunset: "18:29".into() }
+            SunTimes {
+                sunrise: "06:51".into(),
+                sunset: "18:29".into()
+            }
         );
     }
 
     #[test]
     fn uv_is_banded_including_when_low() {
-        assert_eq!(UvIndex::new(0.0), UvIndex { value: 0, band: "Low" });
-        assert_eq!(UvIndex::new(2.4), UvIndex { value: 2, band: "Low" });
-        assert_eq!(UvIndex::new(2.6), UvIndex { value: 3, band: "Moderate" });
-        assert_eq!(UvIndex::new(6.0), UvIndex { value: 6, band: "High" });
-        assert_eq!(UvIndex::new(8.4), UvIndex { value: 8, band: "Very high" });
-        assert_eq!(UvIndex::new(11.2), UvIndex { value: 11, band: "Extreme" });
+        assert_eq!(
+            UvIndex::new(0.0),
+            UvIndex {
+                value: 0,
+                band: "Low"
+            }
+        );
+        assert_eq!(
+            UvIndex::new(2.4),
+            UvIndex {
+                value: 2,
+                band: "Low"
+            }
+        );
+        assert_eq!(
+            UvIndex::new(2.6),
+            UvIndex {
+                value: 3,
+                band: "Moderate"
+            }
+        );
+        assert_eq!(
+            UvIndex::new(6.0),
+            UvIndex {
+                value: 6,
+                band: "High"
+            }
+        );
+        assert_eq!(
+            UvIndex::new(8.4),
+            UvIndex {
+                value: 8,
+                band: "Very high"
+            }
+        );
+        assert_eq!(
+            UvIndex::new(11.2),
+            UvIndex {
+                value: 11,
+                band: "Extreme"
+            }
+        );
     }
 
     #[test]
     fn nothing_when_it_stays_dry() {
-        let dry = slots([0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.0], PrecipitationKind::Rain);
+        let dry = slots(
+            [0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.0],
+            PrecipitationKind::Rain,
+        );
         assert_eq!(PrecipitationOutlook::from_slots(&dry, at(11, 11)), None);
     }
 
     #[test]
     fn describes_when_it_starts_and_how_much_at_most() {
-        let wet = slots([0.0, 0.0, 0.0, 0.4, 1.2, 2.0, 1.0, 0.3], PrecipitationKind::Drizzle);
+        let wet = slots(
+            [0.0, 0.0, 0.0, 0.4, 1.2, 2.0, 1.0, 0.3],
+            PrecipitationKind::Drizzle,
+        );
         let outlook = PrecipitationOutlook::from_slots(&wet, at(11, 11)).unwrap();
         assert_eq!(outlook.caption, "UPCOMING DRIZZLE");
         assert_eq!(outlook.start_label, "12:00");
         assert_eq!(outlook.peak_label, "2 mm/h");
         assert_eq!(outlook.bars.len(), 5);
         assert_eq!(
-            outlook.ticks.iter().filter(|t| t.labelled).map(|t| t.label.as_str()).collect::<Vec<_>>(),
+            outlook
+                .ticks
+                .iter()
+                .filter(|t| t.labelled)
+                .map(|t| t.label.as_str())
+                .collect::<Vec<_>>(),
             ["11:15", "12:15", "13:15"]
         );
     }
 
     #[test]
     fn says_now_when_already_wet() {
-        let wet = slots([0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], PrecipitationKind::Rain);
+        let wet = slots(
+            [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            PrecipitationKind::Rain,
+        );
         let outlook = PrecipitationOutlook::from_slots(&wet, at(11, 20)).unwrap();
         assert_eq!(outlook.start_label, "Now");
     }
 
     #[test]
     fn light_rain_is_drawn_small_not_scaled_to_fill_the_chart() {
-        let light = slots([0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 0.2, 0.1], PrecipitationKind::Rain);
+        let light = slots(
+            [0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 0.2, 0.1],
+            PrecipitationKind::Rain,
+        );
         let outlook = PrecipitationOutlook::from_slots(&light, at(11, 11)).unwrap();
-        let tallest = outlook.bars.iter().map(|bar| bar.height).fold(0.0, f64::max);
+        let tallest = outlook
+            .bars
+            .iter()
+            .map(|bar| bar.height)
+            .fold(0.0, f64::max);
         assert!(tallest < HEIGHT / 2.0, "tallest bar was {tallest}");
         assert_eq!(outlook.peak_label, "0.3 mm/h");
     }
 
     #[test]
     fn snow_is_charted_in_snowfall_units() {
-        let mut snow = slots([0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0], PrecipitationKind::Snow);
+        let mut snow = slots(
+            [0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0],
+            PrecipitationKind::Snow,
+        );
         snow[2].snowfall = 1.4;
         let outlook = PrecipitationOutlook::from_slots(&snow, at(11, 11)).unwrap();
         assert_eq!(outlook.caption, "UPCOMING SNOW");
@@ -421,8 +504,14 @@ mod tests {
 
     #[test]
     fn peak_label_is_raised_when_it_would_sit_on_the_start_label() {
-        let close = slots([0.0, 0.0, 0.0, 2.0, 0.5, 0.0, 0.0, 0.0], PrecipitationKind::Rain);
-        let far = slots([0.0, 0.0, 0.0, 0.5, 1.0, 2.0, 0.0, 0.0], PrecipitationKind::Rain);
+        let close = slots(
+            [0.0, 0.0, 0.0, 2.0, 0.5, 0.0, 0.0, 0.0],
+            PrecipitationKind::Rain,
+        );
+        let far = slots(
+            [0.0, 0.0, 0.0, 0.5, 1.0, 2.0, 0.0, 0.0],
+            PrecipitationKind::Rain,
+        );
         let close = PrecipitationOutlook::from_slots(&close, at(11, 11)).unwrap();
         let far = PrecipitationOutlook::from_slots(&far, at(11, 11)).unwrap();
         assert!(close.peak_y < far.peak_y);

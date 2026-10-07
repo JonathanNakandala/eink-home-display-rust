@@ -72,7 +72,13 @@ pub enum FailureReason {
 }
 
 impl FailureReason {
-    pub const ALL: [FailureReason; 5] = [Self::Wifi, Self::Server, Self::Download, Self::Memory, Self::Timeout];
+    pub const ALL: [FailureReason; 5] = [
+        Self::Wifi,
+        Self::Server,
+        Self::Download,
+        Self::Memory,
+        Self::Timeout,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -125,12 +131,19 @@ impl RawTelemetry {
         Telemetry {
             device,
             battery_millivolts: number(&self.battery_mv).filter(|mv| MILLIVOLTS.contains(mv)),
-            battery_percent: number(&self.battery_pct).filter(|pct| *pct <= 100).map(|pct| pct as u8),
+            battery_percent: number(&self.battery_pct)
+                .filter(|pct| *pct <= 100)
+                .map(|pct| pct as u8),
             battery_state: self.battery_state.as_deref().and_then(BatteryState::parse),
             failed_wakes: number(&self.failed_wakes),
-            wifi_rssi_dbm: self.rssi.as_deref().and_then(|t| t.parse::<i16>().ok()).filter(|dbm| RSSI_DBM.contains(dbm)),
+            wifi_rssi_dbm: self
+                .rssi
+                .as_deref()
+                .and_then(|t| t.parse::<i16>().ok())
+                .filter(|dbm| RSSI_DBM.contains(dbm)),
             last_failure: self.last_failure.as_deref().and_then(FailureReason::parse),
-            last_wake_seconds: number(&self.last_wake_s).filter(|seconds| WAKE_SECONDS.contains(seconds)),
+            last_wake_seconds: number(&self.last_wake_s)
+                .filter(|seconds| WAKE_SECONDS.contains(seconds)),
         }
     }
 }
@@ -208,21 +221,36 @@ impl DeviceBoard {
             .unwrap_or(now);
         let mut devices = self.devices();
         if devices.len() >= MAX_DEVICES && !devices.contains_key(&telemetry.device) {
-            log::warn!("Ignoring {:?}: already tracking {MAX_DEVICES} devices", telemetry.device);
+            log::warn!(
+                "Ignoring {:?}: already tracking {MAX_DEVICES} devices",
+                telemetry.device
+            );
             return;
         }
         let previous = devices.get(&telemetry.device);
         match previous {
             None => {
-                log::info!("New display {:?} checked in{}", telemetry.device, describe_battery(&telemetry));
+                log::info!(
+                    "New display {:?} checked in{}",
+                    telemetry.device,
+                    describe_battery(&telemetry)
+                );
                 if let Some(reason) = telemetry.last_failure {
-                    log::warn!("Display {:?} {}", telemetry.device, describe_failure(reason, telemetry.failed_wakes));
+                    log::warn!(
+                        "Display {:?} {}",
+                        telemetry.device,
+                        describe_failure(reason, telemetry.failed_wakes)
+                    );
                 }
             }
             Some(before) => {
                 if before.telemetry.last_failure != telemetry.last_failure {
                     match telemetry.last_failure {
-                        Some(reason) => log::warn!("Display {:?} {}", telemetry.device, describe_failure(reason, telemetry.failed_wakes)),
+                        Some(reason) => log::warn!(
+                            "Display {:?} {}",
+                            telemetry.device,
+                            describe_failure(reason, telemetry.failed_wakes)
+                        ),
                         None => log::info!("Display {:?} is working again", telemetry.device),
                     }
                 }
@@ -231,10 +259,16 @@ impl DeviceBoard {
                         Some(BatteryState::Low | BatteryState::Empty) => log::warn!(
                             "Display {:?} battery is {}{}",
                             telemetry.device,
-                            telemetry.battery_state.map_or("unknown", BatteryState::as_str),
+                            telemetry
+                                .battery_state
+                                .map_or("unknown", BatteryState::as_str),
                             describe_battery(&telemetry)
                         ),
-                        _ => log::info!("Display {:?} battery is back to normal{}", telemetry.device, describe_battery(&telemetry)),
+                        _ => log::info!(
+                            "Display {:?} battery is back to normal{}",
+                            telemetry.device,
+                            describe_battery(&telemetry)
+                        ),
                     }
                 }
                 if now > before.expected_by + self.overdue_grace {
@@ -246,16 +280,38 @@ impl DeviceBoard {
                 }
             }
         }
-        let delivery = devices.get(&telemetry.device).and_then(|record| record.delivery);
-        devices.insert(telemetry.device.clone(), Record { last_seen: now, expected_by, telemetry, delivery });
+        let delivery = devices
+            .get(&telemetry.device)
+            .and_then(|record| record.delivery);
+        devices.insert(
+            telemetry.device.clone(),
+            Record {
+                last_seen: now,
+                expected_by,
+                telemetry,
+                delivery,
+            },
+        );
     }
 
     /// Notes that `device` was sent an image of `bytes` in `format` at `now`. Only for a display that has
     /// checked in: a stray request can't add a device (the display always asks `/plan` first), so the limit
     /// on how many are tracked holds here too.
-    pub fn image_served(&self, device: &DeviceId, format: ImageFormat, bytes: u64, now: DateTime<Tz>) {
+    pub fn image_served(
+        &self,
+        device: &DeviceId,
+        format: ImageFormat,
+        bytes: u64,
+        now: DateTime<Tz>,
+    ) {
         match self.devices().get_mut(device) {
-            Some(record) => record.delivery = Some(Delivery { format, bytes, at: now }),
+            Some(record) => {
+                record.delivery = Some(Delivery {
+                    format,
+                    bytes,
+                    at: now,
+                })
+            }
             None => log::debug!("{device} fetched the image without checking in first"),
         }
     }
@@ -289,8 +345,14 @@ impl DeviceBoard {
 
 fn describe_failure(reason: FailureReason, failed_wakes: Option<u32>) -> String {
     match failed_wakes {
-        Some(count) if count > 0 => format!("had {count} failed wake(s) in a row, the last because of {}", reason.as_str()),
-        _ => format!("reports its last wake failed because of {}", reason.as_str()),
+        Some(count) if count > 0 => format!(
+            "had {count} failed wake(s) in a row, the last because of {}",
+            reason.as_str()
+        ),
+        _ => format!(
+            "reports its last wake failed because of {}",
+            reason.as_str()
+        ),
     }
 }
 
@@ -304,8 +366,8 @@ fn describe_battery(telemetry: &Telemetry) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
 
@@ -314,7 +376,12 @@ mod tests {
     }
 
     fn raw(pairs: &[(&str, &str)]) -> RawTelemetry {
-        let get = |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string());
+        let get = |key: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        };
         RawTelemetry {
             battery_mv: get("battery_mv"),
             battery_pct: get("battery_pct"),
@@ -377,7 +444,14 @@ mod tests {
             ("last_wake_s", "99999"),
         ])
         .parse(id("kitchen"));
-        assert_eq!((parsed.wifi_rssi_dbm, parsed.last_failure, parsed.last_wake_seconds), (None, None, None));
+        assert_eq!(
+            (
+                parsed.wifi_rssi_dbm,
+                parsed.last_failure,
+                parsed.last_wake_seconds
+            ),
+            (None, None, None)
+        );
         assert_eq!(parsed.battery_millivolts, None);
         assert_eq!(parsed.battery_percent, None);
         assert_eq!(parsed.battery_state, None);
@@ -391,7 +465,14 @@ mod tests {
             assert_eq!(parsed.last_failure, Some(reason));
         }
         // The edges of what a signal and a wake can be.
-        for (rssi, ok) in [("-127", true), ("-1", true), ("0", false), ("-128", false), ("12", false), ("weak", false)] {
+        for (rssi, ok) in [
+            ("-127", true),
+            ("-1", true),
+            ("0", false),
+            ("-128", false),
+            ("12", false),
+            ("weak", false),
+        ] {
             let parsed = raw(&[("rssi", rssi)]).parse(id("a"));
             assert_eq!(parsed.wifi_rssi_dbm.is_some(), ok, "{rssi}");
         }
@@ -404,9 +485,24 @@ mod tests {
     #[test]
     fn the_latest_reason_and_signal_are_kept_and_shown() {
         let board = DeviceBoard::new(std::time::Duration::from_secs(900));
-        board.record(at(12, 0), Telemetry { last_failure: Some(FailureReason::Server), failed_wakes: Some(3), ..telemetry("a", None) }, 600);
+        board.record(
+            at(12, 0),
+            Telemetry {
+                last_failure: Some(FailureReason::Server),
+                failed_wakes: Some(3),
+                ..telemetry("a", None)
+            },
+            600,
+        );
         let device = &board.snapshot(at(12, 1))[0];
-        assert_eq!((device.last_failure, device.wifi_rssi_dbm, device.last_wake_seconds), (Some(FailureReason::Server), Some(-60), Some(21)));
+        assert_eq!(
+            (
+                device.last_failure,
+                device.wifi_rssi_dbm,
+                device.last_wake_seconds
+            ),
+            (Some(FailureReason::Server), Some(-60), Some(21))
+        );
 
         board.record(at(12, 10), telemetry("a", None), 600);
         assert_eq!(board.snapshot(at(12, 11))[0].last_failure, None);
@@ -440,11 +536,21 @@ mod tests {
     fn keeps_the_latest_reading_for_each_device() {
         let board = DeviceBoard::new(std::time::Duration::from_secs(900));
         board.record(at(12, 0), telemetry("a", Some(BatteryState::Ok)), 600);
-        board.record(at(12, 10), Telemetry { battery_millivolts: Some(3350), ..telemetry("a", Some(BatteryState::Low)) }, 600);
+        board.record(
+            at(12, 10),
+            Telemetry {
+                battery_millivolts: Some(3350),
+                ..telemetry("a", Some(BatteryState::Low))
+            },
+            600,
+        );
         board.record(at(12, 10), telemetry("b", None), 600);
 
         let devices = board.snapshot(at(12, 11));
-        assert_eq!(devices.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(
+            devices.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
         assert_eq!(devices[0].battery_millivolts, Some(3350));
         assert_eq!(devices[0].battery_state, Some(BatteryState::Low));
     }
@@ -458,7 +564,10 @@ mod tests {
         assert_eq!(board.snapshot(at(12, 1)).len(), MAX_DEVICES);
         // A known one still updates.
         board.record(at(12, 5), telemetry("d0", Some(BatteryState::Low)), 600);
-        assert_eq!(board.snapshot(at(12, 6))[0].battery_state, Some(BatteryState::Low));
+        assert_eq!(
+            board.snapshot(at(12, 6))[0].battery_state,
+            Some(BatteryState::Low)
+        );
     }
 
     #[test]
@@ -472,9 +581,18 @@ mod tests {
         board.image_served(&id("a"), ImageFormat::Qoi, 163_000, at(12, 2));
         board.image_served(&id("b"), ImageFormat::Bmp, 2_629_366, at(12, 2));
         let devices = board.snapshot(at(12, 5));
-        let (a, b) = (devices[0].last_image.as_ref().unwrap(), devices[1].last_image.as_ref().unwrap());
-        assert_eq!((devices[0].name.as_str(), a.format, a.bytes, a.age_seconds), ("a", ImageFormat::Qoi, 163_000, 180));
-        assert_eq!((devices[1].name.as_str(), b.format, b.bytes), ("b", ImageFormat::Bmp, 2_629_366));
+        let (a, b) = (
+            devices[0].last_image.as_ref().unwrap(),
+            devices[1].last_image.as_ref().unwrap(),
+        );
+        assert_eq!(
+            (devices[0].name.as_str(), a.format, a.bytes, a.age_seconds),
+            ("a", ImageFormat::Qoi, 163_000, 180)
+        );
+        assert_eq!(
+            (devices[1].name.as_str(), b.format, b.bytes),
+            ("b", ImageFormat::Bmp, 2_629_366)
+        );
 
         // A later check-in replaces the readings, not what was sent.
         board.record(at(12, 10), telemetry("a", None), 600);

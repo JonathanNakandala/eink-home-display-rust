@@ -24,8 +24,11 @@ pub struct RetryPolicy {
     pub max_retry_after: Duration,
 }
 
-pub const DEFAULT_RETRY: RetryPolicy =
-    RetryPolicy { retries: 2, backoff: Duration::from_millis(500), max_retry_after: Duration::from_secs(10) };
+pub const DEFAULT_RETRY: RetryPolicy = RetryPolicy {
+    retries: 2,
+    backoff: Duration::from_millis(500),
+    max_retry_after: Duration::from_secs(10),
+};
 
 pub fn client() -> Client {
     client_with_timeouts(CONNECT_TIMEOUT, REQUEST_TIMEOUT)
@@ -48,16 +51,22 @@ pub async fn send(request: RequestBuilder) -> Result<Response, SourceError> {
     send_with(request, DEFAULT_RETRY).await
 }
 
-pub async fn send_with(request: RequestBuilder, policy: RetryPolicy) -> Result<Response, SourceError> {
+pub async fn send_with(
+    request: RequestBuilder,
+    policy: RetryPolicy,
+) -> Result<Response, SourceError> {
     let mut attempt = 0;
     loop {
         // Every request made here is a plain GET, which can always be copied.
-        let this_try = request.try_clone().expect("provider requests have no streaming body");
+        let this_try = request
+            .try_clone()
+            .expect("provider requests have no streaming body");
         let (error, retry_after) = match this_try.send().await {
             Ok(response) if !is_failure(response.status()) => return Ok(response),
-            Ok(response) => {
-                (from_status(response.status()), retry_after(response.headers(), SystemTime::now()))
-            }
+            Ok(response) => (
+                from_status(response.status()),
+                retry_after(response.headers(), SystemTime::now()),
+            ),
             Err(error) => (classify(error), None),
         };
         if attempt >= policy.retries || !error.is_transient() {
@@ -66,13 +75,18 @@ pub async fn send_with(request: RequestBuilder, policy: RetryPolicy) -> Result<R
         if let Some(asked) = retry_after
             && asked > policy.max_retry_after
         {
-            log::warn!("Request failed ({error}); the server asked for {asked:?}, too long to wait");
+            log::warn!(
+                "Request failed ({error}); the server asked for {asked:?}, too long to wait"
+            );
             return Err(error);
         }
         let backoff = policy.backoff * 2u32.pow(attempt);
         let wait = retry_after.map_or(backoff, |asked| asked.max(backoff));
         attempt += 1;
-        log::warn!("Request failed ({error}), retrying in {wait:?} ({attempt}/{})", policy.retries);
+        log::warn!(
+            "Request failed ({error}), retrying in {wait:?} ({attempt}/{})",
+            policy.retries
+        );
         tokio::time::sleep(wait).await;
     }
 }
@@ -120,7 +134,9 @@ fn classify(error: reqwest::Error) -> SourceError {
 fn from_status(status: StatusCode) -> SourceError {
     let code = status.as_u16();
     match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => SourceError::Unauthorized { status: code },
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            SourceError::Unauthorized { status: code }
+        }
         StatusCode::TOO_MANY_REQUESTS => SourceError::RateLimited,
         StatusCode::REQUEST_TIMEOUT => SourceError::Timeout,
         _ if status.is_server_error() => SourceError::Upstream { status: code },
@@ -137,18 +153,21 @@ fn strip_query(mut error: reqwest::Error) -> reqwest::Error {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use axum::Router;
     use axum::extract::State;
     use axum::http::StatusCode;
     use axum::routing::get;
-    use axum::Router;
 
     use super::*;
 
-    const FAST: RetryPolicy =
-        RetryPolicy { retries: 2, backoff: Duration::from_millis(5), max_retry_after: Duration::from_secs(10) };
+    const FAST: RetryPolicy = RetryPolicy {
+        retries: 2,
+        backoff: Duration::from_millis(5),
+        max_retry_after: Duration::from_secs(10),
+    };
 
     struct Canned {
         statuses: Vec<u16>,
@@ -162,9 +181,16 @@ mod tests {
     }
 
     /// Like `server`, with a `Retry-After` header on every failing answer.
-    async fn server_with_retry_after(statuses: Vec<u16>, header: Option<&'static str>) -> (String, Arc<AtomicUsize>) {
+    async fn server_with_retry_after(
+        statuses: Vec<u16>,
+        header: Option<&'static str>,
+    ) -> (String, Arc<AtomicUsize>) {
         let hits = Arc::new(AtomicUsize::new(0));
-        let state = Arc::new(Canned { statuses, hits: Arc::clone(&hits), header });
+        let state = Arc::new(Canned {
+            statuses,
+            hits: Arc::clone(&hits),
+            header,
+        });
         let app = Router::new()
             .route(
                 "/",
@@ -198,7 +224,10 @@ mod tests {
         let (url, hits) = server(vec![500]).await;
         let error = send_with(Client::new().get(&url), FAST).await.unwrap_err();
         assert_eq!(hits.load(Ordering::SeqCst), 3);
-        assert!(matches!(error, SourceError::Upstream { status: 500 }), "{error:?}");
+        assert!(
+            matches!(error, SourceError::Upstream { status: 500 }),
+            "{error:?}"
+        );
         assert!(!format!("{error:?}").contains("secret"), "{error:?}");
     }
 
@@ -206,7 +235,10 @@ mod tests {
     async fn a_client_error_is_not_retried() {
         let (url, hits) = server(vec![401]).await;
         let error = send_with(Client::new().get(&url), FAST).await.unwrap_err();
-        assert!(matches!(error, SourceError::Unauthorized { status: 401 }), "{error:?}");
+        assert!(
+            matches!(error, SourceError::Unauthorized { status: 401 }),
+            "{error:?}"
+        );
         assert!(error.needs_attention());
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
@@ -227,9 +259,15 @@ mod tests {
 
         let client = client_with_timeouts(Duration::from_secs(1), Duration::from_millis(100));
         let started = std::time::Instant::now();
-        let error = send_with(client.get(format!("http://{address}/")), FAST).await.unwrap_err();
+        let error = send_with(client.get(format!("http://{address}/")), FAST)
+            .await
+            .unwrap_err();
 
-        assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(accepted.load(Ordering::SeqCst), 3);
         assert!(matches!(error, SourceError::Timeout), "{error:?}");
     }
@@ -240,7 +278,9 @@ mod tests {
         let address = listener.local_addr().unwrap();
         drop(listener);
         let started = std::time::Instant::now();
-        let error = send_with(Client::new().get(format!("http://{address}/")), FAST).await.unwrap_err();
+        let error = send_with(Client::new().get(format!("http://{address}/")), FAST)
+            .await
+            .unwrap_err();
         assert!(matches!(error, SourceError::Unreachable(_)), "{error:?}");
         // Two backoffs of 5ms and 10ms happened.
         assert!(started.elapsed() >= Duration::from_millis(15));
@@ -257,7 +297,11 @@ mod tests {
             let (url, hits) = server(vec![status]).await;
             let error = send_with(Client::new().get(&url), FAST).await.unwrap_err();
             assert_eq!(error.reason(), expected, "{status}");
-            assert_eq!(hits.load(Ordering::SeqCst), if retried { 3 } else { 1 }, "{status}");
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                if retried { 3 } else { 1 },
+                "{status}"
+            );
         }
     }
 
@@ -265,9 +309,17 @@ mod tests {
     async fn a_body_that_is_not_the_expected_json_is_a_bad_response_and_is_not_retried() {
         let (url, hits) = server(vec![200]).await; // answers "body", which isn't JSON
         let response = send_with(Client::new().get(&url), FAST).await.unwrap();
-        let error = json::<serde_json::Value>(response, "forecast").await.unwrap_err();
-        assert!(matches!(error, SourceError::BadResponse { .. }), "{error:?}");
-        assert!(error.to_string().contains("could not read the forecast"), "{error}");
+        let error = json::<serde_json::Value>(response, "forecast")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, SourceError::BadResponse { .. }),
+            "{error:?}"
+        );
+        assert!(
+            error.to_string().contains("could not read the forecast"),
+            "{error}"
+        );
         assert!(!error.is_transient());
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
@@ -278,7 +330,11 @@ mod tests {
         let started = std::time::Instant::now();
         send_with(Client::new().get(&url), FAST).await.unwrap();
         // The normal backoff here is 5ms; the server asked for a second.
-        assert!(started.elapsed() >= Duration::from_secs(1), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() >= Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
 
@@ -302,9 +358,15 @@ mod tests {
         };
         assert_eq!(header("120"), Some(Duration::from_secs(120)));
         assert_eq!(header(" 3 "), Some(Duration::from_secs(3)));
-        assert_eq!(header("Wed, 21 Oct 2026 07:28:30 GMT"), Some(Duration::from_secs(30)));
+        assert_eq!(
+            header("Wed, 21 Oct 2026 07:28:30 GMT"),
+            Some(Duration::from_secs(30))
+        );
         // A date already past means no wait.
-        assert_eq!(header("Wed, 21 Oct 2026 07:00:00 GMT"), Some(Duration::ZERO));
+        assert_eq!(
+            header("Wed, 21 Oct 2026 07:00:00 GMT"),
+            Some(Duration::ZERO)
+        );
         assert_eq!(header("soon"), None);
         assert_eq!(retry_after(&HeaderMap::new(), now), None);
     }

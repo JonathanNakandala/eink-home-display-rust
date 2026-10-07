@@ -4,14 +4,14 @@
 
 use std::path::PathBuf;
 
-use crate::config::cache::CacheConfig;
 use crate::config::application::{
-    ApplicationConfig, DisplayConfig, DisplayKind, DitherSetting, FileStoreConfig, ImageFormatSetting, LimitsConfig,
-    LocationConfig, StaleDataConfig,
+    ApplicationConfig, DisplayConfig, DisplayKind, DitherSetting, FileStoreConfig,
+    ImageFormatSetting, LimitsConfig, LocationConfig, StaleDataConfig,
 };
+use crate::config::cache::CacheConfig;
 use crate::config::departures::{
-    DepartureBoardConfig, DepartureSource, OpenLdbwsConfig, ProvidersConfig, TflConfig,
-    DEFAULT_TFL_HOST_URL,
+    DEFAULT_TFL_HOST_URL, DepartureBoardConfig, DepartureSource, OpenLdbwsConfig, ProvidersConfig,
+    TflConfig,
 };
 use crate::config::schedule::ScheduleConfig;
 use crate::config::server::ServerConfig;
@@ -128,14 +128,32 @@ mod tests {
         let path = std::env::temp_dir().join("eink_secret_round_trip_test.toml");
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         let loaded = ApplicationConfig::new(&path).unwrap();
-        assert_eq!(loaded.weather.open_weather.unwrap().api_key.expose_secret(), weather_key);
-        assert_eq!(loaded.providers.open_ldbws.unwrap().api_key.expose_secret(), "RAIL-KEY-secret");
-        assert_eq!(loaded.providers.tfl.unwrap().app_key.unwrap().expose_secret(), "TFL-KEY-secret");
+        assert_eq!(
+            loaded.weather.open_weather.unwrap().api_key.expose_secret(),
+            weather_key
+        );
+        assert_eq!(
+            loaded.providers.open_ldbws.unwrap().api_key.expose_secret(),
+            "RAIL-KEY-secret"
+        );
+        assert_eq!(
+            loaded
+                .providers
+                .tfl
+                .unwrap()
+                .app_key
+                .unwrap()
+                .expose_secret(),
+            "TFL-KEY-secret"
+        );
 
         // A key refused for its length is reported by length, not repeated.
         config.weather.open_weather.as_mut().unwrap().api_key = "too-short-but-secret".into();
         let error = config.validate().unwrap_err().to_string();
-        assert!(error.contains("32 characters") && !error.contains("too-short-but-secret"), "{error}");
+        assert!(
+            error.contains("32 characters") && !error.contains("too-short-but-secret"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -32,27 +32,63 @@ pub fn render(status: &Status) -> String {
     gauge(&mut out, "eink_info", "The running version. Always 1.");
     let _ = writeln!(out, "eink_info{{version=\"{}\"}} 1", escape(status.version));
 
-    gauge(&mut out, "eink_render_state", "1 for the service's current state, 0 for the others.");
+    gauge(
+        &mut out,
+        "eink_render_state",
+        "1 for the service's current state, 0 for the others.",
+    );
     for (state, name) in HEALTH_STATES {
-        let _ = writeln!(out, "eink_render_state{{state=\"{name}\"}} {}", u8::from(status.state == state));
+        let _ = writeln!(
+            out,
+            "eink_render_state{{state=\"{name}\"}} {}",
+            u8::from(status.state == state)
+        );
     }
     gauge(&mut out, "eink_rendering", "1 while a render is running.");
     let _ = writeln!(out, "eink_rendering {}", u8::from(status.rendering));
-    gauge(&mut out, "eink_render_consecutive_failures", "Renders that failed in a row.");
-    let _ = writeln!(out, "eink_render_consecutive_failures {}", status.consecutive_failures);
-    gauge(&mut out, "eink_uptime_seconds", "Seconds since the service started.");
+    gauge(
+        &mut out,
+        "eink_render_consecutive_failures",
+        "Renders that failed in a row.",
+    );
+    let _ = writeln!(
+        out,
+        "eink_render_consecutive_failures {}",
+        status.consecutive_failures
+    );
+    gauge(
+        &mut out,
+        "eink_uptime_seconds",
+        "Seconds since the service started.",
+    );
     let _ = writeln!(out, "eink_uptime_seconds {}", status.uptime_seconds);
     if let Some(image) = &status.image {
-        gauge(&mut out, "eink_image_age_seconds", "Seconds since the served image was rendered.");
+        gauge(
+            &mut out,
+            "eink_image_age_seconds",
+            "Seconds since the served image was rendered.",
+        );
         let _ = writeln!(out, "eink_image_age_seconds {}", image.age_seconds);
     }
     if let Some(success) = &status.last_success {
-        gauge(&mut out, "eink_last_render_success_timestamp_seconds", "When a render last succeeded.");
-        let _ = writeln!(out, "eink_last_render_success_timestamp_seconds {}", success.at.timestamp());
+        gauge(
+            &mut out,
+            "eink_last_render_success_timestamp_seconds",
+            "When a render last succeeded.",
+        );
+        let _ = writeln!(
+            out,
+            "eink_last_render_success_timestamp_seconds {}",
+            success.at.timestamp()
+        );
     }
 
     if !status.sources.is_empty() {
-        gauge(&mut out, "eink_source_state", "1 for a source's state on the last render, 0 for the others.");
+        gauge(
+            &mut out,
+            "eink_source_state",
+            "1 for a source's state on the last render, 0 for the others.",
+        );
         for source in &status.sources {
             let current = match source.state {
                 SourceState::Fresh => "fresh",
@@ -71,7 +107,11 @@ pub fn render(status: &Status) -> String {
     }
 
     if !status.devices.is_empty() {
-        gauge(&mut out, "eink_device_last_seen_timestamp_seconds", "When the display last checked in.");
+        gauge(
+            &mut out,
+            "eink_device_last_seen_timestamp_seconds",
+            "When the display last checked in.",
+        );
         for device in &status.devices {
             let _ = writeln!(
                 out,
@@ -80,32 +120,73 @@ pub fn render(status: &Status) -> String {
                 device.last_seen.timestamp()
             );
         }
-        gauge(&mut out, "eink_device_overdue", "1 if the display is later than it was told to be.");
+        gauge(
+            &mut out,
+            "eink_device_overdue",
+            "1 if the display is later than it was told to be.",
+        );
         for device in &status.devices {
-            let _ = writeln!(out, "eink_device_overdue{{device=\"{}\"}} {}", escape(device.name.as_str()), u8::from(device.overdue));
+            let _ = writeln!(
+                out,
+                "eink_device_overdue{{device=\"{}\"}} {}",
+                escape(device.name.as_str()),
+                u8::from(device.overdue)
+            );
         }
-        gauge(&mut out, "eink_device_failed_wakes", "Wakes in a row that failed, for any reason.");
+        gauge(
+            &mut out,
+            "eink_device_failed_wakes",
+            "Wakes in a row that failed, for any reason.",
+        );
         for device in &status.devices {
             if let Some(failed) = device.failed_wakes {
-                let _ = writeln!(out, "eink_device_failed_wakes{{device=\"{}\"}} {failed}", escape(device.name.as_str()));
+                let _ = writeln!(
+                    out,
+                    "eink_device_failed_wakes{{device=\"{}\"}} {failed}",
+                    escape(device.name.as_str())
+                );
             }
         }
-        gauge(&mut out, "eink_device_wifi_rssi_dbm", "The display's Wi-Fi signal strength at its last check-in.");
+        gauge(
+            &mut out,
+            "eink_device_wifi_rssi_dbm",
+            "The display's Wi-Fi signal strength at its last check-in.",
+        );
         for device in &status.devices {
             if let Some(dbm) = device.wifi_rssi_dbm {
-                let _ = writeln!(out, "eink_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}", escape(device.name.as_str()));
+                let _ = writeln!(
+                    out,
+                    "eink_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}",
+                    escape(device.name.as_str())
+                );
             }
         }
-        gauge(&mut out, "eink_device_last_wake_seconds", "How long the display's previous wake was awake.");
+        gauge(
+            &mut out,
+            "eink_device_last_wake_seconds",
+            "How long the display's previous wake was awake.",
+        );
         for device in &status.devices {
             if let Some(seconds) = device.last_wake_seconds {
-                let _ = writeln!(out, "eink_device_last_wake_seconds{{device=\"{}\"}} {seconds}", escape(device.name.as_str()));
+                let _ = writeln!(
+                    out,
+                    "eink_device_last_wake_seconds{{device=\"{}\"}} {seconds}",
+                    escape(device.name.as_str())
+                );
             }
         }
-        gauge(&mut out, "eink_device_last_failure", "1 for why the display's last failed wake failed (none if it didn't), 0 for the others.");
+        gauge(
+            &mut out,
+            "eink_device_last_failure",
+            "1 for why the display's last failed wake failed (none if it didn't), 0 for the others.",
+        );
         for device in &status.devices {
             let name = escape(device.name.as_str());
-            let _ = writeln!(out, "eink_device_last_failure{{device=\"{name}\",reason=\"none\"}} {}", u8::from(device.last_failure.is_none()));
+            let _ = writeln!(
+                out,
+                "eink_device_last_failure{{device=\"{name}\",reason=\"none\"}} {}",
+                u8::from(device.last_failure.is_none())
+            );
             for reason in FailureReason::ALL {
                 let _ = writeln!(
                     out,
@@ -115,19 +196,41 @@ pub fn render(status: &Status) -> String {
                 );
             }
         }
-        gauge(&mut out, "eink_device_battery_volts", "The display's battery voltage.");
+        gauge(
+            &mut out,
+            "eink_device_battery_volts",
+            "The display's battery voltage.",
+        );
         for device in &status.devices {
             if let Some(mv) = device.battery_millivolts {
-                let _ = writeln!(out, "eink_device_battery_volts{{device=\"{}\"}} {}", escape(device.name.as_str()), f64::from(mv) / 1000.0);
+                let _ = writeln!(
+                    out,
+                    "eink_device_battery_volts{{device=\"{}\"}} {}",
+                    escape(device.name.as_str()),
+                    f64::from(mv) / 1000.0
+                );
             }
         }
-        gauge(&mut out, "eink_device_battery_ratio", "The display's battery charge, 0 to 1.");
+        gauge(
+            &mut out,
+            "eink_device_battery_ratio",
+            "The display's battery charge, 0 to 1.",
+        );
         for device in &status.devices {
             if let Some(pct) = device.battery_percent {
-                let _ = writeln!(out, "eink_device_battery_ratio{{device=\"{}\"}} {}", escape(device.name.as_str()), f64::from(pct) / 100.0);
+                let _ = writeln!(
+                    out,
+                    "eink_device_battery_ratio{{device=\"{}\"}} {}",
+                    escape(device.name.as_str()),
+                    f64::from(pct) / 100.0
+                );
             }
         }
-        gauge(&mut out, "eink_device_battery_state", "1 for the display's battery state, 0 for the others.");
+        gauge(
+            &mut out,
+            "eink_device_battery_state",
+            "1 for the display's battery state, 0 for the others.",
+        );
         for device in &status.devices {
             if let Some(current) = device.battery_state {
                 for state in BatteryState::ALL {
@@ -147,13 +250,16 @@ pub fn render(status: &Status) -> String {
 
 /// A label value: backslash, quote and newline escaped, as the exposition format requires.
 fn escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
     use chrono_tz::Europe::London;
-    use chrono::{TimeZone};
 
     use super::*;
     use crate::application::devices::DeviceStatus;
@@ -168,11 +274,18 @@ mod tests {
         Status {
             state: Health::Degraded,
             rendering: false,
-            image: Some(ImageStatus { rendered_at: at(), age_seconds: 90, version: 1 }),
+            image: Some(ImageStatus {
+                rendered_at: at(),
+                age_seconds: 90,
+                version: 1,
+            }),
             last_success: None,
             last_failure: None,
             consecutive_failures: 0,
-            sources: vec![SourceReport { name: "TURNPIKE \"LANE\"".into(), state: SourceState::Stale { age_seconds: 300 } }],
+            sources: vec![SourceReport {
+                name: "TURNPIKE \"LANE\"".into(),
+                state: SourceState::Stale { age_seconds: 300 },
+            }],
             devices: vec![DeviceStatus {
                 name: "kitchen".parse().unwrap(),
                 last_seen: at(),
@@ -217,7 +330,10 @@ mod tests {
             "eink_source_state{source=\"TURNPIKE \\\"LANE\\\"\",state=\"stale\"} 1",
             "eink_info{version=\"1.2.3\"} 1",
         ] {
-            assert!(text.lines().any(|l| l == line), "missing {line:?} in:\n{text}");
+            assert!(
+                text.lines().any(|l| l == line),
+                "missing {line:?} in:\n{text}"
+            );
         }
     }
 

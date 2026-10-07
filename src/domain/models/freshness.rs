@@ -25,7 +25,9 @@ pub struct LastGood<T> {
 
 impl<T> Default for LastGood<T> {
     fn default() -> Self {
-        Self { slot: Mutex::new(None) }
+        Self {
+            slot: Mutex::new(None),
+        }
     }
 }
 
@@ -55,17 +57,31 @@ impl<T: Clone> LastGood<T> {
             // is. Better off the display than shown with an age that is made up, and dropped so that the
             // clock catching up can't bring it back looking fresh.
             Some((_, fetched_at)) if *fetched_at > now => {
-                report(source, &error, "its last data is from the future (the clock was set back), so it is dropped");
+                report(
+                    source,
+                    &error,
+                    "its last data is from the future (the clock was set back), so it is dropped",
+                );
                 *slot = None;
                 Fetched::Unavailable { reason }
             }
             Some((value, fetched_at)) if now - *fetched_at <= max_age => {
                 let age = (now - *fetched_at).max(Duration::zero());
-                report(source, &error, &format!("showing data from {} ago", format_age(age)));
-                Fetched::Stale { value: value.clone(), age }
+                report(
+                    source,
+                    &error,
+                    &format!("showing data from {} ago", format_age(age)),
+                );
+                Fetched::Stale {
+                    value: value.clone(),
+                    age,
+                }
             }
             Some((_, fetched_at)) => {
-                let detail = format!("its last data is {} old, over the limit", format_age(now - *fetched_at));
+                let detail = format!(
+                    "its last data is {} old, over the limit",
+                    format_age(now - *fetched_at)
+                );
                 report(source, &error, &detail);
                 Fetched::Unavailable { reason }
             }
@@ -99,8 +115,8 @@ pub fn format_age(age: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
 
@@ -117,10 +133,16 @@ mod tests {
     #[test]
     fn a_success_is_fresh_and_remembered() {
         let last = LastGood::default();
-        assert_eq!(last.resolve(Ok(1), at(12, 0), LIMIT, "x"), Fetched::Fresh(1));
+        assert_eq!(
+            last.resolve(Ok(1), at(12, 0), LIMIT, "x"),
+            Fetched::Fresh(1)
+        );
         assert_eq!(
             last.resolve(Err(down()), at(12, 5), LIMIT, "x"),
-            Fetched::Stale { value: 1, age: Duration::minutes(5) }
+            Fetched::Stale {
+                value: 1,
+                age: Duration::minutes(5)
+            }
         );
     }
 
@@ -128,25 +150,48 @@ mod tests {
     fn data_older_than_the_limit_is_unavailable() {
         let last = LastGood::default();
         last.resolve(Ok(1), at(12, 0), LIMIT, "x");
-        assert_eq!(last.resolve(Err(down()), at(12, 15), LIMIT, "x"), Fetched::Stale { value: 1, age: LIMIT });
+        assert_eq!(
+            last.resolve(Err(down()), at(12, 15), LIMIT, "x"),
+            Fetched::Stale {
+                value: 1,
+                age: LIMIT
+            }
+        );
         assert_eq!(
             last.resolve(Err(down()), at(12, 16), LIMIT, "x"),
-            Fetched::Unavailable { reason: "service error" }
+            Fetched::Unavailable {
+                reason: "service error"
+            }
         );
     }
 
     #[test]
     fn a_failure_with_nothing_remembered_is_unavailable() {
         let last: LastGood<i32> = LastGood::default();
-        assert_eq!(last.resolve(Err(down()), at(12, 0), LIMIT, "x"), Fetched::Unavailable { reason: "service error" });
+        assert_eq!(
+            last.resolve(Err(down()), at(12, 0), LIMIT, "x"),
+            Fetched::Unavailable {
+                reason: "service error"
+            }
+        );
     }
 
     #[test]
     fn the_reason_comes_from_the_kind_of_failure() {
         let last: LastGood<i32> = LastGood::default();
         let unavailable = |error| last.resolve(Err(error), at(12, 0), LIMIT, "x");
-        assert_eq!(unavailable(SourceError::Unauthorized { status: 401 }), Fetched::Unavailable { reason: "key rejected" });
-        assert_eq!(unavailable(SourceError::Timeout), Fetched::Unavailable { reason: "timed out" });
+        assert_eq!(
+            unavailable(SourceError::Unauthorized { status: 401 }),
+            Fetched::Unavailable {
+                reason: "key rejected"
+            }
+        );
+        assert_eq!(
+            unavailable(SourceError::Timeout),
+            Fetched::Unavailable {
+                reason: "timed out"
+            }
+        );
     }
 
     #[test]
@@ -156,7 +201,10 @@ mod tests {
         last.resolve(Ok(2), at(12, 10), LIMIT, "x");
         assert_eq!(
             last.resolve(Err(down()), at(12, 20), LIMIT, "x"),
-            Fetched::Stale { value: 2, age: Duration::minutes(10) }
+            Fetched::Stale {
+                value: 2,
+                age: Duration::minutes(10)
+            }
         );
     }
 
@@ -174,17 +222,33 @@ mod tests {
 
         // Three hours back, and the source is down: the data's age can't be known.
         let fetched = slot.resolve(Err(SourceError::Timeout), at(12, 0), LIMIT, "t");
-        assert_eq!(fetched, Fetched::Unavailable { reason: "timed out" });
+        assert_eq!(
+            fetched,
+            Fetched::Unavailable {
+                reason: "timed out"
+            }
+        );
 
         // And it stays gone when the clock catches up to 15:05, within the limit of when it was fetched.
         let later = slot.resolve(Err(SourceError::Timeout), at(15, 5), LIMIT, "t");
-        assert_eq!(later, Fetched::Unavailable { reason: "timed out" });
+        assert_eq!(
+            later,
+            Fetched::Unavailable {
+                reason: "timed out"
+            }
+        );
 
         // A source that answers again starts over.
-        assert_eq!(slot.resolve(Ok(2), at(12, 10), LIMIT, "t"), Fetched::Fresh(2));
+        assert_eq!(
+            slot.resolve(Ok(2), at(12, 10), LIMIT, "t"),
+            Fetched::Fresh(2)
+        );
         assert_eq!(
             slot.resolve(Err(SourceError::Timeout), at(12, 15), LIMIT, "t"),
-            Fetched::Stale { value: 2, age: Duration::minutes(5) }
+            Fetched::Stale {
+                value: 2,
+                age: Duration::minutes(5)
+            }
         );
     }
 }

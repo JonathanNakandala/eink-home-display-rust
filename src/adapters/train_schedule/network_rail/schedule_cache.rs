@@ -244,15 +244,30 @@ mod tests {
     #[test]
     fn overlay_schedule_beats_permanent_schedule() {
         let records = vec![
-            record("UID1", "2024-01-01", "2024-12-31", "1111111", "P", Some(1000.0)),
-            record("UID1", "2024-01-10", "2024-01-10", "1111111", "O", Some(1100.0)),
+            record(
+                "UID1",
+                "2024-01-01",
+                "2024-12-31",
+                "1111111",
+                "P",
+                Some(1000.0),
+            ),
+            record(
+                "UID1",
+                "2024-01-10",
+                "2024-01-10",
+                "1111111",
+                "O",
+                Some(1100.0),
+            ),
         ];
 
         let passages = passages_on_date(&records, wednesday());
 
         assert_that!(passages).has_length(1);
-        assert_that!(passages[0].scheduled_at)
-            .is_equal_to(wednesday().and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::minutes(1100));
+        assert_that!(passages[0].scheduled_at).is_equal_to(
+            wednesday().and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::minutes(1100),
+        );
     }
 
     #[test]

@@ -89,11 +89,11 @@ where
 
         self.send_command(0x01)?; // POWER SETTING
         self.send_data(&[
-            0x17, // internal power
-            VOLTAGE_FRAME[6],     // VGH & VGL
-            VOLTAGE_FRAME[1],     // VSH
-            VOLTAGE_FRAME[2],     // VSL
-            VOLTAGE_FRAME[3],     // VSHR
+            0x17,             // internal power
+            VOLTAGE_FRAME[6], // VGH & VGL
+            VOLTAGE_FRAME[1], // VSH
+            VOLTAGE_FRAME[2], // VSL
+            VOLTAGE_FRAME[3], // VSHR
         ])?;
 
         self.send_command(0x82)?; // VCOM DC SETTING
@@ -267,32 +267,56 @@ mod tests {
     struct FakeBusy(u32);
     struct NoDelay;
 
-    impl PinErrorType for FakeDc { type Error = Infallible; }
-    impl PinErrorType for FakeRst { type Error = Infallible; }
-    impl PinErrorType for FakeBusy { type Error = Infallible; }
-    impl SpiErrorType for FakeSpi { type Error = Infallible; }
+    impl PinErrorType for FakeDc {
+        type Error = Infallible;
+    }
+    impl PinErrorType for FakeRst {
+        type Error = Infallible;
+    }
+    impl PinErrorType for FakeBusy {
+        type Error = Infallible;
+    }
+    impl SpiErrorType for FakeSpi {
+        type Error = Infallible;
+    }
 
     impl OutputPin for FakeDc {
-        fn set_low(&mut self) -> Result<(), Infallible> { *self.0.borrow_mut() = false; Ok(()) }
-        fn set_high(&mut self) -> Result<(), Infallible> { *self.0.borrow_mut() = true; Ok(()) }
+        fn set_low(&mut self) -> Result<(), Infallible> {
+            *self.0.borrow_mut() = false;
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), Infallible> {
+            *self.0.borrow_mut() = true;
+            Ok(())
+        }
     }
     impl OutputPin for FakeRst {
-        fn set_low(&mut self) -> Result<(), Infallible> { Ok(()) }
-        fn set_high(&mut self) -> Result<(), Infallible> { Ok(()) }
+        fn set_low(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
     }
     impl InputPin for FakeBusy {
         fn is_high(&mut self) -> Result<bool, Infallible> {
-            if self.0 == 0 { return Ok(true); }
+            if self.0 == 0 {
+                return Ok(true);
+            }
             self.0 -= 1;
             Ok(false)
         }
-        fn is_low(&mut self) -> Result<bool, Infallible> { self.is_high().map(|h| !h) }
+        fn is_low(&mut self) -> Result<bool, Infallible> {
+            self.is_high().map(|h| !h)
+        }
     }
     impl SpiDevice for FakeSpi {
         fn transaction(&mut self, ops: &mut [Operation<'_, u8>]) -> Result<(), Infallible> {
             for op in ops {
                 if let Operation::Write(bytes) = op {
-                    self.0.borrow_mut().push((!*self.1.borrow(), bytes.to_vec()));
+                    self.0
+                        .borrow_mut()
+                        .push((!*self.1.borrow(), bytes.to_vec()));
                 }
             }
             Ok(())
@@ -316,7 +340,11 @@ mod tests {
     }
 
     fn commands(log: &Log) -> Vec<u8> {
-        log.borrow().iter().filter(|(c, _)| *c).map(|(_, b)| b[0]).collect()
+        log.borrow()
+            .iter()
+            .filter(|(c, _)| *c)
+            .map(|(_, b)| b[0])
+            .collect()
     }
 
     #[test]
@@ -330,7 +358,10 @@ mod tests {
         let log = log.borrow();
         let data: Vec<_> = log.iter().filter(|(c, _)| !*c).collect();
         assert!(data.iter().all(|(_, b)| b.len() <= SPI_CHUNK));
-        assert_eq!(data.iter().map(|(_, b)| b.len()).sum::<usize>(), BUFFER_SIZE);
+        assert_eq!(
+            data.iter().map(|(_, b)| b.len()).sum::<usize>(),
+            BUFFER_SIZE
+        );
     }
 
     #[test]
@@ -339,7 +370,13 @@ mod tests {
 
         let result = panel.display(&[0; 10]);
 
-        assert!(matches!(result, Err(Error::BadBufferLength { expected: BUFFER_SIZE, actual: 10 })));
+        assert!(matches!(
+            result,
+            Err(Error::BadBufferLength {
+                expected: BUFFER_SIZE,
+                actual: 10
+            })
+        ));
         assert!(log.borrow().is_empty());
     }
 
@@ -352,7 +389,11 @@ mod tests {
         let cmds = commands(&log);
         assert_eq!(&cmds[..3], &[0x01, 0x82, 0x06]);
         assert_eq!(&cmds[cmds.len() - 5..], &[0x20, 0x21, 0x22, 0x23, 0x24]);
-        assert!(log.borrow().iter().any(|(c, b)| !*c && b == &LUT_WB.to_vec()));
+        assert!(
+            log.borrow()
+                .iter()
+                .any(|(c, b)| !*c && b == &LUT_WB.to_vec())
+        );
     }
 
     #[test]

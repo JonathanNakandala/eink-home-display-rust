@@ -7,9 +7,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime};
+use chrono::DateTime;
 use chrono_tz::Tz;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::services::render_observer::RenderObserver;
@@ -33,7 +33,12 @@ pub struct RefreshControl {
 
 impl RefreshControl {
     pub fn new(cooldown: Duration) -> Arc<Self> {
-        Arc::new(Self { wake: Notify::new(), finished: watch::channel(0).0, last_started: Mutex::new(None), cooldown })
+        Arc::new(Self {
+            wake: Notify::new(),
+            finished: watch::channel(0).0,
+            last_started: Mutex::new(None),
+            cooldown,
+        })
     }
 
     /// Completes when a render has been requested; the scheduler loop selects on it.
@@ -49,7 +54,10 @@ impl RefreshControl {
     /// Triggers a render and waits for it, unless one started within the cooldown.
     pub async fn request(&self, timeout: Duration) -> RefreshOutcome {
         {
-            let mut last = self.last_started.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut last = self
+                .last_started
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let now = Instant::now();
             if last.is_some_and(|started| now.duration_since(started) < self.cooldown) {
                 return RefreshOutcome::Throttled;
@@ -69,7 +77,10 @@ impl RefreshControl {
 
 impl RenderObserver for RefreshControl {
     fn render_started(&self) {
-        *self.last_started.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+        *self
+            .last_started
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
     }
 
     fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {
@@ -86,7 +97,10 @@ mod tests {
     use super::*;
 
     /// Plays the scheduler loop: renders (taking `work`) each time it is woken.
-    fn spawn_loop(control: &Arc<RefreshControl>, work: Duration) -> Arc<std::sync::atomic::AtomicUsize> {
+    fn spawn_loop(
+        control: &Arc<RefreshControl>,
+        work: Duration,
+    ) -> Arc<std::sync::atomic::AtomicUsize> {
         let renders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (control, count) = (Arc::clone(control), Arc::clone(&renders));
         tokio::spawn(async move {
@@ -106,7 +120,10 @@ mod tests {
         let control = RefreshControl::new(Duration::from_secs(30));
         let renders = spawn_loop(&control, Duration::from_millis(50));
 
-        assert_eq!(control.request(Duration::from_secs(5)).await, RefreshOutcome::Rendered);
+        assert_eq!(
+            control.request(Duration::from_secs(5)).await,
+            RefreshOutcome::Rendered
+        );
         assert_eq!(renders.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
@@ -115,8 +132,14 @@ mod tests {
         let control = RefreshControl::new(Duration::from_secs(30));
         let renders = spawn_loop(&control, Duration::from_millis(10));
 
-        assert_eq!(control.request(Duration::from_secs(5)).await, RefreshOutcome::Rendered);
-        assert_eq!(control.request(Duration::from_secs(5)).await, RefreshOutcome::Throttled);
+        assert_eq!(
+            control.request(Duration::from_secs(5)).await,
+            RefreshOutcome::Rendered
+        );
+        assert_eq!(
+            control.request(Duration::from_secs(5)).await,
+            RefreshOutcome::Throttled
+        );
         assert_eq!(renders.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
@@ -125,17 +148,26 @@ mod tests {
         let control = RefreshControl::new(Duration::from_secs(30));
         let renders = spawn_loop(&control, Duration::from_millis(50));
 
-        let (a, b) = tokio::join!(control.request(Duration::from_secs(5)), control.request(Duration::from_secs(5)));
+        let (a, b) = tokio::join!(
+            control.request(Duration::from_secs(5)),
+            control.request(Duration::from_secs(5))
+        );
         let mut outcomes = [a, b];
         outcomes.sort_by_key(|o| *o as u8);
-        assert_eq!(outcomes, [RefreshOutcome::Rendered, RefreshOutcome::Throttled]);
+        assert_eq!(
+            outcomes,
+            [RefreshOutcome::Rendered, RefreshOutcome::Throttled]
+        );
         assert_eq!(renders.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn a_render_that_never_finishes_times_out() {
         let control = RefreshControl::new(Duration::ZERO);
-        assert_eq!(control.request(Duration::from_millis(50)).await, RefreshOutcome::TimedOut);
+        assert_eq!(
+            control.request(Duration::from_millis(50)).await,
+            RefreshOutcome::TimedOut
+        );
     }
 
     #[tokio::test]
@@ -143,9 +175,15 @@ mod tests {
         let control = RefreshControl::new(Duration::from_millis(40));
         let renders = spawn_loop(&control, Duration::from_millis(5));
 
-        assert_eq!(control.request(Duration::from_secs(5)).await, RefreshOutcome::Rendered);
+        assert_eq!(
+            control.request(Duration::from_secs(5)).await,
+            RefreshOutcome::Rendered
+        );
         tokio::time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(control.request(Duration::from_secs(5)).await, RefreshOutcome::Rendered);
+        assert_eq!(
+            control.request(Duration::from_secs(5)).await,
+            RefreshOutcome::Rendered
+        );
         assert_eq!(renders.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 }

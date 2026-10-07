@@ -45,7 +45,11 @@ pub struct Args {
 impl From<bool> for ChromeSource {
     /// From a `--bundled-chrome` flag.
     fn from(bundled: bool) -> Self {
-        if bundled { Self::Bundled } else { Self::PreferSystem }
+        if bundled {
+            Self::Bundled
+        } else {
+            Self::PreferSystem
+        }
     }
 }
 
@@ -56,9 +60,15 @@ impl Args {
         if self.once {
             return Ok(None);
         }
-        let from_flags = if self.cron.is_empty() { self.every.clone() } else { Some(Schedule::parse_crons(&self.cron)?) };
+        let from_flags = if self.cron.is_empty() {
+            self.every.clone()
+        } else {
+            Some(Schedule::parse_crons(&self.cron)?)
+        };
         if from_flags.is_some() && configured.is_some() {
-            log::info!("Using the schedule from the command line, not the [schedule] in the config");
+            log::info!(
+                "Using the schedule from the command line, not the [schedule] in the config"
+            );
         }
         Ok(from_flags.or(configured))
     }
@@ -66,7 +76,9 @@ impl Args {
 
 /// Checked as the flag is read, so a typo is reported against the flag; the text is kept as it was written.
 fn valid_cron(expression: &str) -> Result<String, String> {
-    Schedule::parse_cron(expression).map(|_| expression.to_owned()).map_err(|e| format!("{e:#}"))
+    Schedule::parse_cron(expression)
+        .map(|_| expression.to_owned())
+        .map_err(|e| format!("{e:#}"))
 }
 
 #[derive(clap::Parser)]
