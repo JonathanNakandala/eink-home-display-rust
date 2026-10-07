@@ -150,3 +150,44 @@ async fn caps_the_time_offset_at_what_the_api_accepts() {
 
     mock.assert();
 }
+
+#[tokio::test]
+async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
+    use chrono_tz::Australia::Sydney;
+
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/GetArrDepBoardWithDetails/HRN");
+        then.status(200).header("content-type", "application/json").body(SAMPLE_RESPONSE);
+    });
+    let under_test = OpenLdbwsDeparturesServiceAdapter::new(
+        format!("{}/GetArrDepBoardWithDetails", server.base_url()),
+        "apikey".into(),
+        "HRN".to_owned(),
+        "WGC".to_owned(),
+        0,
+        reqwest::Client::new(),
+    );
+
+    // 18:00 in London is 05:00 the next morning in Sydney (UTC+11 in January). The board's times are UK times:
+    // read as the display's own, "18:04" would be 13 hours away and show as 18:04 on a clock that says 05:00.
+    let in_sydney = now().with_timezone(&Sydney);
+    let departures = under_test.get_departures(4, in_sydney).await.unwrap();
+
+    assert_that(&departures).is_equal_to(Departures::new(
+        "Hornsey".to_owned(),
+        vec![
+            DepartureService::new("05:04".into(), "Welwyn Garden City".into(), DepartureStatus::OnTime, String::new(), "4 min".into()),
+            DepartureService::new("05:19".into(), "Welwyn Garden City".into(), DepartureStatus::Delayed, "05:27".into(), "27 min".into()),
+            DepartureService::new("05:34".into(), "Welwyn Garden City".into(), DepartureStatus::Cancelled, String::new(), String::new()),
+        ],
+    ));
+
+    // Cached, then shown four minutes later: the first is due, and the rest count down from the same moments.
+    let later = in_sydney + chrono::Duration::minutes(4);
+    let again = departures.as_of(later);
+    assert_eq!(again.services.iter().map(|s| s.countdown.as_str()).collect::<Vec<_>>(), ["due", "23 min", ""]);
+    assert_eq!(again.services.len(), 3);
+    // A minute on, the 05:04 has gone.
+    assert_eq!(departures.as_of(later + chrono::Duration::minutes(1)).services.len(), 2);
+}
