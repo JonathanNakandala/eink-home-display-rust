@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
+use super::identity::Caller;
 use super::{negotiate, Published};
 use crate::domain::models::display::ImageFormat;
 
@@ -15,7 +16,11 @@ use crate::domain::models::display::ImageFormat;
 /// A format whose file can't be inspected or read is skipped, so one bad file doesn't take the
 /// others down with it. It is a 500 only when that leaves the client nothing it accepts, and never
 /// a 404 or 406: those would say the image isn't there or isn't wanted, when the server failed.
-pub(super) async fn image(State(published): State<Arc<Published>>, headers: HeaderMap) -> Response {
+pub(super) async fn image(
+    State(published): State<Arc<Published>>,
+    Caller(caller): Caller,
+    headers: HeaderMap,
+) -> Response {
     let mut available = Vec::new();
     let mut unreadable = Vec::new();
     for format in ImageFormat::ALL {
@@ -48,6 +53,11 @@ pub(super) async fn image(State(published): State<Arc<Published>>, headers: Head
     for format in candidates {
         match published.images.read(format).await {
             Ok(Some(bytes)) => {
+                // Which display got which format, so a comparison of formats says who it was run on. Noted as the
+                // reply is handed to the server, not when the last byte has gone: that is for the transfer timing.
+                if let Some(device) = &caller {
+                    published.handles.devices.image_served(device, format, bytes.len() as u64, published.clock.now());
+                }
                 return (
                     [
                         (header::CONTENT_TYPE, format.content_type()),
@@ -139,6 +149,50 @@ mod tests {
             assert_eq!(response.headers()["cache-control"], "no-store", "{accept:?}");
             assert_eq!(response.text().await.unwrap(), body, "{accept:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn two_displays_fetching_at_once_are_each_recorded_with_what_they_were_sent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes").await.unwrap();
+        for name in ["kitchen", "hall"] {
+            assert_eq!(reqwest::get(format!("{base}/plan?device={name}")).await.unwrap().status(), 200);
+        }
+
+        let fetch_as = |name: &'static str, accept: &'static str| {
+            let url = format!("{base}/image?device={name}");
+            async move { reqwest::Client::new().get(url).header("Accept", accept).send().await.unwrap().text().await.unwrap() }
+        };
+        let (kitchen, hall) = tokio::join!(fetch_as("kitchen", "image/bmp"), fetch_as("hall", "image/png"));
+        assert_eq!((kitchen.as_str(), hall.as_str()), ("bmp-bytes", "png-bytes"));
+
+        let status = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let sent = |name: &str| {
+            let device = status["devices"].as_array().unwrap().iter().find(|d| d["name"] == name).unwrap().clone();
+            (device["last_image"]["format"].clone(), device["last_image"]["bytes"].clone())
+        };
+        assert_eq!(sent("kitchen"), (serde_json::json!("bmp"), serde_json::json!(9)));
+        assert_eq!(sent("hall"), (serde_json::json!("png"), serde_json::json!(9)));
+    }
+
+    #[tokio::test]
+    async fn a_missing_or_bad_name_is_still_served_and_just_not_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"x").await.unwrap();
+        // Checked in under a good name, so a record exists that a wrongly attributed fetch could have changed.
+        reqwest::get(format!("{base}/plan?device=kitchen")).await.unwrap();
+
+        for query in ["", "?device=", "?device=has%20space", "?device=stranger", "?device=%22%0A"] {
+            let response = reqwest::get(format!("{base}/image{query}")).await.unwrap();
+            assert_eq!(response.status(), 200, "{query}");
+        }
+        let status = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let devices = status["devices"].as_array().unwrap();
+        assert_eq!(devices.len(), 1, "a fetch alone adds no display: {devices:?}");
+        assert!(devices[0]["last_image"].is_null(), "{devices:?}");
     }
 
     #[tokio::test]

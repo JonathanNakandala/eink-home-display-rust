@@ -3,6 +3,7 @@
 
 mod advertise;
 mod health;
+mod identity;
 mod image;
 mod listen;
 mod metrics;

@@ -33,7 +33,8 @@ pub enum Dither {
 }
 
 /// The file format the reTerminal E1003 downloads.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ImageFormat {
     /// 8-bit greyscale, uncompressed (about 2.6 MB). The simplest for the firmware to decode.
     #[default]

@@ -9,6 +9,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::health::image_written_at;
+use super::identity::Caller;
 use super::{server_error, Published};
 use crate::application::devices::{RawTelemetry, Telemetry};
 use crate::application::plan::compute;
@@ -28,10 +29,11 @@ pub(super) struct PlanQuery {
 /// Tells a display which render the image is, whether it is stale, and when to ask again.
 pub(super) async fn plan(
     State(published): State<Arc<Published>>,
+    Caller(caller): Caller,
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
-    plan_response(&published, query.have, telemetry.parse()).await
+    plan_response(&published, query.have, caller.map(|device| telemetry.parse(device))).await
 }
 
 /// Renders now if the display's button asked for it (and one hasn't just run), then answers
@@ -39,6 +41,7 @@ pub(super) async fn plan(
 /// image there is.
 pub(super) async fn refresh_now(
     State(published): State<Arc<Published>>,
+    Caller(caller): Caller,
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
@@ -47,7 +50,7 @@ pub(super) async fn refresh_now(
         RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
         RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
     }
-    plan_response(&published, query.have, telemetry.parse()).await
+    plan_response(&published, query.have, caller.map(|device| telemetry.parse(device))).await
 }
 
 async fn plan_response(published: &Published, have: Option<u32>, telemetry: Option<Telemetry>) -> Response {
