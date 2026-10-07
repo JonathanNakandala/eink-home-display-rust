@@ -77,7 +77,7 @@ restarted (it keeps them in memory only).
 schedule. The device asks it on every wake.
 
 ```json
-{"version":3973074790,"changed":true,"stale":false,"pending":false,"next_seconds":65,"age_seconds":1}
+{"version":3973074790,"changed":true,"stale":false,"pending":false,"next_seconds":65,"age_seconds":1,"timezone":"Europe/London","utc_offset_seconds":3600}
 ```
 
 - `version`: when the image was rendered, in seconds since 1970, so a newer render has a larger version. The
@@ -88,6 +88,11 @@ schedule. The device asks it on every wake.
   Never more than a day: over a longer quiet spell (a weekend with no refreshes) the device wakes once a day,
   finds the picture unchanged and sleeps again, and the server still notices a display that has gone quiet.
 - `pending`: a render is due or running, so `next_seconds` is just the wake delay. Ask again then.
+- `timezone`, `utc_offset_seconds`: the zone the server works in (`[location] timezone`), and how far ahead of UTC it is
+  right now. The device has no timezone database and nothing in its YAML names a zone: it keeps the offset from the last
+  plan (across sleeps, since a failure is often a server it couldn't reach) and adds it to its clock to write the time
+  in the failure notice (`Last update failed @ 14:32`). It is right until the next clock change, which the next plan
+  corrects. Until a plan has ever answered, or if the clock isn't set, the notice has no time rather than a wrong one.
 - `stale`: a scheduled render came more than `server.stale_grace_seconds` (300) late. `next_seconds` then points at the next slot.
 - `age_seconds`: time since the image was rendered.
 

@@ -64,9 +64,9 @@ says so.
 
 Left out, the host's zone is used and a warning is logged at every start. That is only right if the machine is
 set to the display's zone: a container or a cloud machine is usually UTC, and then a schedule written as
-"07:00 to 09:00 on weekdays" runs at the wrong hours, with no error. The display's own clock for the "last
-updated" notice has a separate `timezone` in `esphome/reterminal-e1003.yaml`, which is not yet taken from the
-server, so set the two to the same zone.
+"07:00 to 09:00 on weekdays" runs at the wrong hours, with no error. The display takes its zone from the
+server too: `/plan` carries the zone and its current offset from UTC, so the time in the display's "update
+failed" notice is the server's, and there is nothing to keep in step in the firmware.
 
 ## Watching the displays
 
