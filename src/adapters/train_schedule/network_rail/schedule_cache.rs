@@ -84,33 +84,32 @@ fn resolve_record(
         .is_some_and(|status| NON_RAIL_STATUS.contains(&status));
 
     let mut minutes = None;
-    if !is_non_rail {
-        if let Some(locs) = schedule
+    if !is_non_rail
+        && let Some(locs) = schedule
             .schedule_segment
             .as_ref()
             .and_then(|s| s.schedule_location.as_ref())
             .filter(|locs| !locs.is_empty())
-        {
-            let origin = parse_hhmm(locs[0].departure.as_deref());
-            'outer: for code in watch_tiplocs {
-                for loc in locs {
-                    if loc.tiploc_code.as_deref() != Some(code.as_str()) {
-                        continue;
-                    }
-                    let Some(mut t) = parse_hhmm(loc.pass.as_deref())
-                        .or_else(|| parse_hhmm(loc.departure.as_deref()))
-                        .or_else(|| parse_hhmm(loc.arrival.as_deref()))
-                    else {
-                        continue;
-                    };
-                    if let Some(origin) = origin {
-                        if t < origin {
-                            t += 1440.0; // passes after midnight
-                        }
-                    }
-                    minutes = Some(t);
-                    break 'outer;
+    {
+        let origin = parse_hhmm(locs[0].departure.as_deref());
+        'outer: for code in watch_tiplocs {
+            for loc in locs {
+                if loc.tiploc_code.as_deref() != Some(code.as_str()) {
+                    continue;
                 }
+                let Some(mut t) = parse_hhmm(loc.pass.as_deref())
+                    .or_else(|| parse_hhmm(loc.departure.as_deref()))
+                    .or_else(|| parse_hhmm(loc.arrival.as_deref()))
+                else {
+                    continue;
+                };
+                if let Some(origin) = origin
+                    && t < origin
+                {
+                    t += 1440.0; // passes after midnight
+                }
+                minutes = Some(t);
+                break 'outer;
             }
         }
     }

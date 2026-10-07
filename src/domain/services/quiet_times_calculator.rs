@@ -48,7 +48,7 @@ impl DailyReport {
     /// This day's own gaps, longest first, capped at `limit`.
     pub fn longest_gaps(&self, limit: usize) -> Vec<&Gap> {
         let mut gaps: Vec<&Gap> = self.gaps.iter().collect();
-        gaps.sort_by(|a, b| b.duration().cmp(&a.duration()));
+        gaps.sort_by_key(|gap| std::cmp::Reverse(gap.duration()));
         gaps.truncate(limit);
         gaps
     }
@@ -67,7 +67,7 @@ impl QuietTimesReport {
             .iter()
             .flat_map(|day| day.gaps.iter().cloned().map(move |gap| (day.date, gap)))
             .collect();
-        all.sort_by(|a, b| b.1.duration().cmp(&a.1.duration()));
+        all.sort_by_key(|entry| std::cmp::Reverse(entry.1.duration()));
         all.truncate(limit);
         all
     }

@@ -78,16 +78,16 @@ fn parse_range(item: &str) -> Option<Range> {
     }
     let mut weight = 1000;
     for parameter in parts {
-        if let Some((name, value)) = parameter.split_once('=') {
-            if name.trim().eq_ignore_ascii_case("q") {
-                // A malformed weight makes the range unusable rather than guessing what was meant.
-                let q: f32 = value
-                    .trim()
-                    .parse()
-                    .ok()
-                    .filter(|q| (0.0..=1.0).contains(q))?;
-                weight = (q * 1000.0).round() as u16;
-            }
+        if let Some((name, value)) = parameter.split_once('=')
+            && name.trim().eq_ignore_ascii_case("q")
+        {
+            // A malformed weight makes the range unusable rather than guessing what was meant.
+            let q: f32 = value
+                .trim()
+                .parse()
+                .ok()
+                .filter(|q| (0.0..=1.0).contains(q))?;
+            weight = (q * 1000.0).round() as u16;
         }
     }
     let specificity = match (kind, subtype) {

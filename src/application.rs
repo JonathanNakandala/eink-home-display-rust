@@ -68,6 +68,14 @@ impl Default for RenderLimits {
     }
 }
 
+/// How a render treats a source that is slow or down: how old its last good result may be, and how long to wait
+/// for it. The two are set together (`[stale_data]` and `[limits]` in the configuration) and used together.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RenderPolicy {
+    pub max_age: MaxAge,
+    pub limits: RenderLimits,
+}
+
 /// A source's answer, or `SourceError::Timeout` if it takes longer than `limit`.
 async fn within<T>(
     limit: StdDuration,
@@ -168,8 +176,7 @@ where
     image_viewing_service: IDS,
     image_repository: IR,
     departure_boards: Vec<DepartureBoard<DS>>,
-    max_age: MaxAge,
-    limits: RenderLimits,
+    policy: RenderPolicy,
     clock: Arc<dyn Clock>,
     #[new(default)]
     last_weather: LastGood<Option<WeatherInformation>>,
@@ -205,7 +212,7 @@ where
         for observer in &self.observers {
             observer.render_started();
         }
-        let deadline = self.limits.deadline;
+        let deadline = self.policy.limits.deadline;
         let result = match AssertUnwindSafe(tokio::time::timeout(deadline, self.render(location)))
             .catch_unwind()
             .await
@@ -233,15 +240,19 @@ where
         let (weather, boards) = tokio::join!(
             async {
                 let result = within(
-                    self.limits.source_timeout,
+                    self.policy.limits.source_timeout,
                     self.weather_service.get_weather_for_location(location),
                 )
                 .await;
                 self.last_weather
-                    .resolve(result, now, self.max_age.weather, "Weather")
+                    .resolve(result, now, self.policy.max_age.weather, "Weather")
             },
             futures_util::future::join_all(self.departure_boards.iter().map(|board| {
-                board.for_display(now, self.max_age.departures, self.limits.source_timeout)
+                board.for_display(
+                    now,
+                    self.policy.max_age.departures,
+                    self.policy.limits.source_timeout,
+                )
             }),),
         );
 
@@ -416,10 +427,12 @@ mod tests {
                 4,
                 Trains(trains_down.clone(), trains_hang.clone()),
             )],
-            MaxAge::default(),
-            RenderLimits {
-                source_timeout: StdDuration::from_millis(100),
-                deadline: StdDuration::from_millis(400),
+            RenderPolicy {
+                limits: RenderLimits {
+                    source_timeout: StdDuration::from_millis(100),
+                    deadline: StdDuration::from_millis(400),
+                },
+                ..RenderPolicy::default()
             },
             Arc::new(SystemClock::new(London)),
         );
@@ -547,7 +560,7 @@ mod tests {
     async fn data_past_its_age_limit_is_unavailable() {
         let rig = {
             let mut rig = rig();
-            rig.app.max_age = MaxAge {
+            rig.app.policy.max_age = MaxAge {
                 departures: Duration::seconds(-1),
                 weather: Duration::seconds(-1),
             };
@@ -674,10 +687,12 @@ mod tests {
                 4,
                 Trains(rig.trains_down.clone(), rig.trains_hang.clone()),
             )],
-            MaxAge::default(),
-            RenderLimits {
-                source_timeout: StdDuration::from_millis(100),
-                deadline: StdDuration::from_millis(400),
+            RenderPolicy {
+                limits: RenderLimits {
+                    source_timeout: StdDuration::from_millis(100),
+                    deadline: StdDuration::from_millis(400),
+                },
+                ..RenderPolicy::default()
             },
             FixedClock::at(at),
         )
@@ -715,10 +730,12 @@ mod tests {
                 4,
                 Trains(Flag::default(), Flag::default()),
             )],
-            MaxAge::default(),
-            RenderLimits {
-                source_timeout: StdDuration::from_millis(100),
-                deadline: StdDuration::from_millis(400),
+            RenderPolicy {
+                limits: RenderLimits {
+                    source_timeout: StdDuration::from_millis(100),
+                    deadline: StdDuration::from_millis(400),
+                },
+                ..RenderPolicy::default()
             },
             Arc::new(SystemClock::new(London)),
         )

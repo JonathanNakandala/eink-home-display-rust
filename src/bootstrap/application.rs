@@ -7,7 +7,7 @@ use crate::adapters::display_image_generator::chrome_render::{
 };
 use crate::adapters::image_repository::file_store::FileStoreImageRepository;
 use crate::adapters::weather::WeatherServiceImpl;
-use crate::application::Application;
+use crate::application::{Application, RenderPolicy};
 use crate::config::application::ApplicationConfig;
 use crate::config::cache::CachePaths;
 use crate::domain::services::ImageDisplayService;
@@ -41,8 +41,10 @@ where
         display,
         repository,
         setup_departure_boards(&config.departures, &config.providers)?,
-        (&config.stale_data).into(),
-        (&config.limits).into(),
+        RenderPolicy {
+            max_age: (&config.stale_data).into(),
+            limits: (&config.limits).into(),
+        },
         clock,
     ))
 }

@@ -53,7 +53,8 @@ impl CachePaths {
 
     /// Creates the cache directory and its sub-folders if missing.
     pub fn ensure_exists(&self) -> anyhow::Result<()> {
-        for dir in [self.chrome()] {
+        {
+            let dir = self.chrome();
             std::fs::create_dir_all(&dir)
                 .with_context(|| format!("Failed to create cache directory {}", dir.display()))?;
         }

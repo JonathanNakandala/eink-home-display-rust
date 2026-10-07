@@ -71,7 +71,7 @@ impl OpenMeteoWeatherServiceAdapter {
         )
         .await?;
         let body: OpenMeteoAirQualityResponse = http::json(response, "air quality data").await?;
-        log::debug!("Air quality response body: {:#?}", &body);
+        log::debug!("Air quality response body: {:#?}", body);
 
         let current = body.current;
         let pollen = self.pollen.then(|| {
@@ -127,7 +127,7 @@ impl OpenMeteoWeatherServiceAdapter {
         )
         .await?;
         let body: OpenMeteoResponse = http::json(response, "forecast").await?;
-        log::debug!("Response body: {:#?}", &body);
+        log::debug!("Response body: {:#?}", body);
 
         let max = body
             .daily

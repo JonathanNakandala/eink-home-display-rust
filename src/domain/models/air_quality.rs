@@ -75,7 +75,7 @@ impl AirQuality {
             .filter_map(|(label, score)| Some(AirQualityReading::new(label, (*score)?)))
             .collect();
         // Stable, so equal scores keep the order they were given in.
-        pollutants.sort_by(|a, b| b.score.cmp(&a.score));
+        pollutants.sort_by_key(|pollutant| std::cmp::Reverse(pollutant.score));
         let overall = match overall {
             Some(score) => AirQualityReading::new("Overall", score),
             None => AirQualityReading::new("Overall", f64::from(pollutants.first()?.score)),

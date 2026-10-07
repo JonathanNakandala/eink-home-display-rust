@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
         .filter(|b| {
             args.board
                 .as_ref()
-                .map_or(true, |name| b.name.eq_ignore_ascii_case(name))
+                .is_none_or(|name| b.name.eq_ignore_ascii_case(name))
         })
         .collect();
     if configs.is_empty() {
