@@ -58,8 +58,14 @@ only the AAAA records for a specific IPv6 address. The log line at start-up says
 ## Watching the displays
 
 Each display reports itself on its normal check-in (query parameters on `/plan` and `/refresh`, so no
-extra radio time): its name, battery voltage, charge and state, and how many wakes in a row failed. The
-server also knows when it told the display to come back, so it can tell one that is asleep from one that
+extra radio time): its name, battery voltage, charge and state, how many wakes in a row failed, its Wi-Fi
+signal strength (`wifi_rssi_dbm`), how long its previous wake was awake (`last_wake_seconds`, which is what
+costs battery), and why its last failed wake failed (`last_failure`: `wifi`, `server`, `download`, `memory`
+or `timeout`). A wake can't report its own failure, since it asks `/plan` before it knows how it will go,
+so a failure is reported by the next wake that gets through. A Wi-Fi or server failure therefore shows up
+once the display is talking to the server again, as "3 failed wakes in a row, the last because of wifi",
+while `/plan` working but the image failing (`download`, `memory`, `timeout`) points at the server or the
+display, not the radio. The server also knows when it told the display to come back, so it can tell one that is asleep from one that
 has gone quiet: a display is **overdue** once it is later than that by `server.device_overdue_grace_seconds`
 (15 minutes), which covers a slow Wi-Fi join but not a flat battery. An overnight sleep of seven hours is
 not overdue, because the server asked for it.
@@ -68,8 +74,9 @@ not overdue, because the server asked for it.
 - `GET /healthz` is still about the server only (it is 503 when the image is stale). A display going
   quiet is an alert on its own, below, not a reason to restart the service.
 - `GET /metrics` is the same data in the Prometheus text format, for any scraper.
-- The service logs a warning when a battery goes low or empty, and an info line when a display returns
-  after being overdue.
+- The service logs a warning when a battery goes low or empty, a warning when a display reports a
+  failure it hadn't before (and an info line when it is working again), and an info line when a display
+  returns after being overdue.
 
 ### Scraping and alerting (Prometheus)
 
@@ -99,10 +106,15 @@ groups:
         expr: eink_device_battery_state{state="empty"} == 1
         annotations:
           summary: "{{ $labels.device }} has stopped refreshing: battery empty"
-      - alert: EinkDisplayFailingToConnect
+      - alert: EinkDisplayFailingWakes
         expr: eink_device_failed_wakes >= 4
         annotations:
-          summary: "{{ $labels.device }} cannot reach the server"
+          summary: "{{ $labels.device }} has failed {{ $value }} wakes in a row (see eink_device_last_failure)"
+      - alert: EinkDisplayWeakWifi
+        expr: eink_device_wifi_rssi_dbm < -80
+        for: 1h
+        annotations:
+          summary: "{{ $labels.device }} has a weak Wi-Fi signal ({{ $value }} dBm)"
       - alert: EinkServerStale
         expr: eink_render_state{state="stale"} == 1
         for: 5m

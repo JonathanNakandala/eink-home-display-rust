@@ -48,6 +48,47 @@ impl BatteryState {
     }
 }
 
+/// Why a display's last wake failed, as it reports it on the next wake that gets through. A wake can't
+/// report its own failure (it asks `/plan` before it knows), and a Wi-Fi or server failure can only be
+/// told once the display is talking to the server again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReason {
+    /// Couldn't join the network.
+    Wifi,
+    /// The server didn't answer `/plan` usably.
+    Server,
+    /// `/plan` answered, but the image didn't download or decode.
+    Download,
+    /// Not enough memory to decode the image.
+    Memory,
+    /// The wake hung and was cut off.
+    Timeout,
+}
+
+impl FailureReason {
+    pub const ALL: [FailureReason; 5] = [Self::Wifi, Self::Server, Self::Download, Self::Memory, Self::Timeout];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wifi => "wifi",
+            Self::Server => "server",
+            Self::Download => "download",
+            Self::Memory => "memory",
+            Self::Timeout => "timeout",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|reason| reason.as_str() == text)
+    }
+}
+
+/// A Wi-Fi signal is a small negative number of dBm; 0 is what a radio reports when it has no reading.
+const RSSI_DBM: std::ops::RangeInclusive<i16> = -127..=-1;
+/// Longer than any wake is allowed to run, so anything more is a misread.
+const WAKE_SECONDS: std::ops::RangeInclusive<u32> = 0..=600;
+
 /// The query parameters as received. All text, so a malformed one can't fail the request.
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 pub struct RawTelemetry {
@@ -56,6 +97,9 @@ pub struct RawTelemetry {
     pub battery_pct: Option<String>,
     pub battery_state: Option<String>,
     pub failed_wakes: Option<String>,
+    pub rssi: Option<String>,
+    pub last_failure: Option<String>,
+    pub last_wake_s: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +109,9 @@ pub struct Telemetry {
     pub battery_percent: Option<u8>,
     pub battery_state: Option<BatteryState>,
     pub failed_wakes: Option<u32>,
+    pub wifi_rssi_dbm: Option<i16>,
+    pub last_failure: Option<FailureReason>,
+    pub last_wake_seconds: Option<u32>,
 }
 
 impl RawTelemetry {
@@ -82,6 +129,9 @@ impl RawTelemetry {
             battery_percent: number(&self.battery_pct).filter(|pct| *pct <= 100).map(|pct| pct as u8),
             battery_state: self.battery_state.as_deref().and_then(BatteryState::parse),
             failed_wakes: number(&self.failed_wakes),
+            wifi_rssi_dbm: self.rssi.as_deref().and_then(|t| t.parse::<i16>().ok()).filter(|dbm| RSSI_DBM.contains(dbm)),
+            last_failure: self.last_failure.as_deref().and_then(FailureReason::parse),
+            last_wake_seconds: number(&self.last_wake_s).filter(|seconds| WAKE_SECONDS.contains(seconds)),
         })
     }
 }
@@ -99,6 +149,12 @@ pub struct DeviceStatus {
     pub battery_percent: Option<u8>,
     pub battery_state: Option<BatteryState>,
     pub failed_wakes: Option<u32>,
+    /// Wi-Fi signal strength at the last check-in.
+    pub wifi_rssi_dbm: Option<i16>,
+    /// Why the wake before that one failed, if it did.
+    pub last_failure: Option<FailureReason>,
+    /// How long the wake before that one was awake, which is what costs battery.
+    pub last_wake_seconds: Option<u32>,
 }
 
 struct Record {
@@ -138,8 +194,19 @@ impl DeviceBoard {
         }
         let previous = devices.get(&telemetry.device);
         match previous {
-            None => log::info!("New display {:?} checked in{}", telemetry.device, describe_battery(&telemetry)),
+            None => {
+                log::info!("New display {:?} checked in{}", telemetry.device, describe_battery(&telemetry));
+                if let Some(reason) = telemetry.last_failure {
+                    log::warn!("Display {:?} {}", telemetry.device, describe_failure(reason, telemetry.failed_wakes));
+                }
+            }
             Some(before) => {
+                if before.telemetry.last_failure != telemetry.last_failure {
+                    match telemetry.last_failure {
+                        Some(reason) => log::warn!("Display {:?} {}", telemetry.device, describe_failure(reason, telemetry.failed_wakes)),
+                        None => log::info!("Display {:?} is working again", telemetry.device),
+                    }
+                }
                 if before.telemetry.battery_state != telemetry.battery_state {
                     match telemetry.battery_state {
                         Some(BatteryState::Low | BatteryState::Empty) => log::warn!(
@@ -176,8 +243,18 @@ impl DeviceBoard {
                 battery_percent: record.telemetry.battery_percent,
                 battery_state: record.telemetry.battery_state,
                 failed_wakes: record.telemetry.failed_wakes,
+                wifi_rssi_dbm: record.telemetry.wifi_rssi_dbm,
+                last_failure: record.telemetry.last_failure,
+                last_wake_seconds: record.telemetry.last_wake_seconds,
             })
             .collect()
+    }
+}
+
+fn describe_failure(reason: FailureReason, failed_wakes: Option<u32>) -> String {
+    match failed_wakes {
+        Some(count) if count > 0 => format!("had {count} failed wake(s) in a row, the last because of {}", reason.as_str()),
+        _ => format!("reports its last wake failed because of {}", reason.as_str()),
     }
 }
 
@@ -207,6 +284,9 @@ mod tests {
             battery_pct: get("battery_pct"),
             battery_state: get("battery_state"),
             failed_wakes: get("failed_wakes"),
+            rssi: get("rssi"),
+            last_failure: get("last_failure"),
+            last_wake_s: get("last_wake_s"),
         }
     }
 
@@ -217,6 +297,9 @@ mod tests {
             battery_percent: Some(45),
             battery_state: state,
             failed_wakes: Some(0),
+            wifi_rssi_dbm: Some(-60),
+            last_failure: None,
+            last_wake_seconds: Some(21),
         }
     }
 
@@ -228,9 +311,15 @@ mod tests {
             ("battery_pct", "47"),
             ("battery_state", "low"),
             ("failed_wakes", "2"),
+            ("rssi", "-67"),
+            ("last_failure", "download"),
+            ("last_wake_s", "24"),
         ])
         .parse()
         .unwrap();
+        assert_eq!(parsed.wifi_rssi_dbm, Some(-67));
+        assert_eq!(parsed.last_failure, Some(FailureReason::Download));
+        assert_eq!(parsed.last_wake_seconds, Some(24));
         assert_eq!(parsed.device, "reterminal-e1003");
         assert_eq!(parsed.battery_millivolts, Some(3712));
         assert_eq!(parsed.battery_percent, Some(47));
@@ -246,13 +335,45 @@ mod tests {
             ("battery_pct", "250"),
             ("battery_state", "on fire"),
             ("failed_wakes", "many"),
+            ("rssi", "0"),
+            ("last_failure", "gremlins"),
+            ("last_wake_s", "99999"),
         ])
         .parse()
         .unwrap();
+        assert_eq!((parsed.wifi_rssi_dbm, parsed.last_failure, parsed.last_wake_seconds), (None, None, None));
         assert_eq!(parsed.battery_millivolts, None);
         assert_eq!(parsed.battery_percent, None);
         assert_eq!(parsed.battery_state, None);
         assert_eq!(parsed.failed_wakes, None);
+    }
+
+    #[test]
+    fn every_failure_reason_the_display_can_name_is_understood() {
+        for reason in FailureReason::ALL {
+            let parsed = raw(&[("device", "a"), ("last_failure", reason.as_str())]).parse().unwrap();
+            assert_eq!(parsed.last_failure, Some(reason));
+        }
+        // The edges of what a signal and a wake can be.
+        for (rssi, ok) in [("-127", true), ("-1", true), ("0", false), ("-128", false), ("12", false), ("weak", false)] {
+            let parsed = raw(&[("device", "a"), ("rssi", rssi)]).parse().unwrap();
+            assert_eq!(parsed.wifi_rssi_dbm.is_some(), ok, "{rssi}");
+        }
+        for (seconds, ok) in [("0", true), ("600", true), ("601", false), ("-3", false)] {
+            let parsed = raw(&[("device", "a"), ("last_wake_s", seconds)]).parse().unwrap();
+            assert_eq!(parsed.last_wake_seconds.is_some(), ok, "{seconds}");
+        }
+    }
+
+    #[test]
+    fn the_latest_reason_and_signal_are_kept_and_shown() {
+        let board = DeviceBoard::new(std::time::Duration::from_secs(900));
+        board.record(at(12, 0), Telemetry { last_failure: Some(FailureReason::Server), failed_wakes: Some(3), ..telemetry("a", None) }, 600);
+        let device = &board.snapshot(at(12, 1))[0];
+        assert_eq!((device.last_failure, device.wifi_rssi_dbm, device.last_wake_seconds), (Some(FailureReason::Server), Some(-60), Some(21)));
+
+        board.record(at(12, 10), telemetry("a", None), 600);
+        assert_eq!(board.snapshot(at(12, 11))[0].last_failure, None);
     }
 
     #[test]

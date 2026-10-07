@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(status().await["devices"], serde_json::json!([]));
 
         let url = format!(
-            "{base}/plan?have=1&device=kitchen&battery_mv=3350&battery_pct=8&battery_state=low&failed_wakes=0"
+            "{base}/plan?have=1&device=kitchen&battery_mv=3350&battery_pct=8&battery_state=low&failed_wakes=2&rssi=-71&last_failure=download&last_wake_s=24"
         );
         assert_eq!(reqwest::get(url).await.unwrap().status(), 200);
 
@@ -170,11 +170,16 @@ mod tests {
         assert_eq!(devices[0]["battery_millivolts"], 3350);
         assert_eq!(devices[0]["battery_state"], "low");
         assert_eq!(devices[0]["overdue"], false);
+        assert_eq!(devices[0]["wifi_rssi_dbm"], -71);
+        assert_eq!(devices[0]["last_failure"], "download");
+        assert_eq!(devices[0]["last_wake_seconds"], 24);
 
         let response = reqwest::get(format!("{base}/metrics")).await.unwrap();
         assert!(response.headers()["content-type"].to_str().unwrap().starts_with("text/plain; version=0.0.4"));
         let text = response.text().await.unwrap();
         assert!(text.contains("eink_device_battery_volts{device=\"kitchen\"} 3.35"), "{text}");
         assert!(text.contains("eink_device_battery_state{device=\"kitchen\",state=\"low\"} 1"), "{text}");
+        assert!(text.contains("eink_device_wifi_rssi_dbm{device=\"kitchen\"} -71"), "{text}");
+        assert!(text.contains("eink_device_last_failure{device=\"kitchen\",reason=\"download\"} 1"), "{text}");
     }
 }
