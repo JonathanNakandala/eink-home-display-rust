@@ -252,6 +252,33 @@ None has been measured on the device. To compare them, set `accept_formats` to o
 default), run each for a day, and compare `eink_device_last_wake_seconds` in `/metrics` at a similar
 `eink_device_wifi_rssi_dbm`, rather than assuming.
 
+## Tests
+
+The calculations are kept apart from the hardware so they can be tested on a computer, with no board and no
+ESPHome install, just a C++17 compiler:
+
+```sh
+make -C esphome test
+```
+
+| Header | What is in it | Tested |
+|---|---|---|
+| [eink_wake.h](eink_wake.h) | sleep length from the plan, the backoff, the time a wake has used, the memory the image needs | yes |
+| [eink_battery.h](eink_battery.h) | charge from voltage, the low/empty latches and what to do about them | yes |
+| [eink_report.h](eink_report.h) | the check-in query string, failure names, what is remembered of the last wake | yes |
+| [eink_format.h](eink_format.h) | the server's URL from an address, an age in words | yes |
+| [eink_telemetry.h](eink_telemetry.h) | the radio signal and RTC memory behind the report | no: needs the chip |
+| [eink_discovery.h](eink_discovery.h), [eink_health.h](eink_health.h), [eink_notice.h](eink_notice.h) | mDNS, the heap, the panel | no: need the chip |
+
+The first four include nothing from ESPHome or ESP-IDF, and that is the rule for new calculations: put them there,
+and have the YAML only read and write its globals and call them. The tests build with the address and
+undefined-behaviour sanitizers, so an overflow fails the run. The YAML and the device headers are checked by
+`esphome compile`, which the tests don't replace, and nothing here shows that the hardware behaves as the code
+assumes (RTC memory surviving sleep, the signal reading, the panel).
+
+The report's query string is also parsed by the server in `src/adapters/image_server/plan.rs`, from the same literal
+as in `tests/report_test.cpp`, so a field renamed on one side fails a test on the other.
+
 ## Timing
 
 The device sleeps for the `next_seconds` the server reports: the next scheduled render plus

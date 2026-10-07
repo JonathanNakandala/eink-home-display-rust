@@ -70,6 +70,9 @@ esphome:
     - eink_notice.h
     - eink_health.h
     - eink_battery.h
+    - eink_wake.h
+    - eink_format.h
+    - eink_report.h
     - eink_telemetry.h
   on_boot:
     priority: -100
@@ -300,22 +303,15 @@ script:
             ESP_LOGW("battery", "Unusable reading (%.2f V); carrying on", v);
             return;
           }
-          id(battery_mv) = (uint32_t) (v * 1000.0f + 0.5f);
+          id(battery_mv) = eink_battery::millivolts(v);
           id(battery_pct) = eink_battery::percent(v);
-          bool was_halted = id(battery_halted);
-          if (v >= ${battery_resume_v}) {
-            // Charged enough to carry on; both latches reset together so neither flaps near its edge.
-            id(battery_halted) = false;
-            id(battery_low) = false;
-          } else {
-            if (v < ${battery_empty_v})
-              id(battery_halted) = true;
-            if (v < ${battery_low_v})
-              id(battery_low) = true;
-          }
-          id(battery_state) = id(battery_halted) ? 2 : id(battery_low) ? 1 : 0;
-          // 0: carry on, 1: still halted (just sleep), 2: halting now (say so first).
-          id(battery_action) = id(battery_halted) ? (was_halted ? 1 : 2) : 0;
+          // The latches and what to do about them are worked out in eink_battery.h.
+          auto verdict = eink_battery::judge(v, id(battery_halted), id(battery_low), ${battery_low_v},
+                                             ${battery_empty_v}, ${battery_resume_v});
+          id(battery_halted) = verdict.halted;
+          id(battery_low) = verdict.low;
+          id(battery_state) = verdict.state;
+          id(battery_action) = verdict.action;
           ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(id(battery_state)));
       - if:
           condition:
@@ -386,10 +382,11 @@ script:
                 url: !lambda |-
                   std::string base = (id(server_ip) == 0 || id(server_port) == 0)
                                          ? std::string("${fallback_base}")
-                                         : eink_discovery::url(id(server_ip), id(server_port), "");
+                                         : eink_format::url(id(server_ip), id(server_port), "");
                   return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
-                         eink_telemetry::query(App.get_name().str(), id(failed_wakes), id(battery_known), id(battery_mv),
-                                               id(battery_pct), eink_battery::state_name(id(battery_state)));
+                         eink_telemetry::query(App.get_name().str(), id(failed_wakes),
+                                               {id(battery_known), id(battery_mv), id(battery_pct),
+                                                eink_battery::state_name(id(battery_state))});
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -402,10 +399,11 @@ script:
                 url: !lambda |-
                   std::string base = (id(server_ip) == 0 || id(server_port) == 0)
                                          ? std::string("${fallback_base}")
-                                         : eink_discovery::url(id(server_ip), id(server_port), "");
+                                         : eink_format::url(id(server_ip), id(server_port), "");
                   return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
-                         eink_telemetry::query(App.get_name().str(), id(failed_wakes), id(battery_known), id(battery_mv),
-                                               id(battery_pct), eink_battery::state_name(id(battery_state)));
+                         eink_telemetry::query(App.get_name().str(), id(failed_wakes),
+                                               {id(battery_known), id(battery_mv), id(battery_pct),
+                                                eink_battery::state_name(id(battery_state))});
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -428,9 +426,7 @@ script:
             id(plan_changed) = root["changed"] | true;
             id(plan_stale) = root["stale"] | false;
             id(plan_age_seconds) = root["age_seconds"] | 0;
-            // A little more than a minute at least, and never more than a day.
-            uint32_t seconds = root["next_seconds"].as<uint32_t>();
-            id(plan_sleep_ms) = (seconds < 60 ? 60 : seconds > 86400 ? 86400 : seconds) * 1000u;
+            id(plan_sleep_ms) = eink_wake::plan_sleep_ms(root["next_seconds"].as<uint32_t>());
             return true;
           });
           if (!ok)
@@ -480,7 +476,7 @@ script:
                 url: !lambda |-
                   std::string url = (id(server_ip) == 0 || id(server_port) == 0)
                                         ? std::string("${fallback_base}${image_path}")
-                                        : eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
+                                        : eink_format::url(id(server_ip), id(server_port), "${image_path}");
                   return url + "?device=" + App.get_name().str();
             - component.update: dashboard
           else:
@@ -502,7 +498,7 @@ script:
             lambda: 'return id(plan_stale) && !id(notice_on_panel);'
           then:
             - lambda: |-
-                id(notice_text) = "Out of date: rendered " + eink_discovery::age(id(plan_age_seconds)) + " ago";
+                id(notice_text) = "Out of date: rendered " + eink_format::age(id(plan_age_seconds)) + " ago";
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
             - component.update: epaper_display
@@ -521,14 +517,9 @@ script:
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: !lambda |-
-                  uint32_t ms = id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms});
-                  if (id(plan_received_ms) != 0) {
-                    // The server counted from when it answered, and this wake has used some of that since
-                    // (the download, the refresh, the settle). Without taking it off, every wake lands late.
-                    uint32_t used = millis() - id(plan_received_ms);
-                    ms = ms > used + 60000u ? ms - used : 60000u;
-                  }
-                  return ms;
+                  // The server counted from when it answered; this takes off what the wake has used since.
+                  return eink_wake::sleep_after(id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms}),
+                                                id(plan_received_ms), millis());
 
   # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
   - id: server_failed
@@ -584,12 +575,9 @@ script:
   - id: backoff
     then:
       - lambda: |-
-          if (id(failed_wakes) < 255)
-            id(failed_wakes)++;
-          // 1st failure: sleep_duration, 2nd: twice that, and so on.
-          uint32_t shift = id(failed_wakes) > 7 ? 6 : id(failed_wakes) - 1;
-          uint64_t sleep_ms = (uint64_t) (${sleep_duration_ms}) << shift;
-          id(plan_sleep_ms) = sleep_ms > (${max_backoff_ms}) ? (${max_backoff_ms}) : (uint32_t) sleep_ms;
+          id(failed_wakes) = eink_wake::count_failure(id(failed_wakes));
+          // 1st failure: sleep_duration, 2nd: twice that, and so on, up to max_backoff_ms.
+          id(plan_sleep_ms) = eink_wake::backoff_ms(id(failed_wakes), ${sleep_duration_ms}, ${max_backoff_ms});
           // Not the server's plan, so not shortened by the time the wake took.
           id(plan_received_ms) = 0;
           // Told to the server by the next wake that gets through.

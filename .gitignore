@@ -12,3 +12,4 @@ config/default.toml
 # ESPHome
 /esphome/secrets.yaml
 /esphome/.esphome
+/esphome/build

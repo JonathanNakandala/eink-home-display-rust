@@ -1,4 +1,6 @@
-// Battery helpers: charge from voltage and the state names (the telemetry sent to the server is in eink_telemetry.h).
+// Battery arithmetic: charge from voltage, and the latches that decide when to warn and when to stop.
+// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
+// Reading the voltage is the YAML's job.
 #pragma once
 
 #include <cstdint>
@@ -31,5 +33,31 @@ inline int percent(float v) {
 }
 
 inline const char *state_name(int state) { return state == 2 ? "empty" : state == 1 ? "low" : "ok"; }
+
+// What this wake's reading means, given the latches from the last one. Each latch sets below its own
+// threshold and clears only above `resume_v`, together, so neither flaps near its edge.
+struct Verdict {
+  bool halted;
+  bool low;
+  int state;   // 0 ok, 1 low, 2 empty
+  int action;  // 0 carry on, 1 still halted (just sleep), 2 halting now (say so first)
+};
+
+inline Verdict judge(float volts, bool was_halted, bool was_low, float low_v, float empty_v, float resume_v) {
+  bool halted = was_halted, low = was_low;
+  if (volts >= resume_v) {
+    halted = false;
+    low = false;
+  } else {
+    if (volts < empty_v)
+      halted = true;
+    if (volts < low_v)
+      low = true;
+  }
+  return Verdict{halted, low, halted ? 2 : low ? 1 : 0, halted ? (was_halted ? 1 : 2) : 0};
+}
+
+// Millivolts, rounded, for the telemetry.
+inline uint32_t millivolts(float volts) { return (uint32_t) (volts * 1000.0f + 0.5f); }
 
 }  // namespace eink_battery
