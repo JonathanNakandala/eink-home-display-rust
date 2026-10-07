@@ -65,7 +65,11 @@ pub struct OpenLdbwsConfig {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TflConfig {
     /// Optional: anonymous requests work but are rate limited.
-    #[serde(default, skip_serializing_if = "Option::is_none", serialize_with = "secret::serialize_option")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "secret::serialize_option"
+    )]
     #[schemars(with = "Option<String>")]
     pub app_key: Option<SecretString>,
     /// TfL Unified API base URL.

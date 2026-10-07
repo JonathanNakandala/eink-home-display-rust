@@ -3,7 +3,7 @@ use chrono_tz::Tz;
 use serde::Serialize;
 
 use crate::domain::models::air_quality::AirQuality;
-use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus};
+use crate::domain::models::departures::{DepartureService, DepartureStatus, countdown};
 use crate::domain::models::freshness::format_age;
 use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, SunTimes, UvIndex,
@@ -44,17 +44,40 @@ pub struct DepartureBoardData {
 impl DepartureBoardData {
     pub fn new(name: String, station: String, services: Vec<DepartureService>) -> Self {
         // A board already titled "Turnpike Lane" doesn't need the station repeated.
-        let station = if station.eq_ignore_ascii_case(&name) { String::new() } else { station };
-        Self { name, station, services, age: String::new(), unavailable: false, reason: String::new() }
+        let station = if station.eq_ignore_ascii_case(&name) {
+            String::new()
+        } else {
+            station
+        };
+        Self {
+            name,
+            station,
+            services,
+            age: String::new(),
+            unavailable: false,
+            reason: String::new(),
+        }
     }
 
     /// The board built from an earlier fetch, labelled with how old it is.
-    pub fn from_earlier(name: String, station: String, services: Vec<DepartureService>, age: Duration) -> Self {
-        Self { age: format_age(age), ..Self::new(name, station, services) }
+    pub fn from_earlier(
+        name: String,
+        station: String,
+        services: Vec<DepartureService>,
+        age: Duration,
+    ) -> Self {
+        Self {
+            age: format_age(age),
+            ..Self::new(name, station, services)
+        }
     }
 
     pub fn unavailable(name: String, reason: &str) -> Self {
-        Self { unavailable: true, reason: reason.to_owned(), ..Self::new(name, String::new(), Vec::new()) }
+        Self {
+            unavailable: true,
+            reason: reason.to_owned(),
+            ..Self::new(name, String::new(), Vec::new())
+        }
     }
 }
 
@@ -144,9 +167,14 @@ impl GlanceData {
             first.age = format_age(Duration::minutes(8));
         }
         if let Some(last) = data.departures.pop() {
-            data.departures.push(DepartureBoardData::unavailable(last.name, "service error"));
+            data.departures
+                .push(DepartureBoardData::unavailable(last.name, "service error"));
         }
-        data.departure_lines = data.departures.iter().map(|board| 1 + board.services.len().max(1)).sum();
+        data.departure_lines = data
+            .departures
+            .iter()
+            .map(|board| 1 + board.services.len().max(1))
+            .sum();
         data.with_weather_age(Duration::minutes(40))
     }
 
@@ -155,7 +183,11 @@ impl GlanceData {
     /// The first service on each board leaves after the journey to it: 5 minutes
     /// to Hornsey and 15 to Turnpike Lane.
     pub fn sample(now: DateTime<Tz>) -> Self {
-        let at = |minutes: i64| (now + Duration::minutes(minutes)).format("%H:%M").to_string();
+        let at = |minutes: i64| {
+            (now + Duration::minutes(minutes))
+                .format("%H:%M")
+                .to_string()
+        };
         let timetabled = |minutes: i64, destination: &str, status, expected: Option<i64>| {
             let leaves_in = expected.unwrap_or(minutes);
             DepartureService::new(
@@ -177,7 +209,9 @@ impl GlanceData {
         };
         // Dry for the first three quarters of an hour, then a shower.
         let local = now.naive_local();
-        let quarter = local - Duration::minutes(local.minute() as i64 % 15) - Duration::seconds(local.second() as i64);
+        let quarter = local
+            - Duration::minutes(local.minute() as i64 % 15)
+            - Duration::seconds(local.second() as i64);
         let showers = [0.0, 0.0, 0.0, 0.4, 1.2, 2.0, 1.0, 0.3]
             .iter()
             .enumerate()

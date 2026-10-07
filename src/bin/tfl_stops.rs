@@ -1,8 +1,8 @@
 use clap::Parser;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 use eink_home_display_rust::adapters::stop_points::tfl::tfl_stop_point_service::{
-    TflStopPointServiceAdapter, DEFAULT_HOST_URL,
+    DEFAULT_HOST_URL, TflStopPointServiceAdapter,
 };
 use eink_home_display_rust::cli::{StopsCommand, TflStopsArgs};
 use eink_home_display_rust::domain::models::arrival::Arrival;
@@ -31,16 +31,22 @@ async fn main() -> anyhow::Result<()> {
     let (label, stops) = match args.command {
         StopsCommand::Bus { lat, lon, radius } => (
             "BUS STOPS",
-            service.find_nearby(Location::new(lat, lon), StopKind::Bus, radius).await?,
+            service
+                .find_nearby(Location::new(lat, lon), StopKind::Bus, radius)
+                .await?,
         ),
         StopsCommand::Tube { lat, lon, radius } => (
             "UNDERGROUND STATIONS",
-            service.find_nearby(Location::new(lat, lon), StopKind::Underground, radius).await?,
+            service
+                .find_nearby(Location::new(lat, lon), StopKind::Underground, radius)
+                .await?,
         ),
         StopsCommand::Arrivals { .. } => unreachable!("handled above"),
         StopsCommand::TubeSearch { query } => (
             "UNDERGROUND STATIONS",
-            service.search_by_name(&query, StopKind::Underground).await?,
+            service
+                .search_by_name(&query, StopKind::Underground)
+                .await?,
         ),
     };
 
@@ -54,9 +60,15 @@ fn print_stops(label: &str, stops: &[StopPoint]) {
         println!("  none found");
         return;
     }
-    println!("  {:<14} {:<30} {:<8} {:>6}  LINES", "ID", "NAME", "STOP", "DIST");
+    println!(
+        "  {:<14} {:<30} {:<8} {:>6}  LINES",
+        "ID", "NAME", "STOP", "DIST"
+    );
     for stop in stops {
-        let distance = stop.distance.map(|d| format!("{d:.0}m")).unwrap_or_default();
+        let distance = stop
+            .distance
+            .map(|d| format!("{d:.0}m"))
+            .unwrap_or_default();
         println!(
             "  {:<14} {:<30} {:<8} {:>6}  {}",
             stop.id,
@@ -74,7 +86,10 @@ fn print_arrivals(stop_id: &str, arrivals: &[Arrival]) {
         println!("  none predicted");
         return;
     }
-    println!("  {:<11} {:<7} {:<38} {:<26} LOCATION", "LINE", "DUE", "TOWARDS", "PLATFORM");
+    println!(
+        "  {:<11} {:<7} {:<38} {:<26} LOCATION",
+        "LINE", "DUE", "TOWARDS", "PLATFORM"
+    );
     for a in arrivals {
         let due = match a.seconds_to_arrival {
             0..=29 => "due".to_owned(),

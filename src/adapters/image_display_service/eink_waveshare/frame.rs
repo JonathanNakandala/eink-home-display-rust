@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use image::DynamicImage;
 
 use super::eink_driver::{BUFFER_SIZE, HEIGHT, WIDTH};

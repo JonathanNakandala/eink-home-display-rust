@@ -9,7 +9,8 @@ use crate::config::quiet_times::QuietTimesConfig;
 /// Reads the main configuration without checking its rules, for a program that uses only part of
 /// it and checks that part itself (a disabled or unused section can hold placeholders).
 pub fn load_application_config(path: &Path) -> anyhow::Result<ApplicationConfig> {
-    ApplicationConfig::new(path).with_context(|| format!("Failed to load the configuration from {}", path.display()))
+    ApplicationConfig::new(path)
+        .with_context(|| format!("Failed to load the configuration from {}", path.display()))
 }
 
 /// Reads the main configuration and checks the rules of everything in use. The error says which
@@ -79,12 +80,18 @@ mod tests {
             std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
             path
         };
-        let good = load_valid_application_config(&write("schedule_good", vec!["*/5 * * * *".into()])).unwrap();
+        let good =
+            load_valid_application_config(&write("schedule_good", vec!["*/5 * * * *".into()]))
+                .unwrap();
         assert_eq!(good.schedule.unwrap().cron, ["*/5 * * * *"]);
 
-        let error = load_valid_application_config(&write("schedule_bad", vec!["every day".into()])).unwrap_err();
+        let error = load_valid_application_config(&write("schedule_bad", vec!["every day".into()]))
+            .unwrap_err();
         let error = format!("{error:#}");
-        assert!(error.contains("[schedule]") && error.contains("every day"), "{error}");
+        assert!(
+            error.contains("[schedule]") && error.contains("every day"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -97,18 +104,34 @@ mod tests {
             std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
             path
         };
-        let good = load_valid_application_config(&write("zone_good", Some("America/New_York"))).unwrap();
+        let good =
+            load_valid_application_config(&write("zone_good", Some("America/New_York"))).unwrap();
         assert_eq!(good.location.timezone.as_deref(), Some("America/New_York"));
         // Optional: an older file without one still loads, and falls back to the host's at start-up.
-        assert!(load_valid_application_config(&write("zone_none", None)).unwrap().location.timezone.is_none());
+        assert!(
+            load_valid_application_config(&write("zone_none", None))
+                .unwrap()
+                .location
+                .timezone
+                .is_none()
+        );
 
-        let error = format!("{:#}", load_valid_application_config(&write("zone_bad", Some("Mars/Olympus"))).unwrap_err());
-        assert!(error.contains("[location]") && error.contains("Mars/Olympus"), "{error}");
+        let error = format!(
+            "{:#}",
+            load_valid_application_config(&write("zone_bad", Some("Mars/Olympus"))).unwrap_err()
+        );
+        assert!(
+            error.contains("[location]") && error.contains("Mars/Olympus"),
+            "{error}"
+        );
     }
 
     #[test]
     fn a_missing_file_says_which() {
         let error = load_application_config(Path::new("/nonexistent/eink.toml")).unwrap_err();
-        assert!(format!("{error:#}").contains("/nonexistent/eink.toml"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("/nonexistent/eink.toml"),
+            "{error:#}"
+        );
     }
 }

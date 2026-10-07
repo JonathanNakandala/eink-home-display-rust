@@ -22,7 +22,9 @@ const CHUNK: usize = 16 * 1024;
 pub(super) enum Outcome {
     Complete,
     /// The client went away after `sent` of the bytes had been handed to the connection.
-    Aborted { sent: usize },
+    Aborted {
+        sent: usize,
+    },
 }
 
 struct Tracked<F: FnOnce(Outcome, Duration)> {
@@ -54,7 +56,11 @@ impl<F: FnOnce(Outcome, Duration)> Drop for Tracked<F> {
         if let Some(done) = self.done.take() {
             // With a known length the server stops reading the body after the last byte, so it is dropped
             // without being asked for its end: everything handed over is a complete transfer.
-            let outcome = if self.sent >= self.data.len() { Outcome::Complete } else { Outcome::Aborted { sent: self.sent } };
+            let outcome = if self.sent >= self.data.len() {
+                Outcome::Complete
+            } else {
+                Outcome::Aborted { sent: self.sent }
+            };
             done(outcome, self.started.elapsed());
         }
     }
@@ -62,7 +68,12 @@ impl<F: FnOnce(Outcome, Duration)> Drop for Tracked<F> {
 
 /// A body that calls `done` once, when it has been sent in full or dropped before that.
 fn tracked(data: Vec<u8>, done: impl FnOnce(Outcome, Duration) + Unpin + Send + 'static) -> Body {
-    Body::from_stream(Tracked { data: Bytes::from(data), sent: 0, started: Instant::now(), done: Some(done) })
+    Body::from_stream(Tracked {
+        data: Bytes::from(data),
+        sent: 0,
+        started: Instant::now(),
+        done: Some(done),
+    })
 }
 
 /// The image as a body that logs if the display drops the connection before the end.
@@ -70,7 +81,10 @@ pub(super) fn watched(data: Vec<u8>, device: Option<DeviceId>, format: ImageForm
     let total = data.len();
     tracked(data, move |outcome, took| {
         if let Outcome::Aborted { sent } = outcome {
-            let who = device.map_or_else(|| "A client".to_owned(), |device| format!("Display {device}"));
+            let who = device.map_or_else(
+                || "A client".to_owned(),
+                |device| format!("Display {device}"),
+            );
             log::warn!(
                 "{who} dropped the {} image after {sent} of {total} bytes ({} ms)",
                 format.extension(),
@@ -89,7 +103,10 @@ mod tests {
 
     use super::*;
 
-    fn recorder() -> (Arc<Mutex<Vec<Outcome>>>, impl FnOnce(Outcome, Duration) + Unpin + Send + 'static) {
+    fn recorder() -> (
+        Arc<Mutex<Vec<Outcome>>>,
+        impl FnOnce(Outcome, Duration) + Unpin + Send + 'static,
+    ) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let writer = Arc::clone(&seen);
         (seen, move |outcome, _| writer.lock().unwrap().push(outcome))
@@ -100,24 +117,40 @@ mod tests {
         let data: Vec<u8> = (0..CHUNK * 3 + 5).map(|i| i as u8).collect();
         let (seen, done) = recorder();
         let body = tracked(data.clone(), done);
-        assert_eq!(to_bytes(body, usize::MAX).await.unwrap().as_ref(), data.as_slice());
+        assert_eq!(
+            to_bytes(body, usize::MAX).await.unwrap().as_ref(),
+            data.as_slice()
+        );
         assert_eq!(*seen.lock().unwrap(), [Outcome::Complete]);
     }
 
     #[tokio::test]
     async fn a_body_dropped_part_way_says_how_far_it_got_and_only_once() {
         let (seen, done) = recorder();
-        let mut stream = Tracked { data: Bytes::from(vec![0; CHUNK * 4]), sent: 0, started: Instant::now(), done: Some(done) };
+        let mut stream = Tracked {
+            data: Bytes::from(vec![0; CHUNK * 4]),
+            sent: 0,
+            started: Instant::now(),
+            done: Some(done),
+        };
         stream.next().await.unwrap().unwrap();
         stream.next().await.unwrap().unwrap();
         drop(stream);
-        assert_eq!(*seen.lock().unwrap(), [Outcome::Aborted { sent: CHUNK * 2 }]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Outcome::Aborted { sent: CHUNK * 2 }]
+        );
     }
 
     #[tokio::test]
     async fn a_body_dropped_after_its_last_chunk_is_complete() {
         let (seen, done) = recorder();
-        let mut stream = Tracked { data: Bytes::from(vec![0; CHUNK + 1]), sent: 0, started: Instant::now(), done: Some(done) };
+        let mut stream = Tracked {
+            data: Bytes::from(vec![0; CHUNK + 1]),
+            sent: 0,
+            started: Instant::now(),
+            done: Some(done),
+        };
         stream.next().await.unwrap().unwrap();
         stream.next().await.unwrap().unwrap();
         drop(stream);
@@ -127,7 +160,12 @@ mod tests {
     #[tokio::test]
     async fn an_empty_body_is_complete() {
         let (seen, done) = recorder();
-        assert!(to_bytes(tracked(Vec::new(), done), usize::MAX).await.unwrap().is_empty());
+        assert!(
+            to_bytes(tracked(Vec::new(), done), usize::MAX)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(*seen.lock().unwrap(), [Outcome::Complete]);
     }
 }

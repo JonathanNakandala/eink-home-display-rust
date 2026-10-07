@@ -7,11 +7,11 @@
 
 use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use mdns_sd::{DaemonEvent, IfKind, IfPredicate, ServiceDaemon, ServiceInfo};
 
-use super::listen::Families;
 use super::ServerSettings;
+use super::listen::Families;
 use crate::domain::models::display::ImageFormat;
 
 const SERVICE_SUBTYPE: &str = "_eink-display._sub._http._tcp.local.";
@@ -27,12 +27,18 @@ pub struct Advertisement {
 }
 
 impl Advertisement {
-    pub fn start(settings: &ServerSettings, port: u16, format: ImageFormat, families: Families) -> anyhow::Result<Self> {
+    pub fn start(
+        settings: &ServerSettings,
+        port: u16,
+        format: ImageFormat,
+        families: Families,
+    ) -> anyhow::Result<Self> {
         let info = service_info(settings, port, format, families)?;
         let fullname = info.get_fullname().to_owned();
         let daemon = ServiceDaemon::new().context("Failed to start the mDNS responder")?;
         // Nothing to announce on loopback, and no use listening for an IP version that isn't served.
-        let loopback = IfPredicate::new(|intf| intf.is_loopback() || is_loopback_interface(&intf.name));
+        let loopback =
+            IfPredicate::new(|intf| intf.is_loopback() || is_loopback_interface(&intf.name));
         let mut unused = vec![IfKind::Predicate(loopback)];
         match families {
             Families::V4 => unused.push(IfKind::IPv6),
@@ -44,13 +50,20 @@ impl Advertisement {
         }
         let this = Self { daemon, fullname };
 
-        let events = this.daemon.monitor().context("Failed to watch the mDNS responder")?;
+        let events = this
+            .daemon
+            .monitor()
+            .context("Failed to watch the mDNS responder")?;
         tokio::spawn(async move {
             while let Ok(event) = events.recv_async().await {
                 match event {
                     // The responder probes first and renames itself if the name is taken.
                     DaemonEvent::NameChange(change) => {
-                        log::warn!("mDNS name {} is taken, using {}", change.original, change.new_name)
+                        log::warn!(
+                            "mDNS name {} is taken, using {}",
+                            change.original,
+                            change.new_name
+                        )
                     }
                     DaemonEvent::Error(e) => log::warn!("mDNS error: {e}"),
                     other => log::debug!("mDNS: {other:?}"),
@@ -58,7 +71,9 @@ impl Advertisement {
             }
         });
 
-        this.daemon.register(info).context("Failed to register the mDNS service")?;
+        this.daemon
+            .register(info)
+            .context("Failed to register the mDNS service")?;
         log::info!("Advertising {} over mDNS", this.fullname);
         Ok(this)
     }
@@ -87,7 +102,10 @@ fn service_info(
 ) -> anyhow::Result<ServiceInfo> {
     let name = settings.instance_name.trim();
     if name.is_empty() || name.len() > MAX_LABEL_BYTES {
-        bail!("the instance name must be 1 to {MAX_LABEL_BYTES} bytes, not {:?}", settings.instance_name);
+        bail!(
+            "the instance name must be 1 to {MAX_LABEL_BYTES} bytes, not {:?}",
+            settings.instance_name
+        );
     }
     let host = format!("{}.local.", host_label(name));
     // txtvers first, as RFC 6763 section 6.7 recommends; keys are kept short and lowercase.
@@ -125,14 +143,21 @@ fn service_info(
 /// The loopback interface by name (`lo`, `lo0`). It carries link-local IPv6 addresses (`fe80::1`) that
 /// aren't loopback addresses, and the responder would announce them on the real interface too.
 fn is_loopback_interface(name: &str) -> bool {
-    name.strip_prefix("lo").is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
+    name.strip_prefix("lo")
+        .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// A DNS host label from a display name: lowercase letters, digits and single hyphens.
 fn host_label(name: &str) -> String {
     let label: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|part| !part.is_empty())
@@ -141,7 +166,12 @@ fn host_label(name: &str) -> String {
     if label.is_empty() {
         return "eink-display".to_owned();
     }
-    label.chars().take(MAX_LABEL_BYTES).collect::<String>().trim_end_matches('-').to_owned()
+    label
+        .chars()
+        .take(MAX_LABEL_BYTES)
+        .collect::<String>()
+        .trim_end_matches('-')
+        .to_owned()
 }
 
 #[cfg(test)]
@@ -158,7 +188,10 @@ mod tests {
             bind: "[::]:8080".parse().unwrap(),
             advertise: true,
             instance_name: "E-ink home display".to_owned(),
-            timing: PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) },
+            timing: PlanTiming {
+                wake_delay: Duration::from_secs(30),
+                stale_grace: Duration::from_secs(300),
+            },
         }
     }
 
@@ -199,27 +232,45 @@ mod tests {
 
     #[test]
     fn a_specific_bind_address_is_announced_as_is() {
-        let config = ServerSettings { bind: "192.168.1.5:9000".parse().unwrap(), ..settings() };
+        let config = ServerSettings {
+            bind: "192.168.1.5:9000".parse().unwrap(),
+            ..settings()
+        };
         let info = service_info(&config, 9000, ImageFormat::Bmp, Families::V4).unwrap();
 
         assert!(!info.is_addr_auto());
-        assert!(info.get_addresses().contains(&"192.168.1.5".parse::<IpAddr>().unwrap()));
+        assert!(
+            info.get_addresses()
+                .contains(&"192.168.1.5".parse::<IpAddr>().unwrap())
+        );
     }
 
     #[test]
     fn a_specific_ipv6_bind_address_is_announced_as_is() {
-        let config = ServerSettings { bind: "[fd00::5]:9000".parse().unwrap(), ..settings() };
+        let config = ServerSettings {
+            bind: "[fd00::5]:9000".parse().unwrap(),
+            ..settings()
+        };
         let info = service_info(&config, 9000, ImageFormat::Bmp, Families::V6).unwrap();
 
         assert!(!info.is_addr_auto());
-        assert!(info.get_addresses().contains(&"fd00::5".parse::<IpAddr>().unwrap()));
+        assert!(
+            info.get_addresses()
+                .contains(&"fd00::5".parse::<IpAddr>().unwrap())
+        );
     }
 
     #[test]
     fn rejects_unusable_instance_names() {
         for name in ["", "   ", &"x".repeat(64)] {
-            let config = ServerSettings { instance_name: name.to_owned(), ..settings() };
-            assert!(service_info(&config, 80, ImageFormat::Bmp, Families::Both).is_err(), "{name:?}");
+            let config = ServerSettings {
+                instance_name: name.to_owned(),
+                ..settings()
+            };
+            assert!(
+                service_info(&config, 80, ImageFormat::Bmp, Families::Both).is_err(),
+                "{name:?}"
+            );
         }
     }
 
@@ -228,8 +279,12 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs multicast networking"]
     async fn advertised_service_is_found_by_a_scan() {
-        let config = ServerSettings { instance_name: "Eink test".to_owned(), ..settings() };
-        let advertisement = Advertisement::start(&config, 18080, ImageFormat::Bmp, Families::Both).unwrap();
+        let config = ServerSettings {
+            instance_name: "Eink test".to_owned(),
+            ..settings()
+        };
+        let advertisement =
+            Advertisement::start(&config, 18080, ImageFormat::Bmp, Families::Both).unwrap();
 
         let scanner = ServiceDaemon::new().unwrap();
         let found = scanner.browse("_http._tcp.local.").unwrap();

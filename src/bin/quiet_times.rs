@@ -62,7 +62,9 @@ async fn main() -> anyhow::Result<()> {
 
     let start = match &args.start {
         Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").context("Invalid --start date")?,
-        None => chrono::Utc::now().with_timezone(&eink_home_display_rust::adapters::zone::host()).date_naive(),
+        None => chrono::Utc::now()
+            .with_timezone(&eink_home_display_rust::adapters::zone::host())
+            .date_naive(),
     };
 
     let app = QuietTimesApplication::new(
@@ -113,7 +115,11 @@ fn print_chronological(report: &QuietTimesReport, min_gap: Duration) {
             day.window_end.format("%H:%M"),
             day.train_count
         );
-        let notable_gaps: Vec<_> = day.gaps.iter().filter(|g| g.duration() >= min_gap).collect();
+        let notable_gaps: Vec<_> = day
+            .gaps
+            .iter()
+            .filter(|g| g.duration() >= min_gap)
+            .collect();
         if notable_gaps.is_empty() {
             println!("  no gaps of {} min or more", min_gap.num_minutes());
         }

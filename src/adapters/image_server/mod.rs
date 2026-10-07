@@ -8,18 +8,18 @@ mod image;
 mod listen;
 mod metrics;
 mod negotiate;
-mod transfer;
 mod plan;
 #[cfg(test)]
 mod testing;
+mod transfer;
 
 use std::sync::Arc;
 
 use anyhow::Context;
+use axum::Router;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
@@ -82,7 +82,14 @@ pub fn router(
         .route("/healthz", get(health::healthz))
         .route("/metrics", get(health::metrics))
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published { images, format, schedule, timing, handles, clock }))
+        .with_state(Arc::new(Published {
+            images,
+            format,
+            schedule,
+            timing,
+            handles,
+            clock,
+        }))
 }
 
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
@@ -101,7 +108,10 @@ pub async fn serve(
 ) -> anyhow::Result<()> {
     let Bound { listener, families } = listen::bind(settings.bind)?;
     let port = listener.local_addr()?.port();
-    log::info!("Serving the display image at http://{}/image ({families})", settings.bind);
+    log::info!(
+        "Serving the display image at http://{}/image ({families})",
+        settings.bind
+    );
     // Discovery is a convenience, so the server runs without it. It announces the IP versions the
     // socket really accepts, which isn't always what the configured address says (see `listen`).
     // Held until serving ends, which is when the goodbye goes out.
@@ -113,7 +123,10 @@ pub async fn serve(
             log::warn!("Not advertising over mDNS: {e:#}");
             None
         });
-    axum::serve(listener, router(images, format, schedule, settings.timing, handles, clock))
-        .await
-        .context("Image server stopped")
+    axum::serve(
+        listener,
+        router(images, format, schedule, settings.timing, handles, clock),
+    )
+    .await
+    .context("Image server stopped")
 }

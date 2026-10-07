@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use anyhow::anyhow;
-use futures_util::FutureExt;
 use chrono::{DateTime, Duration};
 use chrono_tz::Tz;
+use futures_util::FutureExt;
 
 use std::future::Future;
 
@@ -23,13 +23,13 @@ use crate::domain::models::render_report::{RenderReport, SourceReport, SourceSta
 use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
+use crate::domain::services::ImageDisplayService;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::departures_service::DeparturesService;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
 use crate::domain::services::render_observer::RenderObserver;
 use crate::domain::services::weather_service::WeatherService;
-use crate::domain::services::ImageDisplayService;
 
 /// How old data from an earlier fetch may be when its source fails, before it is dropped
 /// from the display as unavailable.
@@ -41,7 +41,10 @@ pub struct MaxAge {
 
 impl Default for MaxAge {
     fn default() -> Self {
-        Self { departures: Duration::minutes(15), weather: Duration::minutes(180) }
+        Self {
+            departures: Duration::minutes(15),
+            weather: Duration::minutes(180),
+        }
     }
 }
 
@@ -58,7 +61,10 @@ pub struct RenderLimits {
 
 impl Default for RenderLimits {
     fn default() -> Self {
-        Self { source_timeout: StdDuration::from_secs(40), deadline: StdDuration::from_secs(120) }
+        Self {
+            source_timeout: StdDuration::from_secs(40),
+            deadline: StdDuration::from_secs(120),
+        }
     }
 }
 
@@ -67,7 +73,9 @@ async fn within<T>(
     limit: StdDuration,
     work: impl Future<Output = Result<T, SourceError>>,
 ) -> Result<T, SourceError> {
-    tokio::time::timeout(limit, work).await.unwrap_or(Err(SourceError::Timeout))
+    tokio::time::timeout(limit, work)
+        .await
+        .unwrap_or(Err(SourceError::Timeout))
 }
 
 /// What a panic said, if it said anything readable (`panic!("...")` carries a `&str` or a `String`).
@@ -118,16 +126,31 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
             Fetched::Stale { value, age } => {
                 let departures = value.as_of(now);
                 (
-                    DepartureBoardData::from_earlier(self.name.clone(), departures.station, departures.services, age),
-                    SourceState::Stale { age_seconds: age_seconds(age) },
+                    DepartureBoardData::from_earlier(
+                        self.name.clone(),
+                        departures.station,
+                        departures.services,
+                        age,
+                    ),
+                    SourceState::Stale {
+                        age_seconds: age_seconds(age),
+                    },
                 )
             }
             Fetched::Unavailable { reason } => (
                 DepartureBoardData::unavailable(self.name.clone(), reason),
-                SourceState::Unavailable { reason: reason.to_owned() },
+                SourceState::Unavailable {
+                    reason: reason.to_owned(),
+                },
             ),
         };
-        (board, SourceReport { name: self.name.clone(), state })
+        (
+            board,
+            SourceReport {
+                name: self.name.clone(),
+                state,
+            },
+        )
     }
 }
 
@@ -183,10 +206,16 @@ where
             observer.render_started();
         }
         let deadline = self.limits.deadline;
-        let result = match AssertUnwindSafe(tokio::time::timeout(deadline, self.render(location))).catch_unwind().await {
+        let result = match AssertUnwindSafe(tokio::time::timeout(deadline, self.render(location)))
+            .catch_unwind()
+            .await
+        {
             Ok(Ok(rendered)) => rendered,
             Ok(Err(_)) => Err(anyhow!("The render didn't answer within {deadline:?}")),
-            Err(panic) => Err(anyhow!("The render panicked: {}", panic_message(panic.as_ref()))),
+            Err(panic) => Err(anyhow!(
+                "The render panicked: {}",
+                panic_message(panic.as_ref())
+            )),
         };
         let finished = self.clock.now();
         for observer in &self.observers {
@@ -208,11 +237,12 @@ where
                     self.weather_service.get_weather_for_location(location),
                 )
                 .await;
-                self.last_weather.resolve(result, now, self.max_age.weather, "Weather")
+                self.last_weather
+                    .resolve(result, now, self.max_age.weather, "Weather")
             },
-            futures_util::future::join_all(
-                self.departure_boards.iter().map(|board| board.for_display(now, self.max_age.departures, self.limits.source_timeout)),
-            ),
+            futures_util::future::join_all(self.departure_boards.iter().map(|board| {
+                board.for_display(now, self.max_age.departures, self.limits.source_timeout)
+            }),),
         );
 
         let date = DateInfo::new(now);
@@ -220,17 +250,30 @@ where
         let (glance_data, weather_state) = match weather {
             // Switched off, so there is nothing to report on.
             Fetched::Fresh(None) => (GlanceData::new(None, departures, date), None),
-            Fetched::Fresh(weather) => (GlanceData::new(weather, departures, date), Some(SourceState::Fresh)),
+            Fetched::Fresh(weather) => (
+                GlanceData::new(weather, departures, date),
+                Some(SourceState::Fresh),
+            ),
             Fetched::Stale { value, age } => (
                 GlanceData::new(value, departures, date).with_weather_age(age),
-                Some(SourceState::Stale { age_seconds: age_seconds(age) }),
+                Some(SourceState::Stale {
+                    age_seconds: age_seconds(age),
+                }),
             ),
             Fetched::Unavailable { reason } => (
                 GlanceData::new(None, departures, date).with_weather_unavailable(reason),
-                Some(SourceState::Unavailable { reason: reason.to_owned() }),
+                Some(SourceState::Unavailable {
+                    reason: reason.to_owned(),
+                }),
             ),
         };
-        sources.splice(0..0, weather_state.map(|state| SourceReport { name: "weather".to_owned(), state }));
+        sources.splice(
+            0..0,
+            weather_state.map(|state| SourceReport {
+                name: "weather".to_owned(),
+                state,
+            }),
+        );
         let profile = self.image_viewing_service.profile();
         let image_data = self
             .display_image_generator
@@ -251,45 +294,74 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
+    use crate::adapters::clock::SystemClock;
     use crate::domain::models::departures::{DepartureService, DepartureStatus};
     use crate::domain::models::display::{DisplayProfile, Palette};
     use crate::domain::models::image::ImageData;
-    use crate::adapters::clock::SystemClock;
     use crate::domain::models::weather::WeatherCondition;
 
     type Flag = Arc<AtomicBool>;
 
     struct Weather(Flag);
     impl WeatherService for Weather {
-        async fn get_weather_for_location(&self, _: Location) -> Result<Option<WeatherInformation>, SourceError> {
+        async fn get_weather_for_location(
+            &self,
+            _: Location,
+        ) -> Result<Option<WeatherInformation>, SourceError> {
             if self.0.load(Ordering::SeqCst) {
                 return Err(SourceError::Unauthorized { status: 401 });
             }
-            Ok(Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)))
+            Ok(Some(WeatherInformation::new(
+                12,
+                8,
+                15,
+                WeatherCondition::Clouds,
+            )))
         }
     }
 
     struct Trains(Flag, Flag);
     impl DeparturesService for Trains {
-        async fn get_departures(&self, _: u8, now: DateTime<Tz>) -> Result<Departures, SourceError> {
+        async fn get_departures(
+            &self,
+            _: u8,
+            now: DateTime<Tz>,
+        ) -> Result<Departures, SourceError> {
             if self.1.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
             if self.0.load(Ordering::SeqCst) {
                 return Err(SourceError::Upstream { status: 503 });
             }
-            let at = |minutes: i64| (now + Duration::minutes(minutes)).format("%H:%M").to_string();
-            let service = |minutes: i64| {
-                DepartureService::new(at(minutes), "Moorgate".into(), DepartureStatus::OnTime, String::new(), format!("{minutes} min"))
+            let at = |minutes: i64| {
+                (now + Duration::minutes(minutes))
+                    .format("%H:%M")
+                    .to_string()
             };
-            Ok(Departures::new("Hornsey".into(), vec![service(10), service(25)]))
+            let service = |minutes: i64| {
+                DepartureService::new(
+                    at(minutes),
+                    "Moorgate".into(),
+                    DepartureStatus::OnTime,
+                    String::new(),
+                    format!("{minutes} min"),
+                )
+            };
+            Ok(Departures::new(
+                "Hornsey".into(),
+                vec![service(10), service(25)],
+            ))
         }
     }
 
     /// Keeps what the dashboard was asked to draw.
     struct Capture(Arc<Mutex<Vec<serde_json::Value>>>, Flag);
     impl DisplayImageGenerator for Capture {
-        async fn generate(&self, data: GlanceData, _: &DisplayProfile) -> anyhow::Result<ImageData> {
+        async fn generate(
+            &self,
+            data: GlanceData,
+            _: &DisplayProfile,
+        ) -> anyhow::Result<ImageData> {
             if self.1.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
@@ -302,7 +374,11 @@ mod tests {
     #[async_trait]
     impl ImageDisplayService for Panel {
         fn profile(&self) -> DisplayProfile {
-            DisplayProfile { width: 1, height: 1, palette: Palette::Mono }
+            DisplayProfile {
+                width: 1,
+                height: 1,
+                palette: Palette::Mono,
+            }
         }
         async fn display(&self, _: &ImageData) -> anyhow::Result<()> {
             Ok(())
@@ -335,17 +411,34 @@ mod tests {
             Capture(frames.clone(), render_hang.clone()),
             Panel,
             Store,
-            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(trains_down.clone(), trains_hang.clone()))],
+            vec![DepartureBoard::new(
+                "NORTHBOUND".into(),
+                4,
+                Trains(trains_down.clone(), trains_hang.clone()),
+            )],
             MaxAge::default(),
-            RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
+            RenderLimits {
+                source_timeout: StdDuration::from_millis(100),
+                deadline: StdDuration::from_millis(400),
+            },
             Arc::new(SystemClock::new(London)),
         );
-        Rig { weather_down, trains_down, trains_hang, render_hang, frames, app }
+        Rig {
+            weather_down,
+            trains_down,
+            trains_hang,
+            render_hang,
+            frames,
+            app,
+        }
     }
 
     impl Rig {
         async fn run(&self) -> serde_json::Value {
-            self.app.run(Location::new(0.0, 0.0)).await.expect("a failing source doesn't fail the render");
+            self.app
+                .run(Location::new(0.0, 0.0))
+                .await
+                .expect("a failing source doesn't fail the render");
             self.frames.lock().unwrap().last().unwrap().clone()
         }
     }
@@ -373,7 +466,9 @@ mod tests {
         let report = fresh.app.run(Location::new(0.0, 0.0)).await.unwrap();
         assert_eq!(
             report.sources[0].state,
-            SourceState::Unavailable { reason: "key rejected".to_owned() }
+            SourceState::Unavailable {
+                reason: "key rejected".to_owned()
+            }
         );
     }
 
@@ -384,7 +479,10 @@ mod tests {
         assert_eq!(frame["departures"][0]["unavailable"], false);
         assert_eq!(frame["weather_age"], "");
         assert_eq!(frame["weather_unavailable"], false);
-        assert_eq!(frame["departures"][0]["services"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            frame["departures"][0]["services"].as_array().unwrap().len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -449,7 +547,10 @@ mod tests {
     async fn data_past_its_age_limit_is_unavailable() {
         let rig = {
             let mut rig = rig();
-            rig.app.max_age = MaxAge { departures: Duration::seconds(-1), weather: Duration::seconds(-1) };
+            rig.app.max_age = MaxAge {
+                departures: Duration::seconds(-1),
+                weather: Duration::seconds(-1),
+            };
             rig
         };
         rig.run().await;
@@ -468,7 +569,11 @@ mod tests {
 
         let started = std::time::Instant::now();
         let frame = rig.run().await;
-        assert!(started.elapsed() < StdDuration::from_millis(350), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < StdDuration::from_millis(350),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(frame["departures"][0]["unavailable"], true);
         assert_eq!(frame["departures"][0]["reason"], "timed out");
         assert!(frame["weather_information"].is_object());
@@ -492,8 +597,15 @@ mod tests {
 
         let started = std::time::Instant::now();
         let error = rig.app.run(Location::new(0.0, 0.0)).await.unwrap_err();
-        assert!(started.elapsed() < StdDuration::from_secs(2), "{:?}", started.elapsed());
-        assert!(format!("{error}").contains("The render didn't answer within"), "{error}");
+        assert!(
+            started.elapsed() < StdDuration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(
+            format!("{error}").contains("The render didn't answer within"),
+            "{error}"
+        );
 
         // The next run is unaffected.
         rig.render_hang.store(false, Ordering::SeqCst);
@@ -527,7 +639,10 @@ mod tests {
         // A run abandoned at its deadline is a failure too.
         rig.render_hang.store(true, Ordering::SeqCst);
         app.run(Location::new(0.0, 0.0)).await.unwrap_err();
-        assert_eq!(*events.0.lock().unwrap(), ["started", "succeeded", "started", "failed"]);
+        assert_eq!(
+            *events.0.lock().unwrap(),
+            ["started", "succeeded", "started", "failed"]
+        );
     }
 
     #[tokio::test]
@@ -554,9 +669,16 @@ mod tests {
             Capture(rig.frames.clone(), rig.render_hang.clone()),
             Panel,
             Store,
-            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(rig.trains_down.clone(), rig.trains_hang.clone()))],
+            vec![DepartureBoard::new(
+                "NORTHBOUND".into(),
+                4,
+                Trains(rig.trains_down.clone(), rig.trains_hang.clone()),
+            )],
             MaxAge::default(),
-            RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
+            RenderLimits {
+                source_timeout: StdDuration::from_millis(100),
+                deadline: StdDuration::from_millis(400),
+            },
             FixedClock::at(at),
         )
         .with_observer(stamps.clone());
@@ -588,21 +710,34 @@ mod tests {
             Unreliable(broken.clone()),
             Panel,
             Store,
-            vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(Flag::default(), Flag::default()))],
+            vec![DepartureBoard::new(
+                "NORTHBOUND".into(),
+                4,
+                Trains(Flag::default(), Flag::default()),
+            )],
             MaxAge::default(),
-            RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
+            RenderLimits {
+                source_timeout: StdDuration::from_millis(100),
+                deadline: StdDuration::from_millis(400),
+            },
             Arc::new(SystemClock::new(London)),
         )
         .with_observer(events.clone());
 
         broken.store(true, Ordering::SeqCst);
         let error = app.run(Location::new(0.0, 0.0)).await.unwrap_err();
-        assert!(format!("{error}").contains("The render panicked: Chrome sent something unreadable"), "{error}");
+        assert!(
+            format!("{error}").contains("The render panicked: Chrome sent something unreadable"),
+            "{error}"
+        );
         assert_eq!(*events.0.lock().unwrap(), ["started", "failed"]);
 
         // The data sources' memory and the observers are intact: the next run works.
         broken.store(false, Ordering::SeqCst);
         app.run(Location::new(0.0, 0.0)).await.unwrap();
-        assert_eq!(*events.0.lock().unwrap(), ["started", "failed", "started", "succeeded"]);
+        assert_eq!(
+            *events.0.lock().unwrap(),
+            ["started", "failed", "started", "succeeded"]
+        );
     }
 }

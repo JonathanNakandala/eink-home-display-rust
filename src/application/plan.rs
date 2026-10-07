@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime};
+use chrono::DateTime;
 use chrono_tz::Tz;
 use serde::Serialize;
 
@@ -55,7 +55,11 @@ fn believable(rendered_at: DateTime<Tz>, now: DateTime<Tz>) -> DateTime<Tz> {
 }
 
 /// Whether the render that should follow the one served has come due, so a new one is wanted.
-pub fn render_due(now: DateTime<Tz>, rendered_at: DateTime<Tz>, schedule: &Schedule) -> anyhow::Result<bool> {
+pub fn render_due(
+    now: DateTime<Tz>,
+    rendered_at: DateTime<Tz>,
+    schedule: &Schedule,
+) -> anyhow::Result<bool> {
     Ok(now >= schedule.next_after(believable(rendered_at, now))?)
 }
 
@@ -97,20 +101,24 @@ pub fn compute(
         changed: have != Some(version),
         stale,
         pending,
-        next_seconds: wait.saturating_add(timing.wake_delay.as_secs()).clamp(1, MAX_SLEEP.as_secs()),
+        next_seconds: wait
+            .saturating_add(timing.wake_delay.as_secs())
+            .clamp(1, MAX_SLEEP.as_secs()),
         age_seconds: (now - rendered_at).num_seconds().max(0) as u64,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
 
-    const TIMING: PlanTiming =
-        PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
+    const TIMING: PlanTiming = PlanTiming {
+        wake_delay: Duration::from_secs(30),
+        stale_grace: Duration::from_secs(300),
+    };
 
     fn at(day: u32, h: u32, m: u32, s: u32) -> DateTime<Tz> {
         London.with_ymd_and_hms(2026, 6, day, h, m, s).unwrap()
@@ -131,7 +139,11 @@ mod tests {
         let plan = compute(now, rendered, &schedule, TIMING, Some(version_of(rendered))).unwrap();
         assert_eq!(plan.age_seconds, 0);
         assert!(!plan.stale && !plan.pending);
-        assert_eq!(plan.next_seconds, 10 * 60 + 30, "the next slot, plus the wake delay");
+        assert_eq!(
+            plan.next_seconds,
+            10 * 60 + 30,
+            "the next slot, plus the wake delay"
+        );
         // It is still the image the display shows, whatever its time says.
         assert!(!plan.changed);
         assert!(!is_stale(now, rendered, &schedule, TIMING.stale_grace).unwrap());
@@ -230,7 +242,11 @@ mod tests {
     fn changed_reflects_the_version_the_display_has() {
         let schedule = Schedule::parse_every("10m").unwrap();
         let version = version_of(at(15, 12, 0, 0));
-        let run = |have| compute(at(15, 12, 4, 0), at(15, 12, 0, 0), &schedule, TIMING, have).unwrap().changed;
+        let run = |have| {
+            compute(at(15, 12, 4, 0), at(15, 12, 0, 0), &schedule, TIMING, have)
+                .unwrap()
+                .changed
+        };
         assert!(run(None));
         assert!(run(Some(version - 600)));
         assert!(!run(Some(version)));

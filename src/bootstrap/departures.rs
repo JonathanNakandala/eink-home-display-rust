@@ -1,9 +1,13 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
-use crate::adapters::departures::{DeparturesServiceImpl, OpenLdbwsDeparturesServiceAdapter, TflDeparturesServiceAdapter};
+use crate::adapters::departures::{
+    DeparturesServiceImpl, OpenLdbwsDeparturesServiceAdapter, TflDeparturesServiceAdapter,
+};
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::application::DepartureBoard;
-use crate::config::departures::{DepartureBoardConfig, DepartureSource, ProvidersConfig, DEFAULT_TFL_HOST_URL};
+use crate::config::departures::{
+    DEFAULT_TFL_HOST_URL, DepartureBoardConfig, DepartureSource, ProvidersConfig,
+};
 
 /// Builds one board per enabled `[[departures]]` entry, in config order.
 pub fn setup_departure_boards(
@@ -47,11 +51,17 @@ fn setup_service(
                 Some(config) => (config.host_url.clone(), config.app_key.clone()),
                 None => (DEFAULT_TFL_HOST_URL.to_owned(), None),
             };
-            Ok(DeparturesServiceImpl::Tfl(TflDeparturesServiceAdapter::new(
-                TflStopPointServiceAdapter::new(host_url, app_key, crate::adapters::http::client()),
-                stop_id.clone(),
-                board.travel_minutes,
-            )))
+            Ok(DeparturesServiceImpl::Tfl(
+                TflDeparturesServiceAdapter::new(
+                    TflStopPointServiceAdapter::new(
+                        host_url,
+                        app_key,
+                        crate::adapters::http::client(),
+                    ),
+                    stop_id.clone(),
+                    board.travel_minutes,
+                ),
+            ))
         }
     }
 }

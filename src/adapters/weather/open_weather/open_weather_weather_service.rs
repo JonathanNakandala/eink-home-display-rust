@@ -2,9 +2,9 @@ use reqwest::Client;
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::adapters::http;
-use crate::domain::models::source_error::SourceError;
 use crate::adapters::weather::open_weather::response::OpenWeatherResponse;
 use crate::domain::models::location::Location;
+use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
 use crate::domain::services::weather_service::WeatherService;
 
@@ -22,7 +22,10 @@ impl WeatherService for OpenWeatherWeatherServiceAdapter {
     ) -> Result<Option<WeatherInformation>, SourceError> {
         let url = format!(
             "{}/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
-            self.host_url, location.latitude, location.longitude, self.api_key.expose_secret()
+            self.host_url,
+            location.latitude,
+            location.longitude,
+            self.api_key.expose_secret()
         );
 
         let response = http::send(self.client.get(&url)).await?;

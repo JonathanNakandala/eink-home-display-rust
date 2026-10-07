@@ -1,7 +1,7 @@
 pub mod open_ldbws;
 pub mod tfl;
 
-use chrono::{DateTime};
+use chrono::DateTime;
 use chrono_tz::Tz;
 
 pub use open_ldbws::open_ldbws_departures_service::OpenLdbwsDeparturesServiceAdapter;
@@ -23,7 +23,9 @@ impl DeparturesService for DeparturesServiceImpl {
         now: DateTime<Tz>,
     ) -> Result<Departures, SourceError> {
         match self {
-            DeparturesServiceImpl::OpenLdbws(service) => service.get_departures(num_rows, now).await,
+            DeparturesServiceImpl::OpenLdbws(service) => {
+                service.get_departures(num_rows, now).await
+            }
             DeparturesServiceImpl::Tfl(service) => service.get_departures(num_rows, now).await,
         }
     }

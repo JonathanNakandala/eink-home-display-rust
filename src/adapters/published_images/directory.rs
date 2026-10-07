@@ -15,7 +15,9 @@ pub struct DirectoryImages {
 
 impl DirectoryImages {
     pub fn new(directory: impl Into<PathBuf>) -> Self {
-        Self { directory: directory.into() }
+        Self {
+            directory: directory.into(),
+        }
     }
 
     fn path(&self, format: ImageFormat) -> PathBuf {
@@ -44,7 +46,10 @@ impl PublishedImages for DirectoryImages {
 
     async fn published_at(&self, format: ImageFormat) -> anyhow::Result<Option<DateTime<Utc>>> {
         let path = self.path(format);
-        match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
+        match tokio::fs::metadata(&path)
+            .await
+            .and_then(|metadata| metadata.modified())
+        {
             Ok(modified) => Ok(Some(DateTime::<Utc>::from(modified))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e).with_context(|| format!("Failed to inspect {}", path.display())),
@@ -69,15 +74,34 @@ mod tests {
     async fn publishes_reads_and_dates_each_format() {
         let tmp = tempfile::tempdir().unwrap();
         let images = DirectoryImages::new(tmp.path().join("out"));
-        assert!(images.published_at(ImageFormat::Bmp).await.unwrap().is_none());
+        assert!(
+            images
+                .published_at(ImageFormat::Bmp)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(images.read(ImageFormat::Bmp).await.unwrap().is_none());
 
         images.publish(ImageFormat::Bmp, &[1, 2, 3]).await.unwrap();
-        assert_eq!(images.read(ImageFormat::Bmp).await.unwrap().unwrap(), [1, 2, 3]);
-        let at = images.published_at(ImageFormat::Bmp).await.unwrap().unwrap();
+        assert_eq!(
+            images.read(ImageFormat::Bmp).await.unwrap().unwrap(),
+            [1, 2, 3]
+        );
+        let at = images
+            .published_at(ImageFormat::Bmp)
+            .await
+            .unwrap()
+            .unwrap();
         assert!((Utc::now() - at).num_seconds().abs() < 5);
         // Another format is its own file.
-        assert!(images.published_at(ImageFormat::Png).await.unwrap().is_none());
+        assert!(
+            images
+                .published_at(ImageFormat::Png)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

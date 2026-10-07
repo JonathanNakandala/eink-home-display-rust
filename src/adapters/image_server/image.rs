@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 use super::identity::Caller;
-use super::{negotiate, transfer, Published};
+use super::{Published, negotiate, transfer};
 use crate::domain::models::display::ImageFormat;
 
 /// Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can
@@ -28,22 +28,31 @@ pub(super) async fn image(
             Ok(Some(_)) => available.push(format),
             Ok(None) => {}
             Err(e) => {
-                log::warn!("Skipping the {} image: failed to inspect it: {e:#}", format.extension());
+                log::warn!(
+                    "Skipping the {} image: failed to inspect it: {e:#}",
+                    format.extension()
+                );
                 unreadable.push(format);
             }
         }
     }
-    let accept = headers.get(header::ACCEPT).and_then(|value| value.to_str().ok());
+    let accept = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok());
     let candidates = negotiate::acceptable(accept, published.format, &available);
     if candidates.is_empty() {
-        let wanted_but_broken = !negotiate::acceptable(accept, published.format, &unreadable).is_empty();
+        let wanted_but_broken =
+            !negotiate::acceptable(accept, published.format, &unreadable).is_empty();
         if wanted_but_broken || (available.is_empty() && !unreadable.is_empty()) {
             return failed("The image could not be read");
         }
         if available.is_empty() {
             return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
         }
-        let offered: Vec<_> = available.iter().map(|format| format.content_type()).collect();
+        let offered: Vec<_> = available
+            .iter()
+            .map(|format| format.content_type())
+            .collect();
         let body = format!("No acceptable format. Available: {}", offered.join(", "));
         return (StatusCode::NOT_ACCEPTABLE, [(header::VARY, "Accept")], body).into_response();
     }
@@ -56,7 +65,12 @@ pub(super) async fn image(
                 // Which display got which format, so a comparison of formats says who it was run on. Noted as the
                 // reply is handed to the server, not when the last byte has gone: that is for the transfer timing.
                 if let Some(device) = &caller {
-                    published.handles.devices.image_served(device, format, bytes.len() as u64, published.clock.now());
+                    published.handles.devices.image_served(
+                        device,
+                        format,
+                        bytes.len() as u64,
+                        published.clock.now(),
+                    );
                 }
                 let length = bytes.len();
                 return (
@@ -75,7 +89,10 @@ pub(super) async fn image(
             }
             Ok(None) => continue,
             Err(e) => {
-                log::warn!("Skipping the {} image: failed to read it: {e:#}", format.extension());
+                log::warn!(
+                    "Skipping the {} image: failed to read it: {e:#}",
+                    format.extension()
+                );
                 read_failed = true;
             }
         }
@@ -93,18 +110,26 @@ fn failed(message: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use super::super::testing::{publish, start};
     use super::*;
+    use chrono_tz::Europe::London;
 
     #[tokio::test]
     async fn serves_the_published_image_with_its_content_type() {
         let tmp = tempfile::tempdir().unwrap();
         let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
 
-        assert_eq!(reqwest::get(format!("{base}/image")).await.unwrap().status(), 404);
+        assert_eq!(
+            reqwest::get(format!("{base}/image"))
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
 
-        publish(tmp.path(), ImageFormat::Bmp, &[1, 2, 3]).await.unwrap();
+        publish(tmp.path(), ImageFormat::Bmp, &[1, 2, 3])
+            .await
+            .unwrap();
         let response = reqwest::get(format!("{base}/image")).await.unwrap();
         assert_eq!(response.status(), 200);
         assert_eq!(response.headers()["content-type"], "image/bmp");
@@ -134,8 +159,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // The server prefers PNG, and has both.
         let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
-        publish(tmp.path(), ImageFormat::Png, b"png-bytes").await.unwrap();
+        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes")
+            .await
+            .unwrap();
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
 
         for (accept, content_type, body) in [
             (None, "image/png", "png-bytes"),
@@ -148,9 +177,17 @@ mod tests {
         ] {
             let response = fetch(&base, accept).await;
             assert_eq!(response.status(), 200, "{accept:?}");
-            assert_eq!(response.headers()["content-type"], content_type, "{accept:?}");
+            assert_eq!(
+                response.headers()["content-type"],
+                content_type,
+                "{accept:?}"
+            );
             assert_eq!(response.headers()["vary"], "Accept", "{accept:?}");
-            assert_eq!(response.headers()["cache-control"], "no-store", "{accept:?}");
+            assert_eq!(
+                response.headers()["cache-control"],
+                "no-store",
+                "{accept:?}"
+            );
             assert_eq!(response.text().await.unwrap(), body, "{accept:?}");
         }
     }
@@ -159,26 +196,72 @@ mod tests {
     async fn two_displays_fetching_at_once_are_each_recorded_with_what_they_were_sent() {
         let tmp = tempfile::tempdir().unwrap();
         let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
-        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
-        publish(tmp.path(), ImageFormat::Png, b"png-bytes").await.unwrap();
+        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes")
+            .await
+            .unwrap();
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
         for name in ["kitchen", "hall"] {
-            assert_eq!(reqwest::get(format!("{base}/plan?device={name}")).await.unwrap().status(), 200);
+            assert_eq!(
+                reqwest::get(format!("{base}/plan?device={name}"))
+                    .await
+                    .unwrap()
+                    .status(),
+                200
+            );
         }
 
         let fetch_as = |name: &'static str, accept: &'static str| {
             let url = format!("{base}/image?device={name}");
-            async move { reqwest::Client::new().get(url).header("Accept", accept).send().await.unwrap().text().await.unwrap() }
+            async move {
+                reqwest::Client::new()
+                    .get(url)
+                    .header("Accept", accept)
+                    .send()
+                    .await
+                    .unwrap()
+                    .text()
+                    .await
+                    .unwrap()
+            }
         };
-        let (kitchen, hall) = tokio::join!(fetch_as("kitchen", "image/bmp"), fetch_as("hall", "image/png"));
-        assert_eq!((kitchen.as_str(), hall.as_str()), ("bmp-bytes", "png-bytes"));
+        let (kitchen, hall) = tokio::join!(
+            fetch_as("kitchen", "image/bmp"),
+            fetch_as("hall", "image/png")
+        );
+        assert_eq!(
+            (kitchen.as_str(), hall.as_str()),
+            ("bmp-bytes", "png-bytes")
+        );
 
-        let status = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let status = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
         let sent = |name: &str| {
-            let device = status["devices"].as_array().unwrap().iter().find(|d| d["name"] == name).unwrap().clone();
-            (device["last_image"]["format"].clone(), device["last_image"]["bytes"].clone())
+            let device = status["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["name"] == name)
+                .unwrap()
+                .clone();
+            (
+                device["last_image"]["format"].clone(),
+                device["last_image"]["bytes"].clone(),
+            )
         };
-        assert_eq!(sent("kitchen"), (serde_json::json!("bmp"), serde_json::json!(9)));
-        assert_eq!(sent("hall"), (serde_json::json!("png"), serde_json::json!(9)));
+        assert_eq!(
+            sent("kitchen"),
+            (serde_json::json!("bmp"), serde_json::json!(9))
+        );
+        assert_eq!(
+            sent("hall"),
+            (serde_json::json!("png"), serde_json::json!(9))
+        );
     }
 
     #[tokio::test]
@@ -187,15 +270,32 @@ mod tests {
         let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
         publish(tmp.path(), ImageFormat::Bmp, b"x").await.unwrap();
         // Checked in under a good name, so a record exists that a wrongly attributed fetch could have changed.
-        reqwest::get(format!("{base}/plan?device=kitchen")).await.unwrap();
+        reqwest::get(format!("{base}/plan?device=kitchen"))
+            .await
+            .unwrap();
 
-        for query in ["", "?device=", "?device=has%20space", "?device=stranger", "?device=%22%0A"] {
+        for query in [
+            "",
+            "?device=",
+            "?device=has%20space",
+            "?device=stranger",
+            "?device=%22%0A",
+        ] {
             let response = reqwest::get(format!("{base}/image{query}")).await.unwrap();
             assert_eq!(response.status(), 200, "{query}");
         }
-        let status = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let status = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
         let devices = status["devices"].as_array().unwrap();
-        assert_eq!(devices.len(), 1, "a fetch alone adds no display: {devices:?}");
+        assert_eq!(
+            devices.len(),
+            1,
+            "a fetch alone adds no display: {devices:?}"
+        );
         assert!(devices[0]["last_image"].is_null(), "{devices:?}");
     }
 
@@ -211,7 +311,10 @@ mod tests {
             assert_eq!(response.status(), 406, "{accept}");
             assert_eq!(response.headers()["vary"], "Accept");
             let body = response.text().await.unwrap();
-            assert!(body.contains("image/bmp") && body.contains("image/png"), "{body}");
+            assert!(
+                body.contains("image/bmp") && body.contains("image/png"),
+                "{body}"
+            );
         }
     }
 
@@ -222,7 +325,9 @@ mod tests {
         assert_eq!(fetch(&base, None).await.status(), 404);
 
         // Only a BMP exists, though PNG is preferred: wildcards get it, and asking for PNG is a 406.
-        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
+        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes")
+            .await
+            .unwrap();
         let response = fetch(&base, Some("*/*")).await;
         assert_eq!(response.headers()["content-type"], "image/bmp");
         let refused = fetch(&base, Some("image/png")).await;
@@ -236,14 +341,28 @@ mod tests {
         cannot_inspect: Option<ImageFormat>,
         cannot_read: Option<ImageFormat>,
     ) -> String {
-        use super::super::testing::{start_with, Faulty};
+        use super::super::testing::{Faulty, start_with};
         use crate::adapters::clock::SystemClock;
         use crate::adapters::published_images::DirectoryImages;
 
-        publish(directory, ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
-        publish(directory, ImageFormat::Png, b"png-bytes").await.unwrap();
-        let images = Faulty { inner: DirectoryImages::new(directory), cannot_inspect, cannot_read };
-        start_with(Arc::new(images), ImageFormat::Png, Arc::new(SystemClock::new(London))).await.0
+        publish(directory, ImageFormat::Bmp, b"bmp-bytes")
+            .await
+            .unwrap();
+        publish(directory, ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
+        let images = Faulty {
+            inner: DirectoryImages::new(directory),
+            cannot_inspect,
+            cannot_read,
+        };
+        start_with(
+            Arc::new(images),
+            ImageFormat::Png,
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .0
     }
 
     #[tokio::test]
@@ -252,10 +371,19 @@ mod tests {
         let base = start_faulty(tmp.path(), Some(ImageFormat::Png), None).await;
 
         // The server prefers PNG, but it is the broken one: anyone who accepts BMP still gets it.
-        for accept in [None, Some("*/*"), Some("image/bmp"), Some("image/png, image/bmp;q=0.5")] {
+        for accept in [
+            None,
+            Some("*/*"),
+            Some("image/bmp"),
+            Some("image/png, image/bmp;q=0.5"),
+        ] {
             let response = fetch(&base, accept).await;
             assert_eq!(response.status(), 200, "{accept:?}");
-            assert_eq!(response.headers()["content-type"], "image/bmp", "{accept:?}");
+            assert_eq!(
+                response.headers()["content-type"],
+                "image/bmp",
+                "{accept:?}"
+            );
         }
         // Someone who can only decode PNG is let down by the server, not by a mismatch.
         let response = fetch(&base, Some("image/png")).await;
@@ -278,16 +406,31 @@ mod tests {
     async fn when_nothing_can_be_read_it_is_a_server_error_not_a_missing_image() {
         let tmp = tempfile::tempdir().unwrap();
         publish(tmp.path(), ImageFormat::Bmp, b"x").await.unwrap();
-        for (inspect, read) in [(Some(ImageFormat::Bmp), None), (None, Some(ImageFormat::Bmp))] {
-            use super::super::testing::{start_with, Faulty};
+        for (inspect, read) in [
+            (Some(ImageFormat::Bmp), None),
+            (None, Some(ImageFormat::Bmp)),
+        ] {
+            use super::super::testing::{Faulty, start_with};
             use crate::adapters::clock::SystemClock;
             use crate::adapters::published_images::DirectoryImages;
 
-            let images = Faulty { inner: DirectoryImages::new(tmp.path()), cannot_inspect: inspect, cannot_read: read };
-            let (base, _) = start_with(Arc::new(images), ImageFormat::Bmp, Arc::new(SystemClock::new(London))).await;
+            let images = Faulty {
+                inner: DirectoryImages::new(tmp.path()),
+                cannot_inspect: inspect,
+                cannot_read: read,
+            };
+            let (base, _) = start_with(
+                Arc::new(images),
+                ImageFormat::Bmp,
+                Arc::new(SystemClock::new(London)),
+            )
+            .await;
             let response = fetch(&base, None).await;
             assert_eq!(response.status(), 500, "{inspect:?} {read:?}");
-            assert_eq!(response.text().await.unwrap(), "The image could not be read");
+            assert_eq!(
+                response.text().await.unwrap(),
+                "The image could not be read"
+            );
         }
     }
 }

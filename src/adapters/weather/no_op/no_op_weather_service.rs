@@ -1,5 +1,5 @@
-use crate::domain::models::source_error::SourceError;
 use crate::domain::models::location::Location;
+use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::services::weather_service::WeatherService;
 

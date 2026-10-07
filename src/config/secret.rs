@@ -14,7 +14,10 @@ pub fn serialize<S: Serializer>(secret: &SecretString, serializer: S) -> Result<
     serializer.serialize_str(secret.expose_secret())
 }
 
-pub fn serialize_option<S: Serializer>(secret: &Option<SecretString>, serializer: S) -> Result<S::Ok, S::Error> {
+pub fn serialize_option<S: Serializer>(
+    secret: &Option<SecretString>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
     match secret {
         Some(secret) => serialize(secret, serializer),
         None => serializer.serialize_none(),

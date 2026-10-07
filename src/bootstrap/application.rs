@@ -2,19 +2,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::adapters::departures::DeparturesServiceImpl;
-use crate::adapters::display_image_generator::chrome_render::{ChromeRenderDisplayImageGenerator, ChromeSource};
+use crate::adapters::display_image_generator::chrome_render::{
+    ChromeRenderDisplayImageGenerator, ChromeSource,
+};
 use crate::adapters::image_repository::file_store::FileStoreImageRepository;
 use crate::adapters::weather::WeatherServiceImpl;
 use crate::application::Application;
 use crate::config::application::ApplicationConfig;
 use crate::config::cache::CachePaths;
+use crate::domain::services::ImageDisplayService;
 use crate::domain::services::clock::Clock;
+use crate::domain::services::departures_service::DeparturesService;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
 use crate::domain::services::published_images::PublishedImages;
 use crate::domain::services::weather_service::WeatherService;
-use crate::domain::services::departures_service::DeparturesService;
-use crate::domain::services::ImageDisplayService;
 
 use super::{setup_departure_boards, setup_display, setup_weather_service};
 

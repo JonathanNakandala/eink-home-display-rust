@@ -41,7 +41,10 @@ impl Pollen {
         let readings: Vec<_> = readings
             .iter()
             .filter_map(|(kind, grains)| {
-                Some(PollenReading { kind: *kind, grains: (*grains)?.max(0.0) })
+                Some(PollenReading {
+                    kind: *kind,
+                    grains: (*grains)?.max(0.0),
+                })
             })
             .collect();
         (!readings.is_empty()).then_some(Self { readings })

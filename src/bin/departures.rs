@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 
 use eink_home_display_rust::bootstrap::{self, setup_departure_boards};
@@ -28,13 +28,17 @@ async fn main() -> Result<()> {
     }
 
     for board_config in configs {
-        let mut boards = setup_departure_boards(std::slice::from_ref(board_config), &config.providers)?;
+        let mut boards =
+            setup_departure_boards(std::slice::from_ref(board_config), &config.providers)?;
         let Some(board) = boards.pop() else {
             println!("\n{}  (disabled)", board_config.name);
             continue;
         };
         let rows = args.rows.unwrap_or(board_config.rows);
-        match board.fetch(rows, chrono::Utc::now().with_timezone(&zone)).await {
+        match board
+            .fetch(rows, chrono::Utc::now().with_timezone(&zone))
+            .await
+        {
             Ok(departures) => print_board(&board_config.name, &departures),
             Err(e) => println!("\n{}\n  error: {e:#}", board_config.name),
         }

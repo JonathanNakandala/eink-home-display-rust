@@ -26,7 +26,8 @@ pub struct PoweredPanel {
 
 impl PoweredPanel {
     pub fn open() -> anyhow::Result<Self> {
-        let mut chip = Chip::new(GPIO_CHIP).with_context(|| format!("Failed to open {GPIO_CHIP}"))?;
+        let mut chip =
+            Chip::new(GPIO_CHIP).with_context(|| format!("Failed to open {GPIO_CHIP}"))?;
         let mut pin = |offset: u32, flags: LineRequestFlags, initial: u8, label: &str| {
             let handle = chip
                 .get_line(offset)

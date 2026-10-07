@@ -5,9 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::cache::CacheConfig;
+use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::schedule::ScheduleConfig;
 use crate::config::server::ServerConfig;
-use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
 use crate::config::weather::WeatherConfig;
 use crate::domain::models::display::{Dither, ImageFormat};
 
@@ -134,8 +134,11 @@ impl LocationConfig {
         self.timezone
             .as_deref()
             .map(|name| {
-                name.parse::<chrono_tz::Tz>()
-                    .map_err(|_| anyhow::anyhow!("The timezone {name:?} is not an IANA zone name such as \"Europe/London\""))
+                name.parse::<chrono_tz::Tz>().map_err(|_| {
+                    anyhow::anyhow!(
+                        "The timezone {name:?} is not an IANA zone name such as \"Europe/London\""
+                    )
+                })
             })
             .transpose()
     }
@@ -144,7 +147,7 @@ impl LocationConfig {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FileStoreConfig {
     /// Where rendered images are saved; empty for the working directory.
-    pub save_directory: PathBuf
+    pub save_directory: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -228,7 +231,10 @@ pub enum DisplayKind {
 }
 
 impl DisplayKind {
-    pub const ALL: [DisplayKind; 2] = [DisplayKind::WaveshareEpd7in5V2, DisplayKind::ReTerminalE1003];
+    pub const ALL: [DisplayKind; 2] = [
+        DisplayKind::WaveshareEpd7in5V2,
+        DisplayKind::ReTerminalE1003,
+    ];
 
     /// Whether the display pulls its image over HTTP instead of being driven directly.
     pub fn fetches_image(self) -> bool {

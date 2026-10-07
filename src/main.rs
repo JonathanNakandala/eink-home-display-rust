@@ -5,8 +5,10 @@ use anyhow::Result;
 use clap::Parser;
 
 use eink_home_display_rust::adapters::clock::SystemClock;
-use eink_home_display_rust::adapters::display_image_generator::chrome_render::{ChromeSource, DEFAULT_IDLE_TIMEOUT};
-use eink_home_display_rust::adapters::image_server::{serve, Handles, ServerSettings};
+use eink_home_display_rust::adapters::display_image_generator::chrome_render::{
+    ChromeSource, DEFAULT_IDLE_TIMEOUT,
+};
+use eink_home_display_rust::adapters::image_server::{Handles, ServerSettings, serve};
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
 use eink_home_display_rust::application::devices::DeviceBoard;
 use eink_home_display_rust::application::launch;
@@ -17,13 +19,18 @@ use eink_home_display_rust::cli;
 use eink_home_display_rust::config::cache::CachePaths;
 use eink_home_display_rust::domain::models::location::Location;
 use eink_home_display_rust::domain::services::clock::Clock;
-use eink_home_display_rust::scheduler::{log_schedule, run_periodically_from, shutdown_signal, PERIODIC_IDLE_TIMEOUT};
+use eink_home_display_rust::scheduler::{
+    PERIODIC_IDLE_TIMEOUT, log_schedule, run_periodically_from, shutdown_signal,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     bootstrap::init_logging("debug");
     // TODO: Figure out how to log the current log level as RUST_LOG should by able to override via try_from_default_env
-    tracing::info!("Logging initialized at {} level", tracing::level_filters::STATIC_MAX_LEVEL);
+    tracing::info!(
+        "Logging initialized at {} level",
+        tracing::level_filters::STATIC_MAX_LEVEL
+    );
 
     let args = match cli::Args::try_parse() {
         Ok(args) => args,
@@ -39,25 +46,46 @@ async fn main() -> Result<()> {
     log::info!("Settings loaded successfully: {:?}", config);
 
     let location = Location::new(config.location.latitude, config.location.longitude);
-    let cache = CachePaths::new(args.cache_dir.clone().unwrap_or_else(|| config.cache.directory.clone()));
+    let cache = CachePaths::new(
+        args.cache_dir
+            .clone()
+            .unwrap_or_else(|| config.cache.directory.clone()),
+    );
     cache.ensure_exists()?;
     let chrome_source = ChromeSource::from(args.bundled_chrome);
     let zone = bootstrap::resolve_zone(&config.location)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(zone));
 
-    let configured = config.schedule.as_ref().map(|schedule| schedule.to_schedule()).transpose()?;
+    let configured = config
+        .schedule
+        .as_ref()
+        .map(|schedule| schedule.to_schedule())
+        .transpose()?;
     let Some(schedule) = args.schedule(configured)? else {
-        return bootstrap::from_config(&config, &cache, DEFAULT_IDLE_TIMEOUT, chrome_source, Arc::new(DirectoryImages::new(config.server.directory.clone())), clock)?
-            .run(location)
-            .await
-            .map(|_| ());
+        return bootstrap::from_config(
+            &config,
+            &cache,
+            DEFAULT_IDLE_TIMEOUT,
+            chrome_source,
+            Arc::new(DirectoryImages::new(config.server.directory.clone())),
+            clock,
+        )?
+        .run(location)
+        .await
+        .map(|_| ());
     };
     let now = clock.now();
     log_schedule(&schedule, now);
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
-        && launch::served_image_is_current(images.as_ref(), config.display.image_format.into(), &schedule, now).await;
+        && launch::served_image_is_current(
+            images.as_ref(),
+            config.display.image_format.into(),
+            &schedule,
+            now,
+        )
+        .await;
     let first = launch::first_render_at(
         now,
         args.no_initial_run,
@@ -66,25 +94,48 @@ async fn main() -> Result<()> {
         args.restart_cooldown,
     );
     match first {
-        Some(at) if at > now => log::info!("Holding the first render until {} (restart cooldown)", at.format("%H:%M:%S")),
+        Some(at) if at > now => log::info!(
+            "Holding the first render until {} (restart cooldown)",
+            at.format("%H:%M:%S")
+        ),
         Some(_) => log::info!("Rendering now"),
-        None if image_is_current => log::info!("The served image is current; waiting for the next slot"),
+        None if image_is_current => {
+            log::info!("The served image is current; waiting for the next slot")
+        }
         None => {}
     }
-    let refresh = RefreshControl::new(Duration::from_secs(config.server.refresh_cooldown_seconds.into()));
+    let refresh = RefreshControl::new(Duration::from_secs(
+        config.server.refresh_cooldown_seconds.into(),
+    ));
     let status = StatusBoard::new(now);
-    let devices = DeviceBoard::new(Duration::from_secs(config.server.device_overdue_grace_seconds.into()));
+    let devices = DeviceBoard::new(Duration::from_secs(
+        config.server.device_overdue_grace_seconds.into(),
+    ));
     // Built once so the Chrome it launches is kept between runs.
-    let app = bootstrap::from_config(&config, &cache, PERIODIC_IDLE_TIMEOUT, chrome_source, images.clone(), clock.clone())?
-        .with_observer(Arc::new(launch::AttemptMarker::new(marker, clock.clone())))
-        // Status before refresh: a button press is answered as soon as the refresh hears the render
-        // end, and whoever then reads /status must see that render's outcome.
-        .with_observer(status.clone())
-        .with_observer(refresh.clone());
-    let periodic = run_periodically_from(&schedule, first, refresh.wake(), clock.as_ref(), shutdown_signal(), || {
-        let run = app.run(location);
-        async move { run.await.map(|_| ()) }
-    });
+    let app = bootstrap::from_config(
+        &config,
+        &cache,
+        PERIODIC_IDLE_TIMEOUT,
+        chrome_source,
+        images.clone(),
+        clock.clone(),
+    )?
+    .with_observer(Arc::new(launch::AttemptMarker::new(marker, clock.clone())))
+    // Status before refresh: a button press is answered as soon as the refresh hears the render
+    // end, and whoever then reads /status must see that render's outcome.
+    .with_observer(status.clone())
+    .with_observer(refresh.clone());
+    let periodic = run_periodically_from(
+        &schedule,
+        first,
+        refresh.wake(),
+        clock.as_ref(),
+        shutdown_signal(),
+        || {
+            let run = app.run(location);
+            async move { run.await.map(|_| ()) }
+        },
+    );
     if !config.display.kind.fetches_image() {
         return periodic.await;
     }

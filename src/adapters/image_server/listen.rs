@@ -41,13 +41,21 @@ pub struct Bound {
 /// address accepts only its own.
 pub fn bind(address: SocketAddr) -> anyhow::Result<Bound> {
     let (socket, address, families) = match address {
-        SocketAddr::V4(_) => (Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)), address, Families::V4),
+        SocketAddr::V4(_) => (
+            Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)),
+            address,
+            Families::V4,
+        ),
         SocketAddr::V6(v6) if v6.ip().is_unspecified() => match dual_stack() {
             Ok(socket) => (Ok(socket), address, Families::Both),
             Err(e) => {
                 log::warn!("No dual-stack IPv6 socket here ({e}); listening on IPv4 only");
                 let v4 = SocketAddr::from((Ipv4Addr::UNSPECIFIED, v6.port()));
-                (Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)), v4, Families::V4)
+                (
+                    Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)),
+                    v4,
+                    Families::V4,
+                )
             }
         },
         // A specific IPv6 address is only ever IPv6.
@@ -61,7 +69,8 @@ pub fn bind(address: SocketAddr) -> anyhow::Result<Bound> {
         ),
     };
     let socket = socket.with_context(|| format!("Failed to create a socket for {address}"))?;
-    let listener = open(socket, address).with_context(|| format!("Failed to listen on {address}"))?;
+    let listener =
+        open(socket, address).with_context(|| format!("Failed to listen on {address}"))?;
     Ok(Bound { listener, families })
 }
 
@@ -129,7 +138,12 @@ mod tests {
     async fn a_port_in_use_is_an_error_not_a_fallback() {
         let first = bind("[::]:0".parse().unwrap()).unwrap();
         let port = first.listener.local_addr().unwrap().port();
-        let error = bind(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port))).err().expect("the port is taken");
-        assert!(format!("{error:#}").contains("Failed to listen"), "{error:#}");
+        let error = bind(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port)))
+            .err()
+            .expect("the port is taken");
+        assert!(
+            format!("{error:#}").contains("Failed to listen"),
+            "{error:#}"
+        );
     }
 }

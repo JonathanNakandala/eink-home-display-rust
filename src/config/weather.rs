@@ -47,7 +47,9 @@ fn api_key_length(key: &SecretString) -> Result<(), serde_valid::validation::Err
     if length == 32 {
         Ok(())
     } else {
-        Err(serde_valid::validation::Error::Custom(format!("the API key must be 32 characters, not {length}")))
+        Err(serde_valid::validation::Error::Custom(format!(
+            "the API key must be 32 characters, not {length}"
+        )))
     }
 }
 
@@ -58,7 +60,7 @@ pub struct OpenWeatherConfig {
     #[validate(custom = api_key_length)]
     #[schemars(with = "String", length(min = 32, max = 32))]
     pub api_key: SecretString,
-    pub host_url: String
+    pub host_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -100,17 +102,40 @@ mod tests {
 
     #[test]
     fn the_provider_in_use_is_checked() {
-        assert!(config(true, WeatherProvider::OpenWeather, &"k".repeat(32)).validate_in_use().is_ok());
-        assert!(config(true, WeatherProvider::OpenWeather, "").validate_in_use().is_err());
-        assert!(config(true, WeatherProvider::OpenWeather, "too short").validate_in_use().is_err());
+        assert!(
+            config(true, WeatherProvider::OpenWeather, &"k".repeat(32))
+                .validate_in_use()
+                .is_ok()
+        );
+        assert!(
+            config(true, WeatherProvider::OpenWeather, "")
+                .validate_in_use()
+                .is_err()
+        );
+        assert!(
+            config(true, WeatherProvider::OpenWeather, "too short")
+                .validate_in_use()
+                .is_err()
+        );
     }
 
     #[test]
     fn what_is_not_in_use_is_not_checked() {
         // Switched off, or the other provider is selected: a placeholder key is no problem.
-        assert!(config(false, WeatherProvider::OpenWeather, "").validate_in_use().is_ok());
-        assert!(config(true, WeatherProvider::OpenMeteo, "").validate_in_use().is_ok());
-        let without_section = WeatherConfig { open_weather: None, ..config(true, WeatherProvider::OpenMeteo, "") };
+        assert!(
+            config(false, WeatherProvider::OpenWeather, "")
+                .validate_in_use()
+                .is_ok()
+        );
+        assert!(
+            config(true, WeatherProvider::OpenMeteo, "")
+                .validate_in_use()
+                .is_ok()
+        );
+        let without_section = WeatherConfig {
+            open_weather: None,
+            ..config(true, WeatherProvider::OpenMeteo, "")
+        };
         assert!(without_section.validate_in_use().is_ok());
     }
 }

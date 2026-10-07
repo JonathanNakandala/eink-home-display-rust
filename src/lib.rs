@@ -1,8 +1,8 @@
-pub mod application;
-pub mod domain;
 pub mod adapters;
+pub mod application;
 pub mod bootstrap;
-pub mod config;
 pub mod cli;
-pub mod scheduler;
+pub mod config;
+pub mod domain;
 pub mod quiet_times;
+pub mod scheduler;

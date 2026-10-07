@@ -44,6 +44,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(std::fs::read(save_dir.join("screenshot.png")).unwrap(), vec![1, 2, 3]);
+        assert_eq!(
+            std::fs::read(save_dir.join("screenshot.png")).unwrap(),
+            vec![1, 2, 3]
+        );
     }
 }

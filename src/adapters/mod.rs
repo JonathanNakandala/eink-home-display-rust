@@ -1,12 +1,12 @@
 pub mod clock;
 pub mod departures;
 pub mod display_image_generator;
+pub mod http;
 pub mod image_display_service;
 pub mod image_repository;
+pub mod image_server;
+pub mod published_images;
+pub mod stop_points;
 pub mod train_schedule;
 pub mod weather;
-pub mod stop_points;
-pub mod image_server;
-pub mod http;
-pub mod published_images;
 pub mod zone;

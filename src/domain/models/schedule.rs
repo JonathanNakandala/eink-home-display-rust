@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use chrono::{DateTime, NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use croner::Cron;
@@ -24,7 +24,9 @@ impl Schedule {
     }
 
     /// One schedule from several cron expressions; a run is due whenever any of them is.
-    pub fn parse_crons<S: AsRef<str>>(expressions: impl IntoIterator<Item = S>) -> anyhow::Result<Self> {
+    pub fn parse_crons<S: AsRef<str>>(
+        expressions: impl IntoIterator<Item = S>,
+    ) -> anyhow::Result<Self> {
         let crons = expressions
             .into_iter()
             .map(|expression| {
@@ -34,7 +36,10 @@ impl Schedule {
                     .map_err(|e| anyhow!("Invalid cron expression {expression:?}: {e}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        anyhow::ensure!(!crons.is_empty(), "A schedule needs at least one cron expression");
+        anyhow::ensure!(
+            !crons.is_empty(),
+            "A schedule needs at least one cron expression"
+        );
         Ok(Self::Cron(crons))
     }
 
@@ -75,7 +80,10 @@ impl Schedule {
     /// The schedule in words, one line per cron expression, for a person to check it says what they meant.
     pub fn describe(&self) -> Vec<String> {
         match self {
-            Self::Cron(crons) => crons.iter().map(|cron| format!("{}  {}", cron.as_str(), cron.describe())).collect(),
+            Self::Cron(crons) => crons
+                .iter()
+                .map(|cron| format!("{}  {}", cron.as_str(), cron.describe()))
+                .collect(),
             Self::Every(period) => vec![format!("Every {}", humantime::format_duration(*period))],
         }
     }
@@ -83,7 +91,8 @@ impl Schedule {
     /// How many runs fall on `day`, a calendar day in `zone`. Stops counting at a large number, so a tiny interval
     /// gives that number, not the true one.
     pub fn runs_on(&self, day: NaiveDate, zone: Tz) -> anyhow::Result<usize> {
-        let start = start_of_day(day, zone).with_context(|| format!("Can't tell when {day} starts"))?;
+        let start =
+            start_of_day(day, zone).with_context(|| format!("Can't tell when {day} starts"))?;
         let end = day
             .succ_opt()
             .and_then(|next| start_of_day(next, zone))
@@ -116,15 +125,16 @@ impl Schedule {
 /// Midnight at the start of `day`; in a zone where the clocks change at midnight, the first moment that exists.
 fn start_of_day(day: NaiveDate, zone: Tz) -> Option<DateTime<Tz>> {
     let midnight = day.and_hms_opt(0, 0, 0)?;
-    zone.from_local_datetime(&midnight)
-        .earliest()
-        .or_else(|| zone.from_local_datetime(&(midnight + chrono::Duration::hours(1))).earliest())
+    zone.from_local_datetime(&midnight).earliest().or_else(|| {
+        zone.from_local_datetime(&(midnight + chrono::Duration::hours(1)))
+            .earliest()
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
 
@@ -150,7 +160,11 @@ mod tests {
     fn an_interval_too_long_to_add_is_an_error_not_a_panic() {
         let schedule = Schedule::parse_every("999999999y").unwrap();
         assert!(schedule.next_after(at(8, 0, 0)).is_err());
-        assert!(Schedule::Every(Duration::MAX).next_after(at(8, 0, 0)).is_err());
+        assert!(
+            Schedule::Every(Duration::MAX)
+                .next_after(at(8, 0, 0))
+                .is_err()
+        );
     }
 
     #[test]
@@ -177,11 +191,23 @@ mod tests {
         let schedule = Schedule::parse_crons(WEEK).unwrap();
         // Monday 2026-06-15.
         assert_eq!(schedule.next_after(at(6, 59, 0)).unwrap(), at(7, 0, 0));
-        assert_eq!(schedule.next_after(at(7, 0, 0)).unwrap(), at(7, 1, 0), "every minute in the morning");
+        assert_eq!(
+            schedule.next_after(at(7, 0, 0)).unwrap(),
+            at(7, 1, 0),
+            "every minute in the morning"
+        );
         assert_eq!(schedule.next_after(at(8, 59, 30)).unwrap(), at(9, 0, 0));
-        assert_eq!(schedule.next_after(at(9, 0, 0)).unwrap(), at(9, 5, 0), "every five minutes after it");
+        assert_eq!(
+            schedule.next_after(at(9, 0, 0)).unwrap(),
+            at(9, 5, 0),
+            "every five minutes after it"
+        );
         assert_eq!(schedule.next_after(at(21, 57, 0)).unwrap(), at(22, 0, 0));
-        assert_eq!(schedule.next_after(at(22, 0, 0)).unwrap(), at(22, 15, 0), "every fifteen at night");
+        assert_eq!(
+            schedule.next_after(at(22, 0, 0)).unwrap(),
+            at(22, 15, 0),
+            "every fifteen at night"
+        );
     }
 
     #[test]
@@ -189,7 +215,11 @@ mod tests {
         let schedule = Schedule::parse_crons(WEEK).unwrap();
         // 4 h a minute, 11 h every five minutes, 9 h every fifteen.
         assert_eq!(schedule.runs_on(day(15), London).unwrap(), 240 + 132 + 36);
-        assert_eq!(schedule.runs_on(day(19), London).unwrap(), 240 + 132 + 36, "Friday");
+        assert_eq!(
+            schedule.runs_on(day(19), London).unwrap(),
+            240 + 132 + 36,
+            "Friday"
+        );
         // Hourly from 08:00 to 21:00, and nothing in the small hours or the evening.
         assert_eq!(schedule.runs_on(day(20), London).unwrap(), 14, "Saturday");
         assert_eq!(schedule.runs_on(day(21), London).unwrap(), 14, "Sunday");
@@ -197,22 +227,45 @@ mod tests {
 
     #[test]
     fn runs_are_counted_for_the_other_kinds_too() {
-        assert_eq!(Schedule::parse_cron("*/10 * * * *").unwrap().runs_on(day(15), London).unwrap(), 144);
-        assert_eq!(Schedule::parse_every("1h").unwrap().runs_on(day(15), London).unwrap(), 24);
+        assert_eq!(
+            Schedule::parse_cron("*/10 * * * *")
+                .unwrap()
+                .runs_on(day(15), London)
+                .unwrap(),
+            144
+        );
+        assert_eq!(
+            Schedule::parse_every("1h")
+                .unwrap()
+                .runs_on(day(15), London)
+                .unwrap(),
+            24
+        );
         // A tiny interval is counted up to a limit, not for ever.
-        assert_eq!(Schedule::parse_every("1ms").unwrap().runs_on(day(15), London).unwrap(), MAX_RUNS_COUNTED);
+        assert_eq!(
+            Schedule::parse_every("1ms")
+                .unwrap()
+                .runs_on(day(15), London)
+                .unwrap(),
+            MAX_RUNS_COUNTED
+        );
     }
 
     #[test]
     fn the_next_runs_are_listed_in_order() {
         let schedule = Schedule::parse_crons(WEEK).unwrap();
         let runs = schedule.upcoming(at(8, 58, 0), 4).unwrap();
-        assert_eq!(runs, vec![at(8, 59, 0), at(9, 0, 0), at(9, 5, 0), at(9, 10, 0)]);
+        assert_eq!(
+            runs,
+            vec![at(8, 59, 0), at(9, 0, 0), at(9, 5, 0), at(9, 10, 0)]
+        );
     }
 
     #[test]
     fn a_schedule_is_described_in_words_one_line_each() {
-        let lines = Schedule::parse_crons(["*/10 * * * *", "0 8-21 * * 6,0"]).unwrap().describe();
+        let lines = Schedule::parse_crons(["*/10 * * * *", "0 8-21 * * 6,0"])
+            .unwrap()
+            .describe();
         assert_eq!(
             lines,
             [
@@ -220,12 +273,17 @@ mod tests {
                 "0 8-21 * * 6,0  At minute 0, of hour 8-21, on Sunday and Saturday.",
             ]
         );
-        assert_eq!(Schedule::parse_every("90s").unwrap().describe(), ["Every 1m 30s"]);
+        assert_eq!(
+            Schedule::parse_every("90s").unwrap().describe(),
+            ["Every 1m 30s"]
+        );
     }
 
     #[test]
     fn a_list_needs_every_expression_to_be_valid_and_at_least_one() {
-        let error = Schedule::parse_crons(["*/10 * * * *", "nonsense"]).unwrap_err().to_string();
+        let error = Schedule::parse_crons(["*/10 * * * *", "nonsense"])
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("nonsense"), "{error}");
         assert!(Schedule::parse_crons(Vec::<String>::new()).is_err());
     }
@@ -235,13 +293,18 @@ mod tests {
         // 31 February never comes; the other still does.
         let schedule = Schedule::parse_crons(["0 0 31 2 *", "*/10 * * * *"]).unwrap();
         assert_eq!(schedule.next_after(at(8, 3, 0)).unwrap(), at(8, 10, 0));
-        assert!(Schedule::parse_crons(["0 0 31 2 *"]).unwrap().next_after(at(8, 3, 0)).is_err());
+        assert!(
+            Schedule::parse_crons(["0 0 31 2 *"])
+                .unwrap()
+                .next_after(at(8, 3, 0))
+                .is_err()
+        );
     }
 
     // ---- Clock changes, in several zones ----
 
     use chrono::{Offset, Utc};
-    use chrono_tz::{Asia, Australia, Europe, America, Pacific};
+    use chrono_tz::{America, Asia, Australia, Europe, Pacific};
 
     fn offset_seconds(zone: &Tz, at: DateTime<Utc>) -> i32 {
         at.with_timezone(zone).offset().fix().local_minus_utc()
@@ -277,7 +340,12 @@ mod tests {
     }
 
     /// What a run means: every minute, in UTC, whose local time matches. Slow and plainly right.
-    fn reference(cron: &Cron, zone: Tz, after: DateTime<Utc>, until: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+    fn reference(
+        cron: &Cron,
+        zone: Tz,
+        after: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> Vec<DateTime<Utc>> {
         let mut minute = ceil_to_minute(after);
         if minute <= after {
             minute += chrono::Duration::minutes(1);
@@ -307,7 +375,13 @@ mod tests {
     fn a_run_every_so_often_keeps_its_rhythm_through_every_clock_change_in_every_zone() {
         let mut checked_changes = 0;
         for zone in ZONES {
-            for expression in ["*/10 * * * *", "*/15 * * * *", "0 * * * *", "*/20 0-6 * * *", "7 * * * *"] {
+            for expression in [
+                "*/10 * * * *",
+                "*/15 * * * *",
+                "0 * * * *",
+                "*/20 0-6 * * *",
+                "7 * * * *",
+            ] {
                 let cron: Cron = expression.parse().unwrap();
                 let schedule = Schedule::parse_cron(expression).unwrap();
                 for (change, _) in changes_in_2026(zone) {
@@ -332,7 +406,11 @@ mod tests {
             }
         }
         // The zones above have both kinds of change, so this did look at clocks going back as well as forward.
-        assert_eq!(checked_changes, 5 * 12, "six zones with two changes each, for five expressions");
+        assert_eq!(
+            checked_changes,
+            5 * 12,
+            "six zones with two changes each, for five expressions"
+        );
     }
 
     #[test]
@@ -345,7 +423,10 @@ mod tests {
         for offset_seconds in (-4000..4000).step_by(37) {
             let start = change + chrono::Duration::seconds(offset_seconds);
             let expected = reference(&cron, zone, start, start + chrono::Duration::hours(2))[0];
-            let got = schedule.next_after(start.with_timezone(&zone)).unwrap().with_timezone(&Utc);
+            let got = schedule
+                .next_after(start.with_timezone(&zone))
+                .unwrap()
+                .with_timezone(&Utc);
             assert_eq!(got, expected, "from {start}");
         }
     }
@@ -369,7 +450,10 @@ mod tests {
     #[test]
     fn a_day_with_a_clock_change_has_the_runs_its_length_allows() {
         let runs = |expression: &str, zone: Tz, y, m, d| {
-            Schedule::parse_cron(expression).unwrap().runs_on(NaiveDate::from_ymd_opt(y, m, d).unwrap(), zone).unwrap()
+            Schedule::parse_cron(expression)
+                .unwrap()
+                .runs_on(NaiveDate::from_ymd_opt(y, m, d).unwrap(), zone)
+                .unwrap()
         };
         // 25 hours in the UK on 25 October, 23 on 29 March.
         assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 10, 25), 150);
@@ -386,7 +470,11 @@ mod tests {
         // Colombo and Kolkata have no change, and an offset of a half hour: every day is the same.
         for zone in [Asia::Colombo, Asia::Kolkata] {
             for (m, d) in [(3, 29), (4, 5), (10, 4), (10, 25)] {
-                assert_eq!(runs("*/10 * * * *", zone, 2026, m, d), 144, "{zone} {m}-{d}");
+                assert_eq!(
+                    runs("*/10 * * * *", zone, 2026, m, d),
+                    144,
+                    "{zone} {m}-{d}"
+                );
             }
         }
     }
@@ -399,18 +487,39 @@ mod tests {
         let zone = Europe::London;
         let daily = Schedule::parse_cron("30 1 * * *").unwrap();
         // Autumn: 01:30 is on the clock twice, and the daily run happens once, the first time.
-        let first = daily.next_after(zone.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap()).unwrap();
+        let first = daily
+            .next_after(zone.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap())
+            .unwrap();
         assert_eq!(first.format("%d %H:%M %Z").to_string(), "25 01:30 BST");
-        assert_eq!(daily.next_after(first).unwrap().format("%d %H:%M %Z").to_string(), "26 01:30 GMT");
         assert_eq!(
-            Schedule::parse_cron("30 1 * * *").unwrap().runs_on(NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(), zone).unwrap(),
+            daily
+                .next_after(first)
+                .unwrap()
+                .format("%d %H:%M %Z")
+                .to_string(),
+            "26 01:30 GMT"
+        );
+        assert_eq!(
+            Schedule::parse_cron("30 1 * * *")
+                .unwrap()
+                .runs_on(NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(), zone)
+                .unwrap(),
             1
         );
         // Spring: 01:30 doesn't exist, and the run happens when the clocks change.
-        let spring = daily.next_after(zone.with_ymd_and_hms(2026, 3, 29, 0, 0, 0).unwrap()).unwrap();
+        let spring = daily
+            .next_after(zone.with_ymd_and_hms(2026, 3, 29, 0, 0, 0).unwrap())
+            .unwrap();
         assert_eq!(spring.with_timezone(&Utc), utc(2026, 3, 29, 1, 0));
         // And the day after is the normal one.
-        assert_eq!(daily.next_after(spring).unwrap().format("%d %H:%M").to_string(), "30 01:30");
+        assert_eq!(
+            daily
+                .next_after(spring)
+                .unwrap()
+                .format("%d %H:%M")
+                .to_string(),
+            "30 01:30"
+        );
     }
 
     #[test]
@@ -431,7 +540,10 @@ mod tests {
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
         let zone = Asia::Colombo;
         let at = zone.with_ymd_and_hms(2026, 6, 15, 8, 3, 20).unwrap();
-        assert_eq!(schedule.next_after(at).unwrap(), zone.with_ymd_and_hms(2026, 6, 15, 8, 10, 0).unwrap());
+        assert_eq!(
+            schedule.next_after(at).unwrap(),
+            zone.with_ymd_and_hms(2026, 6, 15, 8, 10, 0).unwrap()
+        );
     }
 
     #[test]

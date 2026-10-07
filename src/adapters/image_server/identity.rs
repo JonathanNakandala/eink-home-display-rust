@@ -30,13 +30,20 @@ impl<S: Send + Sync> FromRequestParts<S> for Caller {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let name = Query::<Named>::try_from_uri(&parts.uri).ok().and_then(|query| query.0.device);
-        let Some(name) = name else { return Ok(Self(None)) };
+        let name = Query::<Named>::try_from_uri(&parts.uri)
+            .ok()
+            .and_then(|query| query.0.device);
+        let Some(name) = name else {
+            return Ok(Self(None));
+        };
         match DeviceId::parse(&name) {
             Ok(id) => Ok(Self(Some(id))),
             Err(e) => {
                 // Not logged above debug: it is whatever a stranger on the network sent.
-                log::debug!("Ignoring a device name that isn't usable ({e}) on {}", parts.uri.path());
+                log::debug!(
+                    "Ignoring a device name that isn't usable ({e}) on {}",
+                    parts.uri.path()
+                );
                 Ok(Self(None))
             }
         }
@@ -60,8 +67,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_display_names_itself_on_any_path() {
-        assert_eq!(caller("/plan?have=1&device=kitchen&battery_mv=3700").await, id("kitchen"));
-        assert_eq!(caller("/image?device=reterminal-e1003-a1b2c3").await, id("reterminal-e1003-a1b2c3"));
+        assert_eq!(
+            caller("/plan?have=1&device=kitchen&battery_mv=3700").await,
+            id("kitchen")
+        );
+        assert_eq!(
+            caller("/image?device=reterminal-e1003-a1b2c3").await,
+            id("reterminal-e1003-a1b2c3")
+        );
         assert_eq!(caller("/refresh?device=%20kitchen%20").await, id("kitchen"));
     }
 
@@ -79,7 +92,10 @@ mod tests {
         ] {
             let found = caller(uri).await;
             // A repeated key is a malformed query, so not a name either.
-            assert!(found.is_none() || uri.contains("kitchen"), "{uri}: {found:?}");
+            assert!(
+                found.is_none() || uri.contains("kitchen"),
+                "{uri}: {found:?}"
+            );
         }
         assert_eq!(caller("/image?device=has%20space").await, None);
         assert_eq!(caller("/image?device=").await, None);

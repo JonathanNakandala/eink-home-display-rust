@@ -5,7 +5,7 @@ use chrono_tz::Tz;
 
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::domain::models::arrival::Arrival;
-use crate::domain::models::departures::{countdown, DepartureService, DepartureStatus, Departures};
+use crate::domain::models::departures::{DepartureService, DepartureStatus, Departures, countdown};
 use crate::domain::models::source_error::SourceError;
 use crate::domain::services::arrivals_service::ArrivalsService;
 use crate::domain::services::departures_service::DeparturesService;
@@ -41,7 +41,12 @@ impl DeparturesService for TflDeparturesServiceAdapter {
 
 /// TfL names stops like "Turnpike Lane Underground Station"; the mode is just noise here.
 fn station_name(name: &str) -> String {
-    const SUFFIXES: [&str; 4] = [" Underground Station", " Rail Station", " DLR Station", " Station"];
+    const SUFFIXES: [&str; 4] = [
+        " Underground Station",
+        " Rail Station",
+        " DLR Station",
+        " Station",
+    ];
     SUFFIXES
         .iter()
         .find_map(|suffix| name.strip_suffix(suffix))
@@ -53,14 +58,16 @@ fn station_name(name: &str) -> String {
 /// saying which line each is on: a station with one line (or a stop with one bus
 /// route) gains nothing, while an interchange needs it.
 fn serves_several_lines(arrivals: &[Arrival]) -> bool {
-    arrivals.iter().map(|a| a.line.as_str()).collect::<HashSet<_>>().len() > 1
+    arrivals
+        .iter()
+        .map(|a| a.line.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+        > 1
 }
 
 /// Arrivals we can still reach the stop in time for, in their original order.
-fn catchable(
-    arrivals: Vec<Arrival>,
-    travel_minutes: u16,
-) -> impl Iterator<Item = Arrival> {
+fn catchable(arrivals: Vec<Arrival>, travel_minutes: u16) -> impl Iterator<Item = Arrival> {
     let travel_seconds = u32::from(travel_minutes) * 60;
     arrivals
         .into_iter()
@@ -71,19 +78,27 @@ fn catchable(
 /// against: `time` is when it is predicted to arrive, and the status is `Live`.
 fn to_domain_service(arrival: Arrival, show_line: bool, now: DateTime<Tz>) -> DepartureService {
     let seconds = i64::from(arrival.seconds_to_arrival);
-    let time = (now + Duration::seconds(seconds)).format("%H:%M").to_string();
+    let time = (now + Duration::seconds(seconds))
+        .format("%H:%M")
+        .to_string();
     let destination = if show_line {
         format!("{} {}", arrival.line, arrival.towards)
     } else {
         arrival.towards
     };
-    DepartureService::new(time, destination, DepartureStatus::Live, String::new(), countdown(seconds))
+    DepartureService::new(
+        time,
+        destination,
+        DepartureStatus::Live,
+        String::new(),
+        countdown(seconds),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use chrono::TimeZone;
+    use chrono_tz::Europe::London;
 
     use super::*;
 
@@ -109,9 +124,16 @@ mod tests {
 
     #[test]
     fn leaves_off_arrivals_sooner_than_the_travel_time() {
-        let arrivals = vec![arrival_in(60), arrival_in(14 * 60 + 59), arrival_in(15 * 60), arrival_in(20 * 60)];
+        let arrivals = vec![
+            arrival_in(60),
+            arrival_in(14 * 60 + 59),
+            arrival_in(15 * 60),
+            arrival_in(20 * 60),
+        ];
 
-        let times: Vec<u32> = catchable(arrivals, 15).map(|a| a.seconds_to_arrival).collect();
+        let times: Vec<u32> = catchable(arrivals, 15)
+            .map(|a| a.seconds_to_arrival)
+            .collect();
 
         assert_eq!(times, vec![15 * 60, 20 * 60]);
     }
@@ -139,7 +161,10 @@ mod tests {
 
     #[test]
     fn drops_the_mode_from_the_station_name() {
-        assert_eq!(station_name("Turnpike Lane Underground Station"), "Turnpike Lane");
+        assert_eq!(
+            station_name("Turnpike Lane Underground Station"),
+            "Turnpike Lane"
+        );
         assert_eq!(station_name("Hornsey Rail Station"), "Hornsey");
         assert_eq!(station_name("Turnpike Lane Station"), "Turnpike Lane");
         assert_eq!(station_name("Turnpike Lane"), "Turnpike Lane");
@@ -147,8 +172,17 @@ mod tests {
 
     #[test]
     fn names_the_line_only_where_the_stop_has_several() {
-        assert!(!serves_several_lines(&[arrival_on("Piccadilly", 60), arrival_on("Piccadilly", 120)]));
-        assert!(serves_several_lines(&[arrival_on("Piccadilly", 60), arrival_on("Victoria", 120)]));
-        assert_eq!(to_domain_service(arrival_in(60), true, now()).destination, "Piccadilly Cockfosters");
+        assert!(!serves_several_lines(&[
+            arrival_on("Piccadilly", 60),
+            arrival_on("Piccadilly", 120)
+        ]));
+        assert!(serves_several_lines(&[
+            arrival_on("Piccadilly", 60),
+            arrival_on("Victoria", 120)
+        ]));
+        assert_eq!(
+            to_domain_service(arrival_in(60), true, now()).destination,
+            "Piccadilly Cockfosters"
+        );
     }
 }

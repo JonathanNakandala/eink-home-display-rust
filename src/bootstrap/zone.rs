@@ -30,7 +30,9 @@ pub fn resolve_zone(location: &LocationConfig) -> anyhow::Result<Tz> {
 
 /// The configured zone, checked, for a program that has no use for the fallback.
 pub fn configured_zone(location: &LocationConfig) -> anyhow::Result<Option<Tz>> {
-    location.zone().context("The [location] timezone is invalid")
+    location
+        .zone()
+        .context("The [location] timezone is invalid")
 }
 
 #[cfg(test)]
@@ -38,12 +40,19 @@ mod tests {
     use super::*;
 
     fn location(timezone: Option<&str>) -> LocationConfig {
-        LocationConfig { latitude: 0.0, longitude: 0.0, timezone: timezone.map(str::to_owned) }
+        LocationConfig {
+            latitude: 0.0,
+            longitude: 0.0,
+            timezone: timezone.map(str::to_owned),
+        }
     }
 
     #[test]
     fn a_configured_zone_is_used_whatever_the_host_says() {
-        assert_eq!(resolve_zone(&location(Some("Pacific/Auckland"))).unwrap(), Tz::Pacific__Auckland);
+        assert_eq!(
+            resolve_zone(&location(Some("Pacific/Auckland"))).unwrap(),
+            Tz::Pacific__Auckland
+        );
         assert_eq!(resolve_zone(&location(Some("UTC"))).unwrap(), Tz::UTC);
     }
 
@@ -56,7 +65,10 @@ mod tests {
     fn a_zone_that_is_not_one_is_an_error_naming_it() {
         for bad in ["Europe/Londn", "BST", "", "+01:00", "Local"] {
             let error = format!("{:#}", resolve_zone(&location(Some(bad))).unwrap_err());
-            assert!(error.contains("timezone") && error.contains(&format!("{bad:?}")), "{bad:?}: {error}");
+            assert!(
+                error.contains("timezone") && error.contains(&format!("{bad:?}")),
+                "{bad:?}: {error}"
+            );
         }
     }
 }

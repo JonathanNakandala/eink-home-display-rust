@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
-use axum::response::{IntoResponse, Response};
 use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use super::health::image_written_at;
 use super::identity::Caller;
-use super::{server_error, Published};
+use super::{Published, server_error};
 use crate::application::devices::{RawTelemetry, Telemetry};
 use crate::application::plan::compute;
 use crate::application::refresh::RefreshOutcome;
@@ -33,7 +33,12 @@ pub(super) async fn plan(
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
-    plan_response(&published, query.have, caller.map(|device| telemetry.parse(device))).await
+    plan_response(
+        &published,
+        query.have,
+        caller.map(|device| telemetry.parse(device)),
+    )
+    .await
 }
 
 /// Renders now if the display's button asked for it (and one hasn't just run), then answers
@@ -48,22 +53,44 @@ pub(super) async fn refresh_now(
     match published.handles.refresh.request(REFRESH_TIMEOUT).await {
         RefreshOutcome::Rendered => log::info!("Rendered on request"),
         RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
-        RefreshOutcome::TimedOut => log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}"),
+        RefreshOutcome::TimedOut => {
+            log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}")
+        }
     }
-    plan_response(&published, query.have, caller.map(|device| telemetry.parse(device))).await
+    plan_response(
+        &published,
+        query.have,
+        caller.map(|device| telemetry.parse(device)),
+    )
+    .await
 }
 
-async fn plan_response(published: &Published, have: Option<u32>, telemetry: Option<Telemetry>) -> Response {
+async fn plan_response(
+    published: &Published,
+    have: Option<u32>,
+    telemetry: Option<Telemetry>,
+) -> Response {
     let rendered_at = match image_written_at(published).await {
         Ok(Some(rendered_at)) => rendered_at,
-        Ok(None) => return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response(),
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
+        }
         Err(e) => return server_error("inspect", e),
     };
     let now = published.clock.now();
-    match compute(now, rendered_at, &published.schedule, published.timing, have) {
+    match compute(
+        now,
+        rendered_at,
+        &published.schedule,
+        published.timing,
+        have,
+    ) {
         Ok(plan) => {
             if let Some(telemetry) = telemetry {
-                published.handles.devices.record(now, telemetry, plan.next_seconds);
+                published
+                    .handles
+                    .devices
+                    .record(now, telemetry, plan.next_seconds);
             }
             ([(header::CACHE_CONTROL, "no-store")], Json(plan)).into_response()
         }
@@ -73,24 +100,36 @@ async fn plan_response(published: &Published, have: Option<u32>, telemetry: Opti
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
     use super::super::testing::{publish, set_age, start};
     use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
     use crate::domain::services::published_images::PublishedImages;
+    use chrono_tz::Europe::London;
 
     #[tokio::test]
     async fn plan_reports_the_version_and_when_to_come_back() {
         let tmp = tempfile::tempdir().unwrap();
         let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
-        assert_eq!(reqwest::get(format!("{base}/plan")).await.unwrap().status(), 404);
+        assert_eq!(
+            reqwest::get(format!("{base}/plan")).await.unwrap().status(),
+            404
+        );
 
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         set_age(tmp.path(), 100);
-        let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
+        let plan: serde_json::Value = reqwest::get(format!("{base}/plan"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         let version = plan["version"].as_u64().unwrap();
-        let expected =
-            DirectoryImages::new(tmp.path()).published_at(ImageFormat::Bmp).await.unwrap().unwrap().timestamp() as u64;
+        let expected = DirectoryImages::new(tmp.path())
+            .published_at(ImageFormat::Bmp)
+            .await
+            .unwrap()
+            .unwrap()
+            .timestamp() as u64;
         assert_eq!(version, expected);
         assert_eq!(plan["changed"], true);
         assert_eq!(plan["stale"], false);
@@ -98,15 +137,29 @@ mod tests {
         let next = plan["next_seconds"].as_u64().unwrap();
         assert!((3525..=3535).contains(&next), "{next}");
 
-        let same: serde_json::Value =
-            reqwest::get(format!("{base}/plan?have={version}")).await.unwrap().json().await.unwrap();
+        let same: serde_json::Value = reqwest::get(format!("{base}/plan?have={version}"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(same["changed"], false);
-        let other: serde_json::Value = reqwest::get(format!("{base}/plan?have=1")).await.unwrap().json().await.unwrap();
+        let other: serde_json::Value = reqwest::get(format!("{base}/plan?have=1"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(other["changed"], true);
 
         // A newer render is a larger version.
         publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
-        let newer: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
+        let newer: serde_json::Value = reqwest::get(format!("{base}/plan"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert!(newer["version"].as_u64().unwrap() >= version + 99);
     }
 
@@ -117,21 +170,34 @@ mod tests {
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         set_age(tmp.path(), 3 * 3600);
 
-        let plan: serde_json::Value = reqwest::get(format!("{base}/plan")).await.unwrap().json().await.unwrap();
+        let plan: serde_json::Value = reqwest::get(format!("{base}/plan"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(plan["stale"], true);
         assert!(plan["age_seconds"].as_u64().unwrap() >= 3 * 3600);
     }
 
     #[tokio::test]
     async fn staleness_follows_the_servers_clock() {
-        use crate::adapters::clock::FixedClock;
         use super::super::testing::start_with_clock;
+        use crate::adapters::clock::FixedClock;
 
         let tmp = tempfile::tempdir().unwrap();
         let clock = FixedClock::at(chrono::Utc::now().with_timezone(&London));
-        let (base, _) = start_with_clock(tmp.path().to_path_buf(), ImageFormat::Bmp, clock.clone()).await;
+        let (base, _) =
+            start_with_clock(tmp.path().to_path_buf(), ImageFormat::Bmp, clock.clone()).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
-        let plan = || async { reqwest::get(format!("{base}/plan")).await.unwrap().json::<serde_json::Value>().await.unwrap() };
+        let plan = || async {
+            reqwest::get(format!("{base}/plan"))
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        };
         assert_eq!(plan().await["stale"], false);
 
         // Three hours on, with an hourly schedule and no render since, nothing about the file changed.
@@ -153,9 +219,20 @@ mod tests {
         let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
 
-        assert_eq!(reqwest::get(format!("{base}/plan?have=1{FIRMWARE_REPORT}")).await.unwrap().status(), 200);
+        assert_eq!(
+            reqwest::get(format!("{base}/plan?have=1{FIRMWARE_REPORT}"))
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
 
-        let status = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let status = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
         let device = &status["devices"][0];
         assert_eq!(device["name"], "reterminal-e1003-a1b2c3");
         assert_eq!(device["failed_wakes"], 2);
@@ -173,9 +250,15 @@ mod tests {
         let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
 
-        let url = format!("{base}/plan?device=%22bad%0A&battery_mv=lots&battery_pct=-1&failed_wakes=x");
+        let url =
+            format!("{base}/plan?device=%22bad%0A&battery_mv=lots&battery_pct=-1&failed_wakes=x");
         assert_eq!(reqwest::get(url).await.unwrap().status(), 200);
-        let devices = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let devices = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
         assert_eq!(devices["devices"], serde_json::json!([]));
     }
 }

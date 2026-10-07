@@ -2,13 +2,14 @@ use chrono::{Duration, NaiveDateTime, Utc};
 use reqwest::Client;
 
 use crate::adapters::http;
-use crate::domain::models::source_error::SourceError;
 use crate::adapters::weather::open_meteo::response::{
-    OpenMeteoAirQualityResponse, OpenMeteoDailyResponse, OpenMeteoMinutelyResponse, OpenMeteoResponse,
+    OpenMeteoAirQualityResponse, OpenMeteoDailyResponse, OpenMeteoMinutelyResponse,
+    OpenMeteoResponse,
 };
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::location::Location;
 use crate::domain::models::pollen::{Pollen, PollenType};
+use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, SunTimes, UvIndex,
     WeatherCondition, WeatherInformation,
@@ -96,20 +97,33 @@ impl OpenMeteoWeatherServiceAdapter {
         Ok((air_quality, pollen.flatten()))
     }
 
-    async fn get_forecast(&self, location: &Location) -> Result<Option<WeatherInformation>, SourceError> {
+    async fn get_forecast(
+        &self,
+        location: &Location,
+    ) -> Result<Option<WeatherInformation>, SourceError> {
         let response = http::send(
             self.client
                 .get(format!("{}/v1/forecast", self.host_url))
                 .query(&[
-                ("latitude", location.latitude.to_string()),
-                ("longitude", location.longitude.to_string()),
-                ("current", "temperature_2m,apparent_temperature,weather_code".to_owned()),
-                ("daily", "temperature_2m_max,temperature_2m_min,uv_index_max,sunrise,sunset".to_owned()),
-                ("minutely_15", "precipitation,snowfall,weather_code".to_owned()),
-                ("forecast_minutely_15", FORECAST_SLOTS.to_string()),
-                ("forecast_days", "1".to_owned()),
-                ("timezone", "auto".to_owned()),
-            ]),
+                    ("latitude", location.latitude.to_string()),
+                    ("longitude", location.longitude.to_string()),
+                    (
+                        "current",
+                        "temperature_2m,apparent_temperature,weather_code".to_owned(),
+                    ),
+                    (
+                        "daily",
+                        "temperature_2m_max,temperature_2m_min,uv_index_max,sunrise,sunset"
+                            .to_owned(),
+                    ),
+                    (
+                        "minutely_15",
+                        "precipitation,snowfall,weather_code".to_owned(),
+                    ),
+                    ("forecast_minutely_15", FORECAST_SLOTS.to_string()),
+                    ("forecast_days", "1".to_owned()),
+                    ("timezone", "auto".to_owned()),
+                ]),
         )
         .await?;
         let body: OpenMeteoResponse = http::json(response, "forecast").await?;
@@ -139,7 +153,14 @@ impl OpenMeteoWeatherServiceAdapter {
             .with_precipitation(precipitation)
             .with_feels_like(body.current.apparent_temperature)
             .with_sun(sun_times(&body.daily))
-            .with_uv_index(body.daily.uv_index_max.first().copied().flatten().map(UvIndex::new)),
+            .with_uv_index(
+                body.daily
+                    .uv_index_max
+                    .first()
+                    .copied()
+                    .flatten()
+                    .map(UvIndex::new),
+            ),
         ))
     }
 }
@@ -177,11 +198,24 @@ fn precipitation_slots(minutely: &OpenMeteoMinutelyResponse) -> Vec<Precipitatio
             let kind = code
                 .and_then(precipitation_kind_from_wmo_code)
                 // Wet but the code says cloud or fog: go by what is falling.
-                .unwrap_or(if snowfall > 0.0 { PrecipitationKind::Snow } else { PrecipitationKind::Rain });
-            Some(PrecipitationSlot::new(starts_at, precipitation, snowfall, kind))
+                .unwrap_or(if snowfall > 0.0 {
+                    PrecipitationKind::Snow
+                } else {
+                    PrecipitationKind::Rain
+                });
+            Some(PrecipitationSlot::new(
+                starts_at,
+                precipitation,
+                snowfall,
+                kind,
+            ))
         })
         .collect();
-    if slots.len() == FORECAST_SLOTS { slots } else { Vec::new() }
+    if slots.len() == FORECAST_SLOTS {
+        slots
+    } else {
+        Vec::new()
+    }
 }
 
 fn precipitation_kind_from_wmo_code(code: u8) -> Option<PrecipitationKind> {
@@ -217,14 +251,20 @@ mod local_time_tests {
 
     #[test]
     fn the_offset_is_added_to_utc() {
-        let utc = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap().and_hms_opt(23, 30, 0).unwrap();
+        let utc = NaiveDate::from_ymd_opt(2026, 6, 15)
+            .unwrap()
+            .and_hms_opt(23, 30, 0)
+            .unwrap();
         let local = local_now(utc, 3600).unwrap();
         assert_eq!(local.to_string(), "2026-06-16 00:30:00");
     }
 
     #[test]
     fn an_impossible_offset_is_a_bad_response_not_a_panic() {
-        let utc = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap().and_hms_opt(12, 0, 0).unwrap();
+        let utc = NaiveDate::from_ymd_opt(2026, 6, 15)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
         for offset in [i64::MAX, i64::MIN, i64::MAX / 1000] {
             assert!(local_now(utc, offset).is_err(), "{offset}");
         }

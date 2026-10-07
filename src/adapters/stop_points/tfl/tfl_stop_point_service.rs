@@ -3,9 +3,11 @@ use reqwest::Client;
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::adapters::http;
-use crate::domain::models::source_error::SourceError;
-use crate::adapters::stop_points::tfl::response::{NearbyResponse, NearbyStop, SearchMatch, SearchResponse};
+use crate::adapters::stop_points::tfl::response::{
+    NearbyResponse, NearbyStop, SearchMatch, SearchResponse,
+};
 use crate::domain::models::location::Location;
+use crate::domain::models::source_error::SourceError;
 use crate::domain::models::stop_point::{StopKind, StopPoint};
 use crate::domain::services::stop_point_service::StopPointService;
 
@@ -43,7 +45,12 @@ impl TflStopPointServiceAdapter {
         if let Some(key) = &self.app_key {
             params.push(("app_key", key.expose_secret().to_owned()));
         }
-        http::send(self.client.get(format!("{}/{}", self.host_url, path)).query(&params)).await
+        http::send(
+            self.client
+                .get(format!("{}/{}", self.host_url, path))
+                .query(&params),
+        )
+        .await
     }
 }
 
@@ -69,8 +76,16 @@ impl StopPointService for TflStopPointServiceAdapter {
             .await
             .context("Failed to parse TfL nearby stop response")?;
 
-        let mut stops: Vec<StopPoint> = response.stop_points.into_iter().map(to_domain_nearby).collect();
-        stops.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+        let mut stops: Vec<StopPoint> = response
+            .stop_points
+            .into_iter()
+            .map(to_domain_nearby)
+            .collect();
+        stops.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(stops)
     }
 
