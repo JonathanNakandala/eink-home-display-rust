@@ -185,8 +185,17 @@ to stop. Maintenance mode (KEY1 held at boot) still keeps the device awake. Thes
 of a typical Li-ion cell, not measured on your battery: check the real voltage at the moment the
 device halts, and the cell's own protection cut-off, before relying on them.
 
-Each check-in also sends the server `device`, `battery_mv`, `battery_pct`, `battery_state` and
-`failed_wakes`, which feed `/status` and `/metrics` (see [deploy/README.md](../deploy/README.md)).
+Each check-in also sends the server `device`, `battery_mv`, `battery_pct`, `battery_state`,
+`failed_wakes`, `rssi` (Wi-Fi signal, dBm), `last_failure` and `last_wake_s`, which feed `/status` and
+`/metrics` (see [deploy/README.md](../deploy/README.md)). [eink_telemetry.h](eink_telemetry.h) builds them.
+
+`last_failure` is the `fail_reason` of the most recent failed wake (the table above), and `last_wake_s` is how
+long the previous wake was awake. A wake asks `/plan` before it knows how it will go, so both describe the
+wake *before*, and are sent by the next one that gets through. They are kept in RTC memory, which stays
+powered through deep sleep, so no flash is written; a power loss forgets them, which is fine for diagnostics.
+RTC memory also survives a software reset such as an update over the air, so a marker checks it was written by
+this layout before it is believed. `last_failure` is left out until a wake has failed and after the next one
+succeeds; `last_wake_s` is left out until there has been a wake.
 
 ### When the download fails
 

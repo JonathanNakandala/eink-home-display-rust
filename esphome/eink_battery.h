@@ -1,8 +1,7 @@
-// Battery helpers: charge from voltage, and the telemetry the server records.
+// Battery helpers: charge from voltage and the state names (the telemetry sent to the server is in eink_telemetry.h).
 #pragma once
 
 #include <cstdint>
-#include <string>
 
 namespace eink_battery {
 
@@ -32,17 +31,5 @@ inline int percent(float v) {
 }
 
 inline const char *state_name(int state) { return state == 2 ? "empty" : state == 1 ? "low" : "ok"; }
-
-// The query-string tail the server reads on /plan and /refresh: who this is, and how it is doing.
-// The battery is left out when it could not be read, so the server doesn't record a made-up value.
-inline std::string telemetry(const char *device, bool battery_known, uint32_t millivolts, int percent_value, int state,
-                             unsigned failed_wakes) {
-  std::string out = std::string("&device=") + device + "&failed_wakes=" + std::to_string(failed_wakes);
-  if (battery_known) {
-    out += "&battery_mv=" + std::to_string(millivolts) + "&battery_pct=" + std::to_string(percent_value) +
-           "&battery_state=" + state_name(state);
-  }
-  return out;
-}
 
 }  // namespace eink_battery
