@@ -129,6 +129,11 @@ impl Enrollment {
         }
     }
 
+    /// Whether a request has to be tied to its connection, for the server to tell displays so.
+    pub fn requires_channel_binding(&self) -> bool {
+        self.policy.require_channel_binding
+    }
+
     fn now(&self) -> DateTime<Utc> {
         self.clock.now().to_utc()
     }

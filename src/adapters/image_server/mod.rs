@@ -5,7 +5,6 @@ mod advertise;
 mod health;
 mod identity;
 mod image;
-mod listen;
 mod metrics;
 mod negotiate;
 mod plan;
@@ -23,7 +22,7 @@ use axum::routing::{get, post};
 use tower_http::trace::TraceLayer;
 
 use self::advertise::Advertisement;
-use self::listen::Bound;
+use crate::adapters::listen::{self, Bound};
 use crate::application::devices::DeviceBoard;
 use crate::application::plan::PlanTiming;
 use crate::application::refresh::RefreshControl;
