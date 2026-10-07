@@ -65,6 +65,7 @@ esphome:
     - eink_notice.h
     - eink_health.h
     - eink_battery.h
+    - eink_telemetry.h
   on_boot:
     priority: -100
     then:
@@ -340,6 +341,7 @@ script:
           condition:
             lambda: 'return !id(maintenance);'
           then:
+            - lambda: 'eink_telemetry::record_wake(millis());'
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: ${battery_halt_sleep_ms}ms
@@ -381,8 +383,8 @@ script:
                                          ? std::string("${fallback_base}")
                                          : eink_discovery::url(id(server_ip), id(server_port), "");
                   return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
-                         eink_battery::telemetry("${device_name}", id(battery_known), id(battery_mv), id(battery_pct),
-                                                 id(battery_state), id(failed_wakes));
+                         eink_telemetry::query("${device_name}", id(failed_wakes), id(battery_known), id(battery_mv),
+                                               id(battery_pct), eink_battery::state_name(id(battery_state)));
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -397,8 +399,8 @@ script:
                                          ? std::string("${fallback_base}")
                                          : eink_discovery::url(id(server_ip), id(server_port), "");
                   return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
-                         eink_battery::telemetry("${device_name}", id(battery_known), id(battery_mv), id(battery_pct),
-                                                 id(battery_state), id(failed_wakes));
+                         eink_telemetry::query("${device_name}", id(failed_wakes), id(battery_known), id(battery_mv),
+                                               id(battery_pct), eink_battery::state_name(id(battery_state)));
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -484,7 +486,9 @@ script:
     then:
       # The wake worked: the server answered and the picture on the panel is current.
       - script.stop: wake_watchdog
-      - lambda: 'id(failed_wakes) = 0;'
+      - lambda: |-
+          id(failed_wakes) = 0;
+          eink_telemetry::clear_failure();
       - if:
           condition:
             # Once per spell: the text has an age in it, which would otherwise redraw every wake.
@@ -505,6 +509,8 @@ script:
           condition:
             lambda: 'return !id(maintenance);'
           then:
+            # How long this wake was awake, which the next one tells the server (it costs battery).
+            - lambda: 'eink_telemetry::record_wake(millis());'
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: !lambda |-
@@ -579,6 +585,8 @@ script:
           id(plan_sleep_ms) = sleep_ms > (${max_backoff_ms}) ? (${max_backoff_ms}) : (uint32_t) sleep_ms;
           // Not the server's plan, so not shortened by the time the wake took.
           id(plan_received_ms) = 0;
+          // Told to the server by the next wake that gets through.
+          eink_telemetry::set_failure(id(fail_reason));
           ESP_LOGW("backoff", "Failure %u in a row (%s); sleeping %u s", (unsigned) id(failed_wakes),
                    id(fail_reason).c_str(), (unsigned) (id(plan_sleep_ms) / 1000));
 
