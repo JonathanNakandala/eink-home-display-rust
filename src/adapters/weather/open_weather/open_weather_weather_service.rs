@@ -30,7 +30,7 @@ impl WeatherService for OpenWeatherWeatherServiceAdapter {
 
         let response = http::send(self.client.get(&url)).await?;
         let response_body: OpenWeatherResponse = http::json(response, "weather").await?;
-        log::debug!("Response body: {:#?}", &response_body);
+        log::debug!("Response body: {:#?}", response_body);
 
         let main = &response_body.main;
         // The current-conditions endpoint reports the spread across nearby stations,

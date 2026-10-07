@@ -381,7 +381,7 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
         let page = self.write_page(dir.path(), &html)?;
         // headless_chrome blocks, so keep it off the async runtime's threads.
         let inner = Arc::clone(&self.inner);
-        let profile = profile.clone();
+        let profile = *profile;
         let abandoned = Arc::new(AtomicBool::new(false));
         let mut guard = AbandonGuard::new(Arc::clone(&inner), Arc::clone(&abandoned));
         let rendered =

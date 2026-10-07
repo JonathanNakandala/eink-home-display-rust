@@ -290,10 +290,10 @@ mod tests {
         let found = scanner.browse("_http._tcp.local.").unwrap();
         let resolved = tokio::time::timeout(Duration::from_secs(15), async {
             while let Ok(event) = found.recv_async().await {
-                if let ServiceEvent::ServiceResolved(service) = event {
-                    if service.get_fullname().starts_with("Eink test.") {
-                        return Some(service);
-                    }
+                if let ServiceEvent::ServiceResolved(service) = event
+                    && service.get_fullname().starts_with("Eink test.")
+                {
+                    return Some(service);
                 }
             }
             None
