@@ -186,6 +186,8 @@ pub enum ImageFormatSetting {
     Bmp,
     /// 8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.
     Png,
+    /// Lossless, a little larger than PNG (about 160 KB), but decoded in one cheap pass with no inflate step.
+    Qoi,
 }
 
 impl From<ImageFormatSetting> for ImageFormat {
@@ -193,6 +195,7 @@ impl From<ImageFormatSetting> for ImageFormat {
         match setting {
             ImageFormatSetting::Bmp => Self::Bmp,
             ImageFormatSetting::Png => Self::Png,
+            ImageFormatSetting::Qoi => Self::Qoi,
         }
     }
 }

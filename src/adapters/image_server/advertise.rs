@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(info.get_property_val_str("txtvers"), Some("1"));
         assert_eq!(info.get_property_val_str("path"), Some("/image"));
         assert_eq!(info.get_property_val_str("format"), Some("png"));
-        assert_eq!(info.get_property_val_str("formats"), Some("bmp,png"));
+        assert_eq!(info.get_property_val_str("formats"), Some("bmp,png,qoi"));
     }
 
     #[test]

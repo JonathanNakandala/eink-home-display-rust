@@ -26,7 +26,7 @@ substitutions:
   image_height: "1404"
   # What the device can decode, as an Accept header: the server sends one of these, preferring its own
   # choice (display.image_format) among equals. Weight one to rank it, e.g. "image/png, image/bmp;q=0.5".
-  accept_formats: "image/bmp, image/png"
+  accept_formats: "image/bmp, image/png, image/qoi"
   # The paths the Rust app serves the image and its plan at.
   image_path: /image
   plan_path: /plan
@@ -126,7 +126,7 @@ json:
 online_image:
   - id: dashboard
     url: ${fallback_base}${image_path}
-    # Decoded by the response's Content-Type (image/bmp or image/png), so the server decides which to send.
+    # Decoded by the response's Content-Type (image/bmp, image/png or image/qoi), so the server decides which to send.
     format: AUTO
     request_headers:
       Accept: ${accept_formats}

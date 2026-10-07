@@ -253,6 +253,11 @@
           "description": "8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.",
           "type": "string",
           "const": "Png"
+        },
+        {
+          "description": "Lossless, a little larger than PNG (about 160 KB), but decoded in one cheap pass with no inflate step.",
+          "type": "string",
+          "const": "Qoi"
         }
       ]
     },
