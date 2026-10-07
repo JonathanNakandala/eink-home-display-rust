@@ -8,6 +8,7 @@ mod image;
 mod listen;
 mod metrics;
 mod negotiate;
+mod transfer;
 mod plan;
 #[cfg(test)]
 mod testing;

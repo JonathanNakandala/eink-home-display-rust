@@ -7,7 +7,7 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use super::identity::Caller;
-use super::{negotiate, Published};
+use super::{negotiate, transfer, Published};
 use crate::domain::models::display::ImageFormat;
 
 /// Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can
@@ -58,15 +58,18 @@ pub(super) async fn image(
                 if let Some(device) = &caller {
                     published.handles.devices.image_served(device, format, bytes.len() as u64, published.clock.now());
                 }
+                let length = bytes.len();
                 return (
                     [
                         (header::CONTENT_TYPE, format.content_type()),
+                        // Sent as a stream so a dropped download is noticed, which loses the length otherwise.
+                        (header::CONTENT_LENGTH, length.to_string().as_str()),
                         // The picture changes every refresh, so nothing may reuse an old one.
                         (header::CACHE_CONTROL, "no-store"),
                         // The reply depends on the request's Accept, which a cache must know.
                         (header::VARY, "Accept"),
                     ],
-                    bytes,
+                    transfer::watched(bytes, caller, format),
                 )
                     .into_response();
             }
