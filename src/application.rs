@@ -1,4 +1,5 @@
 pub mod devices;
+pub mod enrollment;
 pub mod launch;
 pub mod plan;
 pub mod refresh;
