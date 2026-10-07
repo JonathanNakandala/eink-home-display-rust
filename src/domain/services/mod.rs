@@ -1,9 +1,11 @@
 pub mod arrivals_service;
+pub mod certificate_authority;
 pub mod clock;
 pub mod departures_service;
 pub mod display_image_generator;
 pub mod image_display_service;
 pub mod image_repository;
+pub mod pairing_store;
 pub mod published_images;
 pub mod quiet_times_calculator;
 pub mod render_observer;

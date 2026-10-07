@@ -40,6 +40,8 @@ httpdate = "1.0.3"
 secrecy = { version = "0.10.3", features = ["serde"] }
 chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"
+sha2 = "0.11"
+subtle = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
