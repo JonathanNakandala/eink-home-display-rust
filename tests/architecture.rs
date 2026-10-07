@@ -7,8 +7,21 @@ use std::path::{Path, PathBuf};
 
 /// A layer's directory, and the `crate::` modules it may not use.
 const RULES: &[(&str, &[&str])] = &[
-    ("src/domain", &["adapters", "application", "bootstrap", "config", "scheduler", "cli"]),
-    ("src/application", &["adapters", "bootstrap", "config", "cli"]),
+    (
+        "src/domain",
+        &[
+            "adapters",
+            "application",
+            "bootstrap",
+            "config",
+            "scheduler",
+            "cli",
+        ],
+    ),
+    (
+        "src/application",
+        &["adapters", "bootstrap", "config", "cli"],
+    ),
     ("src/adapters", &["bootstrap", "config", "cli"]),
 ];
 
@@ -65,7 +78,10 @@ fn imports(source: &str) -> Vec<(usize, String)> {
         let mut rest = line;
         while let Some(at) = rest.find("crate::") {
             let after = &rest[at + "crate::".len()..];
-            let module: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            let module: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
             // `use crate::{a, b}` has no module name straight after the path.
             if !module.is_empty() {
                 found.push((number + 1, module));
@@ -83,31 +99,48 @@ fn layers_only_depend_inward() {
     for (layer, forbidden) in RULES {
         let mut files = Vec::new();
         sources(&root.join(layer), &mut files);
-        files.extend(LAYER_FILES.iter().filter(|(_, l)| l == layer).map(|(f, _)| root.join(f)));
+        files.extend(
+            LAYER_FILES
+                .iter()
+                .filter(|(_, l)| l == layer)
+                .map(|(f, _)| root.join(f)),
+        );
         for file in files {
             let source = fs::read_to_string(&file).unwrap();
             for (line, module) in imports(&source) {
                 if forbidden.contains(&module.as_str()) {
                     let relative = file.strip_prefix(root).unwrap().display();
-                    violations.push(format!("{relative}:{line} uses crate::{module}, which {layer} must not"));
+                    violations.push(format!(
+                        "{relative}:{line} uses crate::{module}, which {layer} must not"
+                    ));
                 }
             }
         }
     }
-    assert!(violations.is_empty(), "layering broken:\n{}", violations.join("\n"));
+    assert!(
+        violations.is_empty(),
+        "layering broken:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]
 fn the_check_sees_a_violation_and_ignores_tests_and_comments() {
     let source = "use crate::domain::X;\n// use crate::config::Y;\nuse crate::config::Z;\n#[cfg(test)]\nmod t { use crate::adapters::W; }\n";
-    assert_eq!(imports(source), [(1, "domain".to_owned()), (3, "config".to_owned())]);
+    assert_eq!(
+        imports(source),
+        [(1, "domain".to_owned()), (3, "config".to_owned())]
+    );
 }
 
 #[test]
 fn code_after_an_early_test_item_is_still_checked() {
     // A `mod testing;` above the imports, a gated impl in the middle, and a test module at the end.
     let source = "#[cfg(test)]\nmod testing;\n\nuse crate::config::A;\n\n#[cfg(test)]\nimpl X {\n    fn f() { crate::adapters::B; }\n}\n\nuse crate::bootstrap::C;\n\n#[cfg(test)]\nmod tests {\n    use crate::cli::D;\n}\n";
-    assert_eq!(imports(source), [(4, "config".to_owned()), (11, "bootstrap".to_owned())]);
+    assert_eq!(
+        imports(source),
+        [(4, "config".to_owned()), (11, "bootstrap".to_owned())]
+    );
 }
 
 /// The domain describes the problem, not how it is configured: no config schema derives in it.
@@ -121,9 +154,14 @@ fn the_domain_carries_no_config_schema() {
         .filter(|file| {
             let source = fs::read_to_string(file).unwrap();
             let production = without_test_code(&source);
-            production.contains("schemars") || production.contains("JsonSchema") || production.contains("Deserialize")
+            production.contains("schemars")
+                || production.contains("JsonSchema")
+                || production.contains("Deserialize")
         })
         .map(|file| file.strip_prefix(root).unwrap().display().to_string())
         .collect();
-    assert!(offenders.is_empty(), "config derives in the domain: {offenders:?}");
+    assert!(
+        offenders.is_empty(),
+        "config derives in the domain: {offenders:?}"
+    );
 }
