@@ -12,6 +12,7 @@ use crate::domain::models::weather::{
 pub mod air_quality;
 pub mod arrival;
 pub mod departures;
+pub mod device_id;
 pub mod display;
 pub mod freshness;
 pub mod location;

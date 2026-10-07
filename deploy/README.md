@@ -57,8 +57,12 @@ only the AAAA records for a specific IPv6 address. The log line at start-up says
 
 ## Watching the displays
 
-Each display reports itself on its normal check-in (query parameters on `/plan` and `/refresh`, so no
-extra radio time): its name, battery voltage, charge and state, how many wakes in a row failed, its Wi-Fi
+Each display names itself on every request (`device=` on `/plan`, `/refresh` and `/image`; the firmware
+builds it from the chip's MAC address, so it is unique to the display and survives flashing). The server
+keeps everything under that name and never infers who is asking from an address or from the order requests
+arrived in, so several displays can't be mixed up; a request with no usable name is still served, just not
+recorded. A display reports itself on its normal check-in (query parameters on `/plan` and `/refresh`, so no
+extra radio time): its battery voltage, charge and state, how many wakes in a row failed, its Wi-Fi
 signal strength (`wifi_rssi_dbm`), how long its previous wake was awake (`last_wake_seconds`, which is what
 costs battery), and why its last failed wake failed (`last_failure`: `wifi`, `server`, `download`, `memory`
 or `timeout`). A wake can't report its own failure, since it asks `/plan` before it knows how it will go,
@@ -70,7 +74,8 @@ has gone quiet: a display is **overdue** once it is later than that by `server.d
 (15 minutes), which covers a slow Wi-Fi join but not a flat battery. An overnight sleep of seven hours is
 not overdue, because the server asked for it.
 
-- `GET /status` lists them under `devices`, with `age_seconds`, `overdue` and the battery.
+- `GET /status` lists them under `devices`, with `age_seconds`, `overdue`, the battery, and `last_image`: the
+  format and size of the last image that display was sent, and when.
 - `GET /healthz` is still about the server only (it is 503 when the image is stale). A display going
   quiet is an alert on its own, below, not a reason to restart the service.
 - `GET /metrics` is the same data in the Prometheus text format, for any scraper.

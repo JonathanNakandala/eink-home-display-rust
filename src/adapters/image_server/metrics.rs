@@ -76,35 +76,35 @@ pub fn render(status: &Status) -> String {
             let _ = writeln!(
                 out,
                 "eink_device_last_seen_timestamp_seconds{{device=\"{}\"}} {}",
-                escape(&device.name),
+                escape(device.name.as_str()),
                 device.last_seen.timestamp()
             );
         }
         gauge(&mut out, "eink_device_overdue", "1 if the display is later than it was told to be.");
         for device in &status.devices {
-            let _ = writeln!(out, "eink_device_overdue{{device=\"{}\"}} {}", escape(&device.name), u8::from(device.overdue));
+            let _ = writeln!(out, "eink_device_overdue{{device=\"{}\"}} {}", escape(device.name.as_str()), u8::from(device.overdue));
         }
         gauge(&mut out, "eink_device_failed_wakes", "Wakes in a row that failed, for any reason.");
         for device in &status.devices {
             if let Some(failed) = device.failed_wakes {
-                let _ = writeln!(out, "eink_device_failed_wakes{{device=\"{}\"}} {failed}", escape(&device.name));
+                let _ = writeln!(out, "eink_device_failed_wakes{{device=\"{}\"}} {failed}", escape(device.name.as_str()));
             }
         }
         gauge(&mut out, "eink_device_wifi_rssi_dbm", "The display's Wi-Fi signal strength at its last check-in.");
         for device in &status.devices {
             if let Some(dbm) = device.wifi_rssi_dbm {
-                let _ = writeln!(out, "eink_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}", escape(&device.name));
+                let _ = writeln!(out, "eink_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}", escape(device.name.as_str()));
             }
         }
         gauge(&mut out, "eink_device_last_wake_seconds", "How long the display's previous wake was awake.");
         for device in &status.devices {
             if let Some(seconds) = device.last_wake_seconds {
-                let _ = writeln!(out, "eink_device_last_wake_seconds{{device=\"{}\"}} {seconds}", escape(&device.name));
+                let _ = writeln!(out, "eink_device_last_wake_seconds{{device=\"{}\"}} {seconds}", escape(device.name.as_str()));
             }
         }
         gauge(&mut out, "eink_device_last_failure", "1 for why the display's last failed wake failed (none if it didn't), 0 for the others.");
         for device in &status.devices {
-            let name = escape(&device.name);
+            let name = escape(device.name.as_str());
             let _ = writeln!(out, "eink_device_last_failure{{device=\"{name}\",reason=\"none\"}} {}", u8::from(device.last_failure.is_none()));
             for reason in FailureReason::ALL {
                 let _ = writeln!(
@@ -118,13 +118,13 @@ pub fn render(status: &Status) -> String {
         gauge(&mut out, "eink_device_battery_volts", "The display's battery voltage.");
         for device in &status.devices {
             if let Some(mv) = device.battery_millivolts {
-                let _ = writeln!(out, "eink_device_battery_volts{{device=\"{}\"}} {}", escape(&device.name), f64::from(mv) / 1000.0);
+                let _ = writeln!(out, "eink_device_battery_volts{{device=\"{}\"}} {}", escape(device.name.as_str()), f64::from(mv) / 1000.0);
             }
         }
         gauge(&mut out, "eink_device_battery_ratio", "The display's battery charge, 0 to 1.");
         for device in &status.devices {
             if let Some(pct) = device.battery_percent {
-                let _ = writeln!(out, "eink_device_battery_ratio{{device=\"{}\"}} {}", escape(&device.name), f64::from(pct) / 100.0);
+                let _ = writeln!(out, "eink_device_battery_ratio{{device=\"{}\"}} {}", escape(device.name.as_str()), f64::from(pct) / 100.0);
             }
         }
         gauge(&mut out, "eink_device_battery_state", "1 for the display's battery state, 0 for the others.");
@@ -134,7 +134,7 @@ pub fn render(status: &Status) -> String {
                     let _ = writeln!(
                         out,
                         "eink_device_battery_state{{device=\"{}\",state=\"{}\"}} {}",
-                        escape(&device.name),
+                        escape(device.name.as_str()),
                         state.as_str(),
                         u8::from(state == current)
                     );
@@ -173,7 +173,7 @@ mod tests {
             consecutive_failures: 0,
             sources: vec![SourceReport { name: "TURNPIKE \"LANE\"".into(), state: SourceState::Stale { age_seconds: 300 } }],
             devices: vec![DeviceStatus {
-                name: "kitchen".into(),
+                name: "kitchen".parse().unwrap(),
                 last_seen: at(),
                 age_seconds: 5,
                 expected_by: at(),
@@ -185,6 +185,7 @@ mod tests {
                 wifi_rssi_dbm: Some(-71),
                 last_failure: Some(FailureReason::Download),
                 last_wake_seconds: Some(24),
+                last_image: None,
             }],
             next_render: None,
             schedule: Vec::new(),
