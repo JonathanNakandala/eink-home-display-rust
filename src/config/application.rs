@@ -120,6 +120,25 @@ pub struct LocationConfig {
     /// Decimal degrees, used for the weather lookup.
     pub latitude: f64,
     pub longitude: f64,
+    /// The IANA timezone the display is in, e.g. `Europe/London` or `America/New_York`. The refresh schedule's hours
+    /// and weekdays, the clock and date on the dashboard, and the day boundaries are all in this zone. Left out, the
+    /// host's own zone is used and a warning is logged: a container or cloud machine is usually UTC, which is
+    /// wrong wherever the display is, so set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+}
+
+impl LocationConfig {
+    /// The configured zone, None if there is none, or an error naming it if it is not an IANA zone.
+    pub fn zone(&self) -> anyhow::Result<Option<chrono_tz::Tz>> {
+        self.timezone
+            .as_deref()
+            .map(|name| {
+                name.parse::<chrono_tz::Tz>()
+                    .map_err(|_| anyhow::anyhow!("The timezone {name:?} is not an IANA zone name such as \"Europe/London\""))
+            })
+            .transpose()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

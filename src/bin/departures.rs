@@ -10,9 +10,9 @@ async fn main() -> Result<()> {
     bootstrap::init_logging("debug");
 
     let args = DeparturesArgs::parse();
-    let zone = eink_home_display_rust::adapters::zone::host();
 
     let config = bootstrap::load_application_config(&args.config_file)?;
+    let zone = bootstrap::resolve_zone(&config.location)?;
 
     let configs: Vec<_> = config
         .departures

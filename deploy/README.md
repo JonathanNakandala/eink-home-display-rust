@@ -55,6 +55,19 @@ only the AAAA records for a specific IPv6 address. The log line at start-up says
   `avahi-resolve -n <instance-name>.local` (Linux).
 - Clients may log IPv4 peers as `::ffff:192.168.0.5`; that is the same address.
 
+## Timezone
+
+Set `timezone = "Europe/London"` (any IANA name, such as `America/New_York` or `Australia/Sydney`) under `[location]`.
+The refresh schedule's hours and weekdays, the clock and date on the dashboard, and where a day starts are all in
+that zone, whatever the machine's own zone is. A name that isn't an IANA zone stops the program at start-up and
+says so.
+
+Left out, the host's zone is used and a warning is logged at every start. That is only right if the machine is
+set to the display's zone: a container or a cloud machine is usually UTC, and then a schedule written as
+"07:00 to 09:00 on weekdays" runs at the wrong hours, with no error. The display's own clock for the "last
+updated" notice has a separate `timezone` in `esphome/reterminal-e1003.yaml`, which is not yet taken from the
+server, so set the two to the same zone.
+
 ## Watching the displays
 
 Each display names itself on every request (`device=` on `/plan`, `/refresh` and `/image`; the firmware

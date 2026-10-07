@@ -9,6 +9,7 @@ mod display;
 mod load;
 mod logging;
 mod weather;
+mod zone;
 
 pub use self::application::{assemble, from_config};
 pub use self::departures::setup_departure_boards;
@@ -16,3 +17,4 @@ pub use self::display::setup_display;
 pub use self::load::{load_application_config, load_quiet_times_config, load_valid_application_config};
 pub use self::logging::init_logging;
 pub use self::weather::setup_weather_service;
+pub use self::zone::{configured_zone, resolve_zone};
