@@ -175,11 +175,26 @@ mod tests {
         assert_eq!(in_zone(London, 1), ("Europe/London".to_owned(), 0));
         assert_eq!(in_zone(London, 7), ("Europe/London".to_owned(), 3600));
         // Whole and half hours, ahead of UTC and behind it.
-        assert_eq!(in_zone(Colombo, 7), ("Asia/Colombo".to_owned(), 5 * 3600 + 1800));
-        assert_eq!(in_zone(Lord_Howe, 1), ("Australia/Lord_Howe".to_owned(), 11 * 3600));
-        assert_eq!(in_zone(Lord_Howe, 7), ("Australia/Lord_Howe".to_owned(), 10 * 3600 + 1800));
-        assert_eq!(in_zone(Auckland, 1), ("Pacific/Auckland".to_owned(), 13 * 3600));
-        assert_eq!(in_zone(chrono_tz::America::New_York, 1), ("America/New_York".to_owned(), -5 * 3600));
+        assert_eq!(
+            in_zone(Colombo, 7),
+            ("Asia/Colombo".to_owned(), 5 * 3600 + 1800)
+        );
+        assert_eq!(
+            in_zone(Lord_Howe, 1),
+            ("Australia/Lord_Howe".to_owned(), 11 * 3600)
+        );
+        assert_eq!(
+            in_zone(Lord_Howe, 7),
+            ("Australia/Lord_Howe".to_owned(), 10 * 3600 + 1800)
+        );
+        assert_eq!(
+            in_zone(Auckland, 1),
+            ("Pacific/Auckland".to_owned(), 13 * 3600)
+        );
+        assert_eq!(
+            in_zone(chrono_tz::America::New_York, 1),
+            ("America/New_York".to_owned(), -5 * 3600)
+        );
     }
 
     #[test]

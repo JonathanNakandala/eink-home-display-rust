@@ -135,7 +135,8 @@ mod tests {
         assert_eq!(plan["stale"], false);
         // The server's zone and its offset now, for a display that has no timezone database.
         let zone: chrono_tz::Tz = plan["timezone"].as_str().unwrap().parse().unwrap();
-        let offset = chrono::Offset::fix(chrono::Utc::now().with_timezone(&zone).offset()).local_minus_utc();
+        let offset =
+            chrono::Offset::fix(chrono::Utc::now().with_timezone(&zone).offset()).local_minus_utc();
         assert_eq!(plan["utc_offset_seconds"], offset);
         // An hour after the render, less the 100 seconds already gone, plus the 30 second delay.
         let next = plan["next_seconds"].as_u64().unwrap();
