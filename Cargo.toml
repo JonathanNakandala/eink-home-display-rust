@@ -42,6 +42,12 @@ chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"
 sha2 = "0.11"
 subtle = "2"
+rcgen = { version = "0.14", features = ["x509-parser"] }
+x509-parser = { version = "0.18", features = ["verify"] }
+time = "0.3"
+getrandom = "0.4.3"
+base64 = "0.23.1"
+rustls-pki-types = "1.15.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

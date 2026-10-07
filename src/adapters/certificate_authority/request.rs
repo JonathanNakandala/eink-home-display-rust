@@ -1,0 +1,107 @@
+//! Reads a certificate request (PKCS #10, RFC 2986) from a display, and checks it.
+//!
+//! The request is the display's, so nothing in it is taken on trust beyond what it can prove: that its
+//! sender holds the private key (the signature), and the name and key it asks to be certified. Whatever
+//! else a request asks for (extensions such as `CA:TRUE`, a server's key usage, alternative names) is
+//! ignored, never copied into the certificate, so a request can't ask for more than a display is given.
+
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use x509_parser::certification_request::X509CertificationRequest;
+use x509_parser::cri_attributes::ParsedCriAttribute;
+use x509_parser::prelude::FromDer;
+
+use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::pairing::PublicKey;
+use crate::domain::services::certificate_authority::{CertificateRequest, RequestError};
+
+/// `id-ecPublicKey`, `prime256v1` (P-256), and `ecdsa-with-SHA256`: the one kind of key and signature
+/// the displays are asked to use (RFC 9908 lets the server say so). One kind is enough, and every
+/// extra one is more code that reads what the network sends. The signature check that follows also
+/// refuses a point that isn't a well-formed uncompressed P-256 one, so there is no length check here.
+const EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
+const P256: &str = "1.2.840.10045.3.1.7";
+const ECDSA_SHA256: &str = "1.2.840.10045.4.3.2";
+
+pub fn read(der: &[u8]) -> Result<CertificateRequest, RequestError> {
+    let (rest, request) = X509CertificationRequest::from_der(der)
+        .map_err(|e| RequestError::Malformed(e.to_string()))?;
+    if !rest.is_empty() {
+        return Err(RequestError::Malformed("data after the request".to_owned()));
+    }
+    let info = &request.certification_request_info;
+    let key = &info.subject_pki;
+
+    // Only the kind of key and signature that is asked for. Checked before the signature, which is
+    // what would otherwise pick the algorithm from whatever the request says.
+    if key.algorithm.algorithm.to_id_string() != EC_PUBLIC_KEY
+        || key
+            .algorithm
+            .parameters
+            .as_ref()
+            .and_then(|p| p.as_oid().ok())
+            .map(|oid| oid.to_id_string())
+            .as_deref()
+            != Some(P256)
+    {
+        return Err(RequestError::UnsupportedKey(
+            "only ECDSA keys on the P-256 curve are certified".to_owned(),
+        ));
+    }
+    if request.signature_algorithm.algorithm.to_id_string() != ECDSA_SHA256 {
+        return Err(RequestError::UnsupportedKey(
+            "the request must be signed with ECDSA and SHA-256".to_owned(),
+        ));
+    }
+    request
+        .verify_signature()
+        .map_err(|_| RequestError::BadSignature)?;
+
+    let mut names = info.subject.iter_common_name();
+    let name = names
+        .next()
+        .ok_or_else(|| RequestError::BadDevice("no common name".to_owned()))?;
+    if names.next().is_some() {
+        return Err(RequestError::BadDevice(
+            "more than one common name".to_owned(),
+        ));
+    }
+    let name = name
+        .as_str()
+        .map_err(|_| RequestError::BadDevice("the name is not text".to_owned()))?;
+    let device = DeviceId::parse(name).map_err(|e| RequestError::BadDevice(e.to_string()))?;
+
+    Ok(CertificateRequest {
+        device,
+        key: PublicKey::from_der(key.raw.to_vec()),
+        channel_binding: channel_binding(&request)?,
+        der: der.to_vec(),
+    })
+}
+
+/// The proof that the request was signed on one particular connection: RFC 7030 section 3.5 puts it
+/// in the request's challenge-password, as base64.
+fn channel_binding(
+    request: &X509CertificationRequest<'_>,
+) -> Result<Option<Vec<u8>>, RequestError> {
+    let mut found = request
+        .certification_request_info
+        .attributes()
+        .iter()
+        .filter_map(|attribute| match attribute.parsed_attribute() {
+            ParsedCriAttribute::ChallengePassword(password) => Some(&password.0),
+            _ => None,
+        });
+    let Some(text) = found.next() else {
+        return Ok(None);
+    };
+    if found.next().is_some() {
+        return Err(RequestError::Malformed(
+            "more than one challenge password".to_owned(),
+        ));
+    }
+    STANDARD
+        .decode(text)
+        .map(Some)
+        .map_err(|_| RequestError::Malformed("the challenge password is not base64".to_owned()))
+}

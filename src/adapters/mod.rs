@@ -1,3 +1,4 @@
+pub mod certificate_authority;
 pub mod clock;
 pub mod departures;
 pub mod display_image_generator;
