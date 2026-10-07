@@ -8,7 +8,8 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 use serde::Serialize;
 
 use super::devices::DeviceStatus;
@@ -47,7 +48,7 @@ pub struct Status {
     pub sources: Vec<SourceReport>,
     /// The displays that have checked in, with their battery and whether any has gone quiet.
     pub devices: Vec<DeviceStatus>,
-    pub next_render: Option<DateTime<Local>>,
+    pub next_render: Option<DateTime<Tz>>,
     /// The refresh schedule in words, one line per cron expression.
     pub schedule: Vec<String>,
     pub uptime_seconds: u64,
@@ -56,7 +57,7 @@ pub struct Status {
 
 #[derive(Debug, Serialize)]
 pub struct ImageStatus {
-    pub rendered_at: DateTime<Local>,
+    pub rendered_at: DateTime<Tz>,
     pub age_seconds: u64,
     /// The same number `/plan` reports.
     pub version: u32,
@@ -64,13 +65,13 @@ pub struct ImageStatus {
 
 #[derive(Debug, Serialize)]
 pub struct Moment {
-    pub at: DateTime<Local>,
+    pub at: DateTime<Tz>,
     pub age_seconds: u64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct FailureStatus {
-    pub at: DateTime<Local>,
+    pub at: DateTime<Tz>,
     pub age_seconds: u64,
     pub error: String,
 }
@@ -98,12 +99,12 @@ impl Status {
 }
 
 struct Success {
-    at: DateTime<Local>,
+    at: DateTime<Tz>,
     report: RenderReport,
 }
 
 struct Failure {
-    at: DateTime<Local>,
+    at: DateTime<Tz>,
     error: String,
 }
 
@@ -118,12 +119,12 @@ struct Record {
 /// The render history. Shared between the render loop, which writes it, and the server, which
 /// reads it. Times are passed in, so the logic is the same in tests as in use.
 pub struct StatusBoard {
-    started: DateTime<Local>,
+    started: DateTime<Tz>,
     record: Mutex<Record>,
 }
 
 impl StatusBoard {
-    pub fn new(started: DateTime<Local>) -> Arc<Self> {
+    pub fn new(started: DateTime<Tz>) -> Arc<Self> {
         Arc::new(Self { started, record: Mutex::default() })
     }
 
@@ -136,14 +137,14 @@ impl StatusBoard {
     /// The status as of `now`. `rendered_at` is when the image being served was written, if there is one.
     pub fn status(
         &self,
-        now: DateTime<Local>,
-        rendered_at: Option<DateTime<Local>>,
+        now: DateTime<Tz>,
+        rendered_at: Option<DateTime<Tz>>,
         schedule: &Schedule,
         timing: PlanTiming,
     ) -> anyhow::Result<Status> {
         let record = self.record();
         let uptime = (now - self.started).max(chrono::Duration::zero());
-        let age = |at: DateTime<Local>| (now - at).num_seconds().max(0).unsigned_abs();
+        let age = |at: DateTime<Tz>| (now - at).num_seconds().max(0).unsigned_abs();
 
         let state = match rendered_at {
             None if uptime.to_std().unwrap_or_default() <= timing.stale_grace => Health::Starting,
@@ -184,14 +185,14 @@ impl RenderObserver for StatusBoard {
         self.record().rendering = true;
     }
 
-    fn render_succeeded(&self, at: DateTime<Local>, report: &RenderReport) {
+    fn render_succeeded(&self, at: DateTime<Tz>, report: &RenderReport) {
         let mut record = self.record();
         record.rendering = false;
         record.consecutive_failures = 0;
         record.last_success = Some(Success { at, report: report.clone() });
     }
 
-    fn render_failed(&self, at: DateTime<Local>, error: &anyhow::Error) {
+    fn render_failed(&self, at: DateTime<Tz>, error: &anyhow::Error) {
         let mut record = self.record();
         record.rendering = false;
         record.consecutive_failures = record.consecutive_failures.saturating_add(1);
@@ -210,6 +211,7 @@ fn one_line(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use std::time::Duration;
 
     use anyhow::anyhow;
@@ -221,15 +223,15 @@ mod tests {
     const TIMING: PlanTiming =
         PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
     }
 
     fn schedule() -> Schedule {
         Schedule::parse_cron("*/10 * * * *").unwrap()
     }
 
-    fn health(board: &StatusBoard, now: DateTime<Local>, rendered_at: Option<DateTime<Local>>) -> Health {
+    fn health(board: &StatusBoard, now: DateTime<Tz>, rendered_at: Option<DateTime<Tz>>) -> Health {
         board.status(now, rendered_at, &schedule(), TIMING).unwrap().state
     }
 

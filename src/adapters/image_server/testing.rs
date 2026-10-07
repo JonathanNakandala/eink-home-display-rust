@@ -1,10 +1,10 @@
 //! Helpers for the route tests: a server on a free port over a temporary directory.
 
+use chrono_tz::Europe::London;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Local;
 use tokio::net::TcpListener;
 
 use super::{router, Handles};
@@ -29,7 +29,7 @@ pub(super) async fn start(directory: PathBuf, format: ImageFormat) -> String {
 
 /// Also hands back the status board, to play the render loop's part.
 pub(super) async fn start_with_status(directory: PathBuf, format: ImageFormat) -> (String, Arc<StatusBoard>) {
-    start_with_clock(directory, format, Arc::new(SystemClock)).await
+    start_with_clock(directory, format, Arc::new(SystemClock::new(London))).await
 }
 
 /// Like `start_with_status`, with the server reading the time from `clock`.
@@ -51,7 +51,7 @@ pub(super) async fn start_with(
     let address = listener.local_addr().unwrap();
     let timing = PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
     let schedule = Schedule::parse_every("1h").unwrap();
-    let status = StatusBoard::new(Local::now());
+    let status = StatusBoard::new(chrono::Utc::now().with_timezone(&London));
     let handles = Handles { refresh: RefreshControl::new(Duration::from_secs(30)), status: Arc::clone(&status), devices: DeviceBoard::new(Duration::from_secs(900)) };
     tokio::spawn(async move { axum::serve(listener, router(images, format, schedule, timing, handles, clock)).await });
     (format!("http://{address}"), status)
@@ -75,7 +75,7 @@ impl PublishedImages for Faulty {
         self.inner.publish(format, bytes).await
     }
 
-    async fn published_at(&self, format: ImageFormat) -> anyhow::Result<Option<chrono::DateTime<Local>>> {
+    async fn published_at(&self, format: ImageFormat) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
         anyhow::ensure!(self.cannot_inspect != Some(format), "permission denied");
         self.inner.published_at(format).await
     }

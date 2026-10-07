@@ -1,4 +1,5 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 
 use crate::domain::models::departures::Departures;
 use crate::domain::models::source_error::SourceError;
@@ -11,6 +12,6 @@ pub trait DeparturesService {
     async fn get_departures(
         &self,
         num_rows: u8,
-        now: DateTime<Local>,
+        now: DateTime<Tz>,
     ) -> Result<Departures, SourceError>;
 }

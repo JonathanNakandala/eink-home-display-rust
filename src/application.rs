@@ -11,7 +11,8 @@ use std::time::Duration as StdDuration;
 
 use anyhow::anyhow;
 use futures_util::FutureExt;
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration};
+use chrono_tz::Tz;
 
 use std::future::Future;
 
@@ -95,7 +96,7 @@ pub struct DepartureBoard<DS: DeparturesService> {
 
 impl<DS: DeparturesService> DepartureBoard<DS> {
     /// The source's answer as it is, or its error.
-    pub async fn fetch(&self, rows: u8, now: DateTime<Local>) -> Result<Departures, SourceError> {
+    pub async fn fetch(&self, rows: u8, now: DateTime<Tz>) -> Result<Departures, SourceError> {
         self.service.get_departures(rows, now).await
     }
 
@@ -103,7 +104,7 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
     /// said (brought up to date, and labelled with its age) if that is recent enough.
     async fn for_display(
         &self,
-        now: DateTime<Local>,
+        now: DateTime<Tz>,
         max_age: Duration,
         timeout: StdDuration,
     ) -> (DepartureBoardData, SourceReport) {
@@ -243,6 +244,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -269,7 +271,7 @@ mod tests {
 
     struct Trains(Flag, Flag);
     impl DeparturesService for Trains {
-        async fn get_departures(&self, _: u8, now: DateTime<Local>) -> Result<Departures, SourceError> {
+        async fn get_departures(&self, _: u8, now: DateTime<Tz>) -> Result<Departures, SourceError> {
             if self.1.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
@@ -336,7 +338,7 @@ mod tests {
             vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(trains_down.clone(), trains_hang.clone()))],
             MaxAge::default(),
             RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
-            Arc::new(SystemClock),
+            Arc::new(SystemClock::new(London)),
         );
         Rig { weather_down, trains_down, trains_hang, render_hang, frames, app }
     }
@@ -505,10 +507,10 @@ mod tests {
         fn render_started(&self) {
             self.0.lock().unwrap().push("started");
         }
-        fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {
+        fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {
             self.0.lock().unwrap().push("succeeded");
         }
-        fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {
+        fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {
             self.0.lock().unwrap().push("failed");
         }
     }
@@ -535,17 +537,17 @@ mod tests {
         use crate::adapters::clock::FixedClock;
 
         #[derive(Default)]
-        struct Stamps(Mutex<Vec<DateTime<Local>>>);
+        struct Stamps(Mutex<Vec<DateTime<Tz>>>);
         impl RenderObserver for Stamps {
             fn render_started(&self) {}
-            fn render_succeeded(&self, at: DateTime<Local>, _report: &RenderReport) {
+            fn render_succeeded(&self, at: DateTime<Tz>, _report: &RenderReport) {
                 self.0.lock().unwrap().push(at);
             }
-            fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {}
+            fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {}
         }
 
         let rig = rig();
-        let at = Local.with_ymd_and_hms(2026, 6, 15, 9, 41, 0).unwrap();
+        let at = London.with_ymd_and_hms(2026, 6, 15, 9, 41, 0).unwrap();
         let stamps = Arc::new(Stamps::default());
         let app = Application::new(
             Weather(rig.weather_down.clone()),
@@ -589,7 +591,7 @@ mod tests {
             vec![DepartureBoard::new("NORTHBOUND".into(), 4, Trains(Flag::default(), Flag::default()))],
             MaxAge::default(),
             RenderLimits { source_timeout: StdDuration::from_millis(100), deadline: StdDuration::from_millis(400) },
-            Arc::new(SystemClock),
+            Arc::new(SystemClock::new(London)),
         )
         .with_observer(events.clone());
 

@@ -38,6 +38,8 @@ mdns-sd = "0.21.4"
 socket2 = { version = "0.6", features = ["all"] }
 httpdate = "1.0.3"
 secrecy = { version = "0.10.3", features = ["serde"] }
+chrono-tz = "0.10.4"
+iana-time-zone = "0.1.65"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

@@ -42,7 +42,9 @@ async fn main() -> Result<()> {
     let cache = CachePaths::new(args.cache_dir.clone().unwrap_or_else(|| config.cache.directory.clone()));
     cache.ensure_exists()?;
     let chrome_source = ChromeSource::from(args.bundled_chrome);
-    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let zone = eink_home_display_rust::adapters::zone::host();
+    log::info!("Working in the timezone {}", zone.name());
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(zone));
 
     let configured = config.schedule.as_ref().map(|schedule| schedule.to_schedule()).transpose()?;
     let Some(schedule) = args.schedule(configured)? else {

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration};
+use chrono_tz::Tz;
 
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::domain::models::arrival::Arrival;
@@ -22,7 +23,7 @@ impl DeparturesService for TflDeparturesServiceAdapter {
     async fn get_departures(
         &self,
         num_rows: u8,
-        now: DateTime<Local>,
+        now: DateTime<Tz>,
     ) -> Result<Departures, SourceError> {
         let arrivals = self.arrivals.get_arrivals(&self.stop_id).await?;
         let show_line = serves_several_lines(&arrivals);
@@ -68,7 +69,7 @@ fn catchable(
 
 /// TfL only gives live predictions, so there is no scheduled time to compare
 /// against: `time` is when it is predicted to arrive, and the status is `Live`.
-fn to_domain_service(arrival: Arrival, show_line: bool, now: DateTime<Local>) -> DepartureService {
+fn to_domain_service(arrival: Arrival, show_line: bool, now: DateTime<Tz>) -> DepartureService {
     let seconds = i64::from(arrival.seconds_to_arrival);
     let time = (now + Duration::seconds(seconds)).format("%H:%M").to_string();
     let destination = if show_line {
@@ -81,6 +82,7 @@ fn to_domain_service(arrival: Arrival, show_line: bool, now: DateTime<Local>) ->
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
@@ -101,8 +103,8 @@ mod tests {
         arrival_on("Piccadilly", seconds)
     }
 
-    fn now() -> DateTime<Local> {
-        Local.with_ymd_and_hms(2024, 1, 10, 13, 6, 0).unwrap()
+    fn now() -> DateTime<Tz> {
+        London.with_ymd_and_hms(2024, 1, 10, 13, 6, 0).unwrap()
     }
 
     #[test]

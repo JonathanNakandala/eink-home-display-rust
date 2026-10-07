@@ -152,15 +152,16 @@ fn escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Local, TimeZone};
+    use chrono_tz::Europe::London;
+    use chrono::{TimeZone};
 
     use super::*;
     use crate::application::devices::DeviceStatus;
     use crate::application::status::ImageStatus;
     use crate::domain::models::render_report::SourceReport;
 
-    fn at() -> chrono::DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap()
+    fn at() -> chrono::DateTime<chrono_tz::Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap()
     }
 
     fn status() -> Status {

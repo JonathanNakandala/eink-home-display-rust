@@ -1,4 +1,5 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 
 use crate::domain::models::render_report::RenderReport;
 
@@ -8,6 +9,6 @@ use crate::domain::models::render_report::RenderReport;
 /// Called from the render itself, so keep each one quick.
 pub trait RenderObserver: Send + Sync {
     fn render_started(&self);
-    fn render_succeeded(&self, at: DateTime<Local>, report: &RenderReport);
-    fn render_failed(&self, at: DateTime<Local>, error: &anyhow::Error);
+    fn render_succeeded(&self, at: DateTime<Tz>, report: &RenderReport);
+    fn render_failed(&self, at: DateTime<Tz>, error: &anyhow::Error);
 }

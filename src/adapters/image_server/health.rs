@@ -6,14 +6,16 @@ use axum::extract::State;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 
 use super::{metrics, server_error, Published};
 use crate::application::status::Status;
 
 /// When the served image was written; None before the first render.
-pub(super) async fn image_written_at(published: &Published) -> anyhow::Result<Option<DateTime<Local>>> {
-    published.images.published_at(published.format).await
+pub(super) async fn image_written_at(published: &Published) -> anyhow::Result<Option<DateTime<Tz>>> {
+    let zone = published.clock.now().timezone();
+    Ok(published.images.published_at(published.format).await?.map(|at| at.with_timezone(&zone)))
 }
 
 /// How the service is doing: the render history, the sources' state, and the image's age.
@@ -57,8 +59,8 @@ pub(super) async fn metrics(State(published): State<Arc<Published>>) -> Response
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use super::super::testing::{publish, set_age, start, start_with_status};
-    use super::*;
     use crate::domain::models::display::ImageFormat;
     use crate::domain::services::render_observer::RenderObserver;
 
@@ -92,7 +94,7 @@ mod tests {
         assert_eq!((code, text.as_str()), (503, "stale: the image is 3 h 0 min old"));
 
         publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
-        status.render_succeeded(Local::now(), &Default::default());
+        status.render_succeeded(chrono::Utc::now().with_timezone(&London), &Default::default());
         assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
     }
 
@@ -104,7 +106,7 @@ mod tests {
         let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         status.render_succeeded(
-            Local::now(),
+            chrono::Utc::now().with_timezone(&London),
             &RenderReport {
                 sources: vec![SourceReport {
                     name: "weather".into(),
@@ -134,7 +136,7 @@ mod tests {
 
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         status.render_started();
-        status.render_failed(Local::now(), &anyhow::anyhow!("Chrome did not start"));
+        status.render_failed(chrono::Utc::now().with_timezone(&London), &anyhow::anyhow!("Chrome did not start"));
         let after = reqwest::get(format!("{base}/status")).await.unwrap();
         assert_eq!(after.headers()["cache-control"], "no-store");
         let after: serde_json::Value = after.json().await.unwrap();

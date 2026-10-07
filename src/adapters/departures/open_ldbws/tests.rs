@@ -1,4 +1,6 @@
-use chrono::{DateTime, Local, TimeZone};
+use chrono_tz::Europe::London;
+use chrono::{DateTime, TimeZone};
+use chrono_tz::Tz;
 use httpmock::prelude::*;
 use speculoos::prelude::*;
 
@@ -35,8 +37,8 @@ const SAMPLE_RESPONSE: &str = r#"{
 }"#;
 
 /// The sample board was generated at 18:00.
-fn now() -> DateTime<Local> {
-    Local.with_ymd_and_hms(2024, 1, 10, 18, 0, 0).unwrap()
+fn now() -> DateTime<Tz> {
+    London.with_ymd_and_hms(2024, 1, 10, 18, 0, 0).unwrap()
 }
 
 #[tokio::test]

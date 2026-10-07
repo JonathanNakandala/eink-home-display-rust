@@ -4,7 +4,8 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration};
+use chrono_tz::Tz;
 
 use crate::domain::models::source_error::SourceError;
 
@@ -19,7 +20,7 @@ pub enum Fetched<T> {
 }
 
 pub struct LastGood<T> {
-    slot: Mutex<Option<(T, DateTime<Local>)>>,
+    slot: Mutex<Option<(T, DateTime<Tz>)>>,
 }
 
 impl<T> Default for LastGood<T> {
@@ -34,7 +35,7 @@ impl<T: Clone> LastGood<T> {
     pub fn resolve(
         &self,
         result: Result<T, SourceError>,
-        now: DateTime<Local>,
+        now: DateTime<Tz>,
         max_age: Duration,
         source: &str,
     ) -> Fetched<T> {
@@ -98,12 +99,13 @@ pub fn format_age(age: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
 
-    fn at(h: u32, m: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap()
+    fn at(h: u32, m: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap()
     }
 
     const LIMIT: Duration = Duration::minutes(15);

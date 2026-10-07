@@ -93,6 +93,7 @@ fn failed(message: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use super::super::testing::{publish, start};
     use super::*;
 
@@ -242,7 +243,7 @@ mod tests {
         publish(directory, ImageFormat::Bmp, b"bmp-bytes").await.unwrap();
         publish(directory, ImageFormat::Png, b"png-bytes").await.unwrap();
         let images = Faulty { inner: DirectoryImages::new(directory), cannot_inspect, cannot_read };
-        start_with(Arc::new(images), ImageFormat::Png, Arc::new(SystemClock)).await.0
+        start_with(Arc::new(images), ImageFormat::Png, Arc::new(SystemClock::new(London))).await.0
     }
 
     #[tokio::test]
@@ -283,7 +284,7 @@ mod tests {
             use crate::adapters::published_images::DirectoryImages;
 
             let images = Faulty { inner: DirectoryImages::new(tmp.path()), cannot_inspect: inspect, cannot_read: read };
-            let (base, _) = start_with(Arc::new(images), ImageFormat::Bmp, Arc::new(SystemClock)).await;
+            let (base, _) = start_with(Arc::new(images), ImageFormat::Bmp, Arc::new(SystemClock::new(London))).await;
             let response = fetch(&base, None).await;
             assert_eq!(response.status(), 500, "{inspect:?} {read:?}");
             assert_eq!(response.text().await.unwrap(), "The image could not be read");

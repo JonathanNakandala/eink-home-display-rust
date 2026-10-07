@@ -1,4 +1,5 @@
-use chrono::{DateTime, Local, NaiveTime, Timelike};
+use chrono::{DateTime, NaiveTime, Timelike};
+use chrono_tz::Tz;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -34,7 +35,7 @@ impl DepartureService {
 
     /// This service as it reads at `now`, for departures fetched a while ago: the countdown is
     /// recalculated, and None if it has already gone.
-    pub fn as_of(&self, now: DateTime<Local>) -> Option<Self> {
+    pub fn as_of(&self, now: DateTime<Tz>) -> Option<Self> {
         let seconds = seconds_until(now, self.leaves_at())?;
         if seconds < 0 {
             return None;
@@ -58,7 +59,7 @@ pub struct Departures {
 
 impl Departures {
     /// These departures as they read at `now`, without the services that have left.
-    pub fn as_of(&self, now: DateTime<Local>) -> Self {
+    pub fn as_of(&self, now: DateTime<Tz>) -> Self {
         Self {
             station: self.station.clone(),
             services: self.services.iter().filter_map(|service| service.as_of(now)).collect(),
@@ -69,7 +70,7 @@ impl Departures {
 /// Seconds from `now` until `clock_time` ("HH:MM", local time), negative if it has gone: whichever of
 /// today, yesterday or tomorrow puts it nearest to now, so within 12 hours either way.
 /// Resolution is a minute, so it agrees with the clock on the display.
-pub fn seconds_until(now: DateTime<Local>, clock_time: &str) -> Option<i64> {
+pub fn seconds_until(now: DateTime<Tz>, clock_time: &str) -> Option<i64> {
     let time = NaiveTime::parse_from_str(clock_time, "%H:%M").ok()?;
     let minutes = |t: NaiveTime| i64::from(t.hour() * 60 + t.minute());
     // Boards run across midnight, both ways: 00:10 at 23:55 is 15 minutes away, not -23h45, and 23:55 at
@@ -90,12 +91,13 @@ pub fn countdown(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
 
-    fn at(hour: u32, minute: u32, second: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2024, 1, 10, hour, minute, second).unwrap()
+    fn at(hour: u32, minute: u32, second: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2024, 1, 10, hour, minute, second).unwrap()
     }
 
     #[test]
