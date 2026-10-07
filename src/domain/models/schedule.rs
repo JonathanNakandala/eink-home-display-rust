@@ -237,4 +237,215 @@ mod tests {
         assert_eq!(schedule.next_after(at(8, 3, 0)).unwrap(), at(8, 10, 0));
         assert!(Schedule::parse_crons(["0 0 31 2 *"]).unwrap().next_after(at(8, 3, 0)).is_err());
     }
+
+    // ---- Clock changes, in several zones ----
+
+    use chrono::{Offset, Utc};
+    use chrono_tz::{Asia, Australia, Europe, America, Pacific};
+
+    fn offset_seconds(zone: &Tz, at: DateTime<Utc>) -> i32 {
+        at.with_timezone(zone).offset().fix().local_minus_utc()
+    }
+
+    /// The start of the minute at or after `at`: a cron expression has only minutes.
+    fn ceil_to_minute(at: DateTime<Utc>) -> DateTime<Utc> {
+        let seconds = at.timestamp() + i64::from(at.timestamp_subsec_nanos() > 0);
+        DateTime::from_timestamp((seconds + 59).div_euclid(60) * 60, 0).unwrap()
+    }
+
+    fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
+    }
+
+    /// The instants in 2026 at which `zone`'s offset changes, to the minute, and by how many seconds.
+    fn changes_in_2026(zone: Tz) -> Vec<(DateTime<Utc>, i32)> {
+        let mut found = Vec::new();
+        let mut t = utc(2026, 1, 1, 0, 0);
+        while t < utc(2027, 1, 1, 0, 0) {
+            let next = t + chrono::Duration::hours(1);
+            let (a, b) = (offset_seconds(&zone, t), offset_seconds(&zone, next));
+            if a != b {
+                let mut minute = t;
+                while offset_seconds(&zone, minute) == a {
+                    minute += chrono::Duration::minutes(1);
+                }
+                found.push((minute, b - a));
+            }
+            t = next;
+        }
+        found
+    }
+
+    /// What a run means: every minute, in UTC, whose local time matches. Slow and plainly right.
+    fn reference(cron: &Cron, zone: Tz, after: DateTime<Utc>, until: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+        let mut minute = ceil_to_minute(after);
+        if minute <= after {
+            minute += chrono::Duration::minutes(1);
+        }
+        let mut found = Vec::new();
+        while minute <= until {
+            if cron.is_time_matching(&minute.with_timezone(&zone)).unwrap() {
+                found.push(minute);
+            }
+            minute += chrono::Duration::minutes(1);
+        }
+        found
+    }
+
+    const ZONES: [Tz; 8] = [
+        Europe::London,
+        America::New_York,
+        Australia::Sydney,
+        Australia::Lord_Howe,
+        America::Santiago,
+        Pacific::Chatham,
+        Asia::Colombo,
+        Asia::Kolkata,
+    ];
+
+    #[test]
+    fn a_run_every_so_often_keeps_its_rhythm_through_every_clock_change_in_every_zone() {
+        let mut checked_changes = 0;
+        for zone in ZONES {
+            for expression in ["*/10 * * * *", "*/15 * * * *", "0 * * * *", "*/20 0-6 * * *", "7 * * * *"] {
+                let cron: Cron = expression.parse().unwrap();
+                let schedule = Schedule::parse_cron(expression).unwrap();
+                for (change, _) in changes_in_2026(zone) {
+                    checked_changes += 1;
+                    let from = change - chrono::Duration::hours(30);
+                    let until = change + chrono::Duration::hours(30);
+                    let expected = reference(&cron, zone, from, until);
+
+                    let mut got = Vec::new();
+                    let mut at = from.with_timezone(&zone);
+                    loop {
+                        let next = schedule.next_after(at).unwrap();
+                        assert!(next > at, "{zone} {expression}: {next} is not after {at}");
+                        if next.with_timezone(&Utc) > until {
+                            break;
+                        }
+                        got.push(next.with_timezone(&Utc));
+                        at = next;
+                    }
+                    assert_eq!(got, expected, "{zone} {expression} around {change}");
+                }
+            }
+        }
+        // The zones above have both kinds of change, so this did look at clocks going back as well as forward.
+        assert_eq!(checked_changes, 5 * 12, "six zones with two changes each, for five expressions");
+    }
+
+    #[test]
+    fn from_any_moment_the_next_run_is_the_first_match_after_it() {
+        // Starting between slots, on them, and a second either side, around the UK's autumn change.
+        let zone = Europe::London;
+        let cron: Cron = "*/10 * * * *".parse().unwrap();
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let change = utc(2026, 10, 25, 1, 0);
+        for offset_seconds in (-4000..4000).step_by(37) {
+            let start = change + chrono::Duration::seconds(offset_seconds);
+            let expected = reference(&cron, zone, start, start + chrono::Duration::hours(2))[0];
+            let got = schedule.next_after(start.with_timezone(&zone)).unwrap().with_timezone(&Utc);
+            assert_eq!(got, expected, "from {start}");
+        }
+    }
+
+    #[test]
+    fn the_uk_autumn_change_has_no_gap() {
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let zone = Europe::London;
+        // 00:50 BST on 25 October 2026; the clocks go back at 02:00 BST to 01:00 GMT.
+        let mut at = zone.with_ymd_and_hms(2026, 10, 25, 0, 50, 0).unwrap();
+        let mut previous = at;
+        for _ in 0..16 {
+            at = schedule.next_after(at).unwrap();
+            assert_eq!((at - previous).num_minutes(), 10, "{previous} to {at}");
+            previous = at;
+        }
+        // It went through 01:50 BST and on into 01:00 GMT, an hour of real time later.
+        assert_eq!(at.format("%H:%M %Z").to_string(), "02:30 GMT");
+    }
+
+    #[test]
+    fn a_day_with_a_clock_change_has_the_runs_its_length_allows() {
+        let runs = |expression: &str, zone: Tz, y, m, d| {
+            Schedule::parse_cron(expression).unwrap().runs_on(NaiveDate::from_ymd_opt(y, m, d).unwrap(), zone).unwrap()
+        };
+        // 25 hours in the UK on 25 October, 23 on 29 March.
+        assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 10, 25), 150);
+        assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 3, 29), 138);
+        assert_eq!(runs("0 * * * *", Europe::London, 2026, 10, 25), 25);
+        assert_eq!(runs("0 * * * *", Europe::London, 2026, 3, 29), 23);
+        assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 10, 24), 144);
+        // The southern hemisphere changes the other way round: Sydney goes back on 5 April, forward on 4 October.
+        assert_eq!(runs("*/10 * * * *", Australia::Sydney, 2026, 4, 5), 150);
+        assert_eq!(runs("*/10 * * * *", Australia::Sydney, 2026, 10, 4), 138);
+        // Lord Howe changes by half an hour.
+        assert_eq!(runs("*/10 * * * *", Australia::Lord_Howe, 2026, 4, 5), 147);
+        assert_eq!(runs("*/10 * * * *", Australia::Lord_Howe, 2026, 10, 4), 141);
+        // Colombo and Kolkata have no change, and an offset of a half hour: every day is the same.
+        for zone in [Asia::Colombo, Asia::Kolkata] {
+            for (m, d) in [(3, 29), (4, 5), (10, 4), (10, 25)] {
+                assert_eq!(runs("*/10 * * * *", zone, 2026, m, d), 144, "{zone} {m}-{d}");
+            }
+        }
+    }
+
+    /// The convention of Vixie cron, and what `croner` does: a job at a fixed time runs once even when that time is
+    /// on the clock twice, while a job that is "every so often" keeps its rhythm through the repeated hour (the
+    /// brute-force test above). A fixed time that doesn't exist, in the hour that is skipped, runs at the change.
+    #[test]
+    fn a_fixed_time_runs_once_in_a_repeated_hour_and_one_that_was_skipped_runs_at_the_change() {
+        let zone = Europe::London;
+        let daily = Schedule::parse_cron("30 1 * * *").unwrap();
+        // Autumn: 01:30 is on the clock twice, and the daily run happens once, the first time.
+        let first = daily.next_after(zone.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap()).unwrap();
+        assert_eq!(first.format("%d %H:%M %Z").to_string(), "25 01:30 BST");
+        assert_eq!(daily.next_after(first).unwrap().format("%d %H:%M %Z").to_string(), "26 01:30 GMT");
+        assert_eq!(
+            Schedule::parse_cron("30 1 * * *").unwrap().runs_on(NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(), zone).unwrap(),
+            1
+        );
+        // Spring: 01:30 doesn't exist, and the run happens when the clocks change.
+        let spring = daily.next_after(zone.with_ymd_and_hms(2026, 3, 29, 0, 0, 0).unwrap()).unwrap();
+        assert_eq!(spring.with_timezone(&Utc), utc(2026, 3, 29, 1, 0));
+        // And the day after is the normal one.
+        assert_eq!(daily.next_after(spring).unwrap().format("%d %H:%M").to_string(), "30 01:30");
+    }
+
+    #[test]
+    fn a_result_is_never_the_moment_it_was_asked_from() {
+        // Where the clocks go forward, the answer used to name the instant it started from.
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let zone = Europe::London;
+        let mut at = utc(2026, 3, 29, 0, 30).with_timezone(&zone);
+        for _ in 0..12 {
+            let next = schedule.next_after(at).unwrap();
+            assert!(next > at, "{at} then {next}");
+            at = next;
+        }
+    }
+
+    #[test]
+    fn a_span_with_no_change_in_it_costs_nothing_extra_and_is_unchanged() {
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let zone = Asia::Colombo;
+        let at = zone.with_ymd_and_hms(2026, 6, 15, 8, 3, 20).unwrap();
+        assert_eq!(schedule.next_after(at).unwrap(), zone.with_ymd_and_hms(2026, 6, 15, 8, 10, 0).unwrap());
+    }
+
+    #[test]
+    fn several_expressions_take_the_earliest_across_a_repeated_hour() {
+        let schedule = Schedule::parse_crons(["0 1 * * *", "*/30 * * * *"]).unwrap();
+        let zone = Europe::London;
+        let mut at = zone.with_ymd_and_hms(2026, 10, 25, 0, 40, 0).unwrap();
+        let mut gaps = Vec::new();
+        for _ in 0..5 {
+            let next = schedule.next_after(at).unwrap();
+            gaps.push((next - at).num_minutes());
+            at = next;
+        }
+        // 01:00 BST, 01:30 BST, 01:00 GMT, 01:30 GMT, 02:00 GMT.
+        assert_eq!(gaps, [20, 30, 30, 30, 30]);
+    }
 }
