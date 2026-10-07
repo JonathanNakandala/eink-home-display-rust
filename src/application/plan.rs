@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use chrono::DateTime;
+use chrono::{DateTime, Offset};
 use chrono_tz::Tz;
 use serde::Serialize;
 
@@ -38,6 +38,12 @@ pub struct Plan {
     pub next_seconds: u64,
     /// Time since the image was rendered.
     pub age_seconds: u64,
+    /// The zone the server works in (an IANA name such as `Europe/London`), so the display needn't be told it in
+    /// its own configuration, where it could disagree.
+    pub timezone: String,
+    /// How far ahead of UTC that zone is right now, in seconds (3600 in the UK in summer). A display has no
+    /// timezone database, so this is what it needs to show local time; it is right until the next clock change.
+    pub utc_offset_seconds: i32,
 }
 
 /// The version of an image rendered at `rendered_at`: its Unix time in seconds, which fits a
@@ -105,6 +111,8 @@ pub fn compute(
             .saturating_add(timing.wake_delay.as_secs())
             .clamp(1, MAX_SLEEP.as_secs()),
         age_seconds: (now - rendered_at).num_seconds().max(0) as u64,
+        timezone: now.timezone().name().to_owned(),
+        utc_offset_seconds: now.offset().fix().local_minus_utc(),
     })
 }
 
@@ -151,6 +159,27 @@ mod tests {
         // Its age can't be known, so it isn't called stale either; the render history (`failing`) still says
         // if renders stop, and once the clock passes the image's own time the real age counts again.
         assert!(is_stale(at(15, 15, 40, 0), rendered, &schedule, TIMING.stale_grace).unwrap());
+    }
+
+    #[test]
+    fn the_plan_says_which_zone_the_server_is_in_and_how_far_ahead_of_utc_it_is() {
+        use chrono_tz::{Asia::Colombo, Australia::Lord_Howe, Pacific::Auckland};
+        let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
+        let in_zone = |zone: Tz, month: u32| {
+            let now = zone.with_ymd_and_hms(2026, month, 15, 12, 4, 0).unwrap();
+            let rendered = zone.with_ymd_and_hms(2026, month, 15, 12, 0, 0).unwrap();
+            let plan = compute(now, rendered, &schedule, TIMING, None).unwrap();
+            (plan.timezone, plan.utc_offset_seconds)
+        };
+        // The offset is the one in force at the time, so it moves with daylight saving.
+        assert_eq!(in_zone(London, 1), ("Europe/London".to_owned(), 0));
+        assert_eq!(in_zone(London, 7), ("Europe/London".to_owned(), 3600));
+        // Whole and half hours, ahead of UTC and behind it.
+        assert_eq!(in_zone(Colombo, 7), ("Asia/Colombo".to_owned(), 5 * 3600 + 1800));
+        assert_eq!(in_zone(Lord_Howe, 1), ("Australia/Lord_Howe".to_owned(), 11 * 3600));
+        assert_eq!(in_zone(Lord_Howe, 7), ("Australia/Lord_Howe".to_owned(), 10 * 3600 + 1800));
+        assert_eq!(in_zone(Auckland, 1), ("Pacific/Auckland".to_owned(), 13 * 3600));
+        assert_eq!(in_zone(chrono_tz::America::New_York, 1), ("America/New_York".to_owned(), -5 * 3600));
     }
 
     #[test]

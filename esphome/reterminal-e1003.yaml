@@ -31,8 +31,6 @@ substitutions:
   image_path: /image
   plan_path: /plan
   refresh_path: /refresh
-  # For the time shown when a download fails.
-  timezone: Europe/London
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
   # Empty takes the first image server found.
   server_name: ""
@@ -171,6 +169,17 @@ globals:
     type: uint16_t
     restore_value: yes
     initial_value: '0'
+  # How far ahead of UTC the server's timezone is, in seconds, as of its last /plan. The device has no timezone
+  # database, and a failure is often a server it couldn't reach, so it is kept across sleeps. Used only for the time
+  # in the failure notice; unknown until the first /plan.
+  - id: utc_offset_s
+    type: int32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: utc_offset_known
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
   # The render on the panel now (the server's /plan `version`). Kept across deep sleep; 0 means unknown.
   - id: shown_version
     type: uint32_t
@@ -426,6 +435,12 @@ script:
             id(plan_changed) = root["changed"] | true;
             id(plan_stale) = root["stale"] | false;
             id(plan_age_seconds) = root["age_seconds"] | 0;
+            // The server's zone, as how far it is ahead of UTC now. Kept only if it is a real offset.
+            if (root["utc_offset_seconds"].is<int32_t>() &&
+                eink_format::valid_utc_offset(root["utc_offset_seconds"].as<int32_t>())) {
+              id(utc_offset_s) = root["utc_offset_seconds"].as<int32_t>();
+              id(utc_offset_known) = true;
+            }
             id(plan_sleep_ms) = eink_wake::plan_sleep_ms(root["next_seconds"].as<uint32_t>());
             return true;
           });
@@ -615,8 +630,12 @@ script:
                   what = "No Wi-Fi";
                 else if (id(fail_reason) == "memory")
                   what = "Out of memory";
+                // The time in the server's zone: the clock's UTC plus the offset its last plan gave. Left off
+                // when the clock isn't set yet or no plan has ever answered, rather than shown wrong.
                 auto now = id(sntp_time).now();
-                id(notice_text) = now.is_valid() ? what + now.strftime(" @ %H:%M") : what;
+                id(notice_text) = (now.is_valid() && id(utc_offset_known))
+                                      ? what + " @ " + eink_format::clock_text(now.timestamp, id(utc_offset_s))
+                                      : what;
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
             - component.update: epaper_display
@@ -626,7 +645,9 @@ script:
 time:
   - platform: sntp
     id: sntp_time
-    timezone: ${timezone}
+    # Left at UTC: the display's local time is the server's, from its plan (`utc_offset_s`), so the zone is set in one
+    # place. Not set at all, ESPHome would use the zone of the computer that builds the firmware.
+    timezone: UTC
 
 font:
   # The dashboard's own font, from the Rust app's templates; only the glyphs the notice needs.
