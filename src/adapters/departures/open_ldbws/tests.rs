@@ -158,7 +158,9 @@ async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method(GET).path("/GetArrDepBoardWithDetails/HRN");
-        then.status(200).header("content-type", "application/json").body(SAMPLE_RESPONSE);
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(SAMPLE_RESPONSE);
     });
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
@@ -177,17 +179,48 @@ async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
     assert_that(&departures).is_equal_to(Departures::new(
         "Hornsey".to_owned(),
         vec![
-            DepartureService::new("05:04".into(), "Welwyn Garden City".into(), DepartureStatus::OnTime, String::new(), "4 min".into()),
-            DepartureService::new("05:19".into(), "Welwyn Garden City".into(), DepartureStatus::Delayed, "05:27".into(), "27 min".into()),
-            DepartureService::new("05:34".into(), "Welwyn Garden City".into(), DepartureStatus::Cancelled, String::new(), String::new()),
+            DepartureService::new(
+                "05:04".into(),
+                "Welwyn Garden City".into(),
+                DepartureStatus::OnTime,
+                String::new(),
+                "4 min".into(),
+            ),
+            DepartureService::new(
+                "05:19".into(),
+                "Welwyn Garden City".into(),
+                DepartureStatus::Delayed,
+                "05:27".into(),
+                "27 min".into(),
+            ),
+            DepartureService::new(
+                "05:34".into(),
+                "Welwyn Garden City".into(),
+                DepartureStatus::Cancelled,
+                String::new(),
+                String::new(),
+            ),
         ],
     ));
 
     // Cached, then shown four minutes later: the first is due, and the rest count down from the same moments.
     let later = in_sydney + chrono::Duration::minutes(4);
     let again = departures.as_of(later);
-    assert_eq!(again.services.iter().map(|s| s.countdown.as_str()).collect::<Vec<_>>(), ["due", "23 min", ""]);
+    assert_eq!(
+        again
+            .services
+            .iter()
+            .map(|s| s.countdown.as_str())
+            .collect::<Vec<_>>(),
+        ["due", "23 min", ""]
+    );
     assert_eq!(again.services.len(), 3);
     // A minute on, the 05:04 has gone.
-    assert_eq!(departures.as_of(later + chrono::Duration::minutes(1)).services.len(), 2);
+    assert_eq!(
+        departures
+            .as_of(later + chrono::Duration::minutes(1))
+            .services
+            .len(),
+        2
+    );
 }

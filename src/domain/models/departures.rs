@@ -85,18 +85,24 @@ impl Departures {
 /// where the two differ: a service that reports UK time, shown in another country, and the hour around a clock
 /// change, where a clock time can be on the clock twice or not at all. A time that is twice on the clock is the
 /// pass nearer to now.
-pub fn clock_time_near(now: DateTime<Tz>, clock_time: &str, clock_zone: Tz) -> Option<DateTime<Utc>> {
+pub fn clock_time_near(
+    now: DateTime<Tz>,
+    clock_time: &str,
+    clock_zone: Tz,
+) -> Option<DateTime<Utc>> {
     let time = NaiveTime::parse_from_str(clock_time, "%H:%M").ok()?;
     let now = now.with_timezone(&Utc);
     let today = now.with_timezone(&clock_zone).date_naive();
     [today.pred_opt()?, today, today.succ_opt()?]
         .into_iter()
-        .flat_map(|day| match clock_zone.from_local_datetime(&day.and_time(time)) {
-            LocalResult::Single(at) => vec![at],
-            LocalResult::Ambiguous(first, second) => vec![first, second],
-            // The time is in the hour the clocks skip: no such moment on that day.
-            LocalResult::None => vec![],
-        })
+        .flat_map(
+            |day| match clock_zone.from_local_datetime(&day.and_time(time)) {
+                LocalResult::Single(at) => vec![at],
+                LocalResult::Ambiguous(first, second) => vec![first, second],
+                // The time is in the hour the clocks skip: no such moment on that day.
+                LocalResult::None => vec![],
+            },
+        )
         .map(|at| at.with_timezone(&Utc))
         .min_by_key(|at| {
             let away = *at - now;
@@ -107,7 +113,10 @@ pub fn clock_time_near(now: DateTime<Tz>, clock_time: &str, clock_zone: Tz) -> O
 /// Seconds from `now` until `clock_time` ("HH:MM" on the clock of `clock_zone`), negative if it has gone; see
 /// `clock_time_near`. Resolution is a minute, so it agrees with the clock on the display.
 pub fn seconds_until(now: DateTime<Tz>, clock_time: &str, clock_zone: Tz) -> Option<i64> {
-    Some(seconds_to(now, clock_time_near(now, clock_time, clock_zone)?))
+    Some(seconds_to(
+        now,
+        clock_time_near(now, clock_time, clock_zone)?,
+    ))
 }
 
 /// Seconds from `now` until `at`, counted from the start of this minute, negative if it has gone.
@@ -162,7 +171,10 @@ mod tests {
             seconds_until(at(12, 0, 0), "23:59", London),
             Some(11 * 3600 + 59 * 60)
         );
-        assert_eq!(seconds_until(at(12, 0, 0), "00:00", London), Some(-12 * 3600));
+        assert_eq!(
+            seconds_until(at(12, 0, 0), "00:00", London),
+            Some(-12 * 3600)
+        );
     }
 
     #[test]
@@ -176,15 +188,23 @@ mod tests {
     }
 
     fn utc_at(y: i32, m: u32, d: u32, h: u32, min: u32, s: u32) -> DateTime<Tz> {
-        Utc.with_ymd_and_hms(y, m, d, h, min, s).unwrap().with_timezone(&London)
+        Utc.with_ymd_and_hms(y, m, d, h, min, s)
+            .unwrap()
+            .with_timezone(&London)
     }
 
     #[test]
     fn a_countdown_is_real_time_across_the_hour_the_clocks_go_forward() {
         // 29 March 2026: 01:00 GMT becomes 02:00 BST. At 00:55 GMT, 02:05 BST is 10 minutes away, not 70.
-        assert_eq!(seconds_until(utc_at(2026, 3, 29, 0, 55, 0), "02:05", London), Some(10 * 60));
+        assert_eq!(
+            seconds_until(utc_at(2026, 3, 29, 0, 55, 0), "02:05", London),
+            Some(10 * 60)
+        );
         // And 00:55 was five minutes ago at 01:00 BST.
-        assert_eq!(seconds_until(utc_at(2026, 3, 29, 1, 0, 0), "00:55", London), Some(-5 * 60));
+        assert_eq!(
+            seconds_until(utc_at(2026, 3, 29, 1, 0, 0), "00:55", London),
+            Some(-5 * 60)
+        );
     }
 
     #[test]
@@ -192,26 +212,47 @@ mod tests {
         // 25 October 2026: 02:00 BST becomes 01:00 GMT, so 01:00 to 02:00 is on the clock twice.
         // The first pass is 00:00 to 01:00 UTC, the second 01:00 to 02:00 UTC.
         // At 01:50 BST (00:50 UTC) a train at 01:10 is the one 20 minutes later, in the second pass, not 40 ago.
-        assert_eq!(seconds_until(utc_at(2026, 10, 25, 0, 50, 0), "01:10", London), Some(20 * 60));
+        assert_eq!(
+            seconds_until(utc_at(2026, 10, 25, 0, 50, 0), "01:10", London),
+            Some(20 * 60)
+        );
         // A train at 01:55 is 5 minutes away, still in the first pass.
-        assert_eq!(seconds_until(utc_at(2026, 10, 25, 0, 50, 0), "01:55", London), Some(5 * 60));
+        assert_eq!(
+            seconds_until(utc_at(2026, 10, 25, 0, 50, 0), "01:55", London),
+            Some(5 * 60)
+        );
         // At 01:05 BST (00:05 UTC), 01:10 is 5 minutes away, in the first pass.
-        assert_eq!(seconds_until(utc_at(2026, 10, 25, 0, 5, 0), "01:10", London), Some(5 * 60));
+        assert_eq!(
+            seconds_until(utc_at(2026, 10, 25, 0, 5, 0), "01:10", London),
+            Some(5 * 60)
+        );
         // At 01:05 GMT (01:05 UTC), 01:00 has just gone, in the second pass, not 65 minutes ago.
-        assert_eq!(seconds_until(utc_at(2026, 10, 25, 1, 5, 0), "01:00", London), Some(-5 * 60));
+        assert_eq!(
+            seconds_until(utc_at(2026, 10, 25, 1, 5, 0), "01:00", London),
+            Some(-5 * 60)
+        );
     }
 
     #[test]
     fn a_time_read_on_the_providers_clock_counts_down_correctly_for_a_display_elsewhere() {
         use chrono_tz::Australia::Sydney;
         // 15 June 2026, 08:00 UTC: 09:00 in London (BST), 18:00 in Sydney.
-        let display = Utc.with_ymd_and_hms(2026, 6, 15, 8, 0, 0).unwrap().with_timezone(&Sydney);
+        let display = Utc
+            .with_ymd_and_hms(2026, 6, 15, 8, 0, 0)
+            .unwrap()
+            .with_timezone(&Sydney);
         // A UK board's 09:10 is ten minutes away. Read on the display's clock it would be 15 hours ago or ahead.
         assert_eq!(seconds_until(display, "09:10", London), Some(10 * 60));
-        assert_eq!(seconds_until(display, "09:10", Sydney), Some(-8 * 3600 - 50 * 60));
+        assert_eq!(
+            seconds_until(display, "09:10", Sydney),
+            Some(-8 * 3600 - 50 * 60)
+        );
         // The same moment, as the UK board's time shown on the display's clock.
         let at = clock_time_near(display, "09:10", London).unwrap();
-        assert_eq!(at.with_timezone(&Sydney).format("%H:%M").to_string(), "18:10");
+        assert_eq!(
+            at.with_timezone(&Sydney).format("%H:%M").to_string(),
+            "18:10"
+        );
     }
 
     #[test]
@@ -228,11 +269,17 @@ mod tests {
     #[test]
     fn a_zone_with_a_half_hour_offset_and_none_to_change_just_works() {
         use chrono_tz::Asia::Colombo;
-        let now = Utc.with_ymd_and_hms(2026, 6, 15, 3, 30, 0).unwrap().with_timezone(&Colombo); // 09:00 in Colombo
+        let now = Utc
+            .with_ymd_and_hms(2026, 6, 15, 3, 30, 0)
+            .unwrap()
+            .with_timezone(&Colombo); // 09:00 in Colombo
         assert_eq!(seconds_until(now, "09:15", Colombo), Some(15 * 60));
         assert_eq!(seconds_until(now, "08:45", Colombo), Some(-15 * 60));
         // 09:00 in Colombo is 04:30 in London, so a UK 09:15 is 4 h 45 min away.
-        assert_eq!(seconds_until(now, "09:15", London), Some((4 * 60 + 45) * 60));
+        assert_eq!(
+            seconds_until(now, "09:15", London),
+            Some((4 * 60 + 45) * 60)
+        );
     }
 
     fn service(

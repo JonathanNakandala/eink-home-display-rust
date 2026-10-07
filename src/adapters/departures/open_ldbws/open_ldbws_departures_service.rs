@@ -81,7 +81,12 @@ const PROVIDER_ZONE: Tz = Tz::Europe__London;
 /// A time the board gave, as the moment it means (None if it isn't a clock time) and as it reads on the display.
 fn on_display_clock(board_time: &str, now: DateTime<Tz>) -> (Option<DateTime<Utc>>, String) {
     match clock_time_near(now, board_time, PROVIDER_ZONE) {
-        Some(at) => (Some(at), at.with_timezone(&now.timezone()).format("%H:%M").to_string()),
+        Some(at) => (
+            Some(at),
+            at.with_timezone(&now.timezone())
+                .format("%H:%M")
+                .to_string(),
+        ),
         None => (None, board_time.to_owned()),
     }
 }
