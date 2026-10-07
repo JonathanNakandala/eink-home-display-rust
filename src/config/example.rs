@@ -64,7 +64,7 @@ impl ApplicationConfig {
                     host_url: DEFAULT_TFL_HOST_URL.to_owned(),
                 }),
             },
-            location: LocationConfig { latitude: 51.5, longitude: -0.12 },
+            location: LocationConfig { latitude: 51.5, longitude: -0.12, timezone: Some("Europe/London".to_owned()) },
             file_store: FileStoreConfig { save_directory: PathBuf::from("./output") },
             cache: CacheConfig { directory: PathBuf::from("./cache") },
             display: DisplayConfig {

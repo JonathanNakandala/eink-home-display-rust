@@ -46,6 +46,7 @@ host_url = "https://api.tfl.gov.uk"
 [location]
 latitude = 51.5
 longitude = -0.12
+timezone = "Europe/London"
 
 [file_store]
 save_directory = "./output"

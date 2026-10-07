@@ -25,13 +25,17 @@ use eink_home_display_rust::domain::services::image_repository::ImageRepository;
 async fn main() -> Result<()> {
     bootstrap::init_logging("info");
     let args = RenderArgs::parse();
-    let zone = eink_home_display_rust::adapters::zone::host();
 
     let config = args
         .config_file
         .as_ref()
         .map(|path| bootstrap::load_application_config(path))
         .transpose()?;
+    // A preview with no config has no zone to be told: the host's is right for looking at a layout.
+    let zone = match &config {
+        Some(config) => bootstrap::resolve_zone(&config.location)?,
+        None => eink_home_display_rust::adapters::zone::host(),
+    };
     if args.live && config.is_none() {
         anyhow::bail!("--live needs --config-file");
     }

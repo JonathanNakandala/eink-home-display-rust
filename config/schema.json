@@ -292,6 +292,13 @@
         "longitude": {
           "type": "number",
           "format": "double"
+        },
+        "timezone": {
+          "description": "The IANA timezone the display is in, e.g. `Europe/London` or `America/New_York`. The refresh schedule's hours\nand weekdays, the clock and date on the dashboard, and the day boundaries are all in this zone. Left out, the\nhost's own zone is used and a warning is logged: a container or cloud machine is usually UTC, which is\nwrong wherever the display is, so set it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

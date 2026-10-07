@@ -19,6 +19,10 @@ pub fn load_valid_application_config(path: &Path) -> anyhow::Result<ApplicationC
     config
         .validate()
         .with_context(|| format!("The configuration in {} is invalid", path.display()))?;
+    config
+        .location
+        .zone()
+        .with_context(|| format!("The [location] in {} is invalid", path.display()))?;
     if let Some(schedule) = &config.schedule {
         schedule
             .to_schedule()
@@ -81,6 +85,25 @@ mod tests {
         let error = load_valid_application_config(&write("schedule_bad", vec!["every day".into()])).unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("[schedule]") && error.contains("every day"), "{error}");
+    }
+
+    #[test]
+    fn a_timezone_is_checked_when_the_config_loads() {
+        let write = |name: &str, timezone: Option<&str>| {
+            let mut config = ApplicationConfig::example();
+            config.weather.enabled = false;
+            config.location.timezone = timezone.map(str::to_owned);
+            let path = std::env::temp_dir().join(format!("eink_load_test_{name}.toml"));
+            std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+            path
+        };
+        let good = load_valid_application_config(&write("zone_good", Some("America/New_York"))).unwrap();
+        assert_eq!(good.location.timezone.as_deref(), Some("America/New_York"));
+        // Optional: an older file without one still loads, and falls back to the host's at start-up.
+        assert!(load_valid_application_config(&write("zone_none", None)).unwrap().location.timezone.is_none());
+
+        let error = format!("{:#}", load_valid_application_config(&write("zone_bad", Some("Mars/Olympus"))).unwrap_err());
+        assert!(error.contains("[location]") && error.contains("Mars/Olympus"), "{error}");
     }
 
     #[test]
