@@ -83,9 +83,9 @@ inline int rssi() {
 // The query-string tail: who this is, how it is doing, and how the last wake went. The battery is left out
 // when it could not be read, so the server doesn't record a made-up value; the last wake's figures are left
 // out until there has been one.
-inline std::string query(const char *device, unsigned failed_wakes, bool battery_known, uint32_t battery_mv,
+inline std::string query(const std::string &device, unsigned failed_wakes, bool battery_known, uint32_t battery_mv,
                          int battery_pct, const char *battery_state) {
-  std::string out = std::string("&device=") + device + "&failed_wakes=" + std::to_string(failed_wakes);
+  std::string out = "&device=" + device + "&failed_wakes=" + std::to_string(failed_wakes);
   if (battery_known) {
     out += "&battery_mv=" + std::to_string(battery_mv) + "&battery_pct=" + std::to_string(battery_pct) +
            "&battery_state=" + battery_state;

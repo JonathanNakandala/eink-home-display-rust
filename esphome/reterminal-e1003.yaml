@@ -60,6 +60,11 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  # Appends the last three bytes of the chip's MAC address to the name (reterminal-e1003-a1b2c3). The MAC is
+  # burned into the chip, so the name is unique to this display and survives flashing, and the same file can be
+  # flashed to several displays without them sharing a name. The server tells displays apart by this name: it is
+  # sent with every request (`App.get_name()`), so two displays are never mixed up.
+  name_add_mac_suffix: true
   includes:
     - eink_discovery.h
     - eink_notice.h
@@ -383,7 +388,7 @@ script:
                                          ? std::string("${fallback_base}")
                                          : eink_discovery::url(id(server_ip), id(server_port), "");
                   return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
-                         eink_telemetry::query("${device_name}", id(failed_wakes), id(battery_known), id(battery_mv),
+                         eink_telemetry::query(App.get_name().str(), id(failed_wakes), id(battery_known), id(battery_mv),
                                                id(battery_pct), eink_battery::state_name(id(battery_state)));
                 capture_response: true
                 max_response_buffer_size: 1024
@@ -399,7 +404,7 @@ script:
                                          ? std::string("${fallback_base}")
                                          : eink_discovery::url(id(server_ip), id(server_port), "");
                   return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
-                         eink_telemetry::query("${device_name}", id(failed_wakes), id(battery_known), id(battery_mv),
+                         eink_telemetry::query(App.get_name().str(), id(failed_wakes), id(battery_known), id(battery_mv),
                                                id(battery_pct), eink_battery::state_name(id(battery_state)));
                 capture_response: true
                 max_response_buffer_size: 1024
@@ -471,10 +476,12 @@ script:
                 # The download is started by the component.update below, once; set_url would otherwise start
                 # it too, and a second request would run after a failed one.
                 update: false
+                # Says who is asking, so the server knows which display it sent this image to.
                 url: !lambda |-
-                  if (id(server_ip) == 0 || id(server_port) == 0)
-                    return "${fallback_base}${image_path}";
-                  return eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
+                  std::string url = (id(server_ip) == 0 || id(server_port) == 0)
+                                        ? std::string("${fallback_base}${image_path}")
+                                        : eink_discovery::url(id(server_ip), id(server_port), "${image_path}");
+                  return url + "?device=" + App.get_name().str();
             - component.update: dashboard
           else:
             # Not the server's fault, so don't go looking for it.

@@ -54,6 +54,23 @@ one network need different `instance_name`s (a clash is resolved by adding a num
 3. To update later over the air, hold the middle button (KEY1) while waking. It is read once, at boot,
    and then the device stays awake until it is reset, so you can let go.
 
+### Which display is which
+
+The device's name is `reterminal-e1003-` plus the last three bytes of its chip's MAC address, such as
+`reterminal-e1003-a1b2c3`: `name_add_mac_suffix: true` in the YAML. The MAC address is burned into the chip, so
+the name is unique to that display, survives flashing and erasing, and lets the same file go to several
+displays without them sharing a name. It is also the device's network name, so over-the-air updates and
+`esphome logs` use it (`esphome run reterminal-e1003.yaml` finds it by the base name).
+
+The device sends the name as `device=` on **every** request, `/plan`, `/refresh` and `/image`. The server keeps
+everything it knows about a display under that name (battery, signal, the last wake, and the format and size of the
+last image it was sent), and never works out who is asking from an address or from which request came before, so
+two displays asking in the same minute can't be mixed up. The name has to be at most 32 characters of letters,
+digits, `-`, `_` and `.`; anything else is ignored and the request is served as usual, just not recorded.
+
+Changing the name makes the server see a new display, and the old name will show as overdue until the server is
+restarted (it keeps them in memory only).
+
 ### What the server tells the device (`/plan`)
 
 `GET /plan` (optionally `?have=<version>`) answers with JSON, worked out from the server's refresh
