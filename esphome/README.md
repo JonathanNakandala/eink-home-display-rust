@@ -14,7 +14,7 @@ reTerminal wakes every 10 min    ->  online_image downloads it     ->  IT8951 dr
 [display]
 kind = "ReTerminalE1003"
 dither = "FloydSteinberg"   # or "Ordered"; the device does no dithering of its own
-image_format = "Bmp"        # or "Png": sent when the display has no preference; both are published
+image_format = "Bmp"        # or "Png" or "Qoi": sent when the display has no preference; all are published
 
 [server]
 bind = "[::]:8080"                     # IPv4 and IPv6; "0.0.0.0:8080" is IPv4 only
@@ -127,7 +127,7 @@ finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 The server publishes every format it can send (BMP and PNG) on each render, and `GET /image` picks one
 from the request's `Accept` header, as HTTP defines (RFC 9110, section 12):
 
-- The device lists what it can decode (`accept_formats`, default `image/bmp, image/png`). Types can carry
+- The device lists what it can decode (`accept_formats`, default `image/bmp, image/png, image/qoi`). Types can carry
   a weight to rank them: `image/png, image/bmp;q=0.5` asks for PNG first.
 - The server sends the highest-weighted format it has. Where the client has no preference (equal weights,
   a wildcard such as `*/*` or `image/*`, or no header), `display.image_format` on the server decides.
@@ -144,7 +144,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Accept: image/gif' http://<host>:80
 ```
 
 The mDNS record lists them too, for whoever is looking at a scan: `format` is what the server sends by
-default, and `formats` is everything it can send (`bmp,png`). The device doesn't use either; it asks over
+default, and `formats` is everything it can send (`bmp,png,qoi`). The device doesn't use either; it asks over
 HTTP, which is the authoritative answer. Switching `display.image_format` on the server changes the default
 with no reflash.
 
@@ -223,13 +223,17 @@ driver to do so. If a future ESPHome renames it, the build fails rather than bla
 The time comes from the clock, which survives deep sleep. After a power loss with no Wi-Fi the
 clock is unset, and the label reads `Last update failed` with no time.
 
-## BMP or PNG
+## BMP, PNG or QOI
 
 Set `display.image_format` on the server for the default; the device follows with no reflash. `Bmp` (the default) is an
 8-bit greyscale file of about 2.6 MB that the firmware streams with a trivial decoder. `Png` is a small
-fraction of that for a flat dashboard (about 140 KB for the sample), but the device has to inflate it.
-Neither has been measured on the device. To compare them, set `accept_formats` to rank one first (or set the
-server default), run each for a few days, and compare the battery voltage in `/metrics` rather than assuming.
+fraction of that for a flat dashboard (about 135 KB for a real render), but the device has to inflate it.
+`Qoi` is about 160 KB for the same render, a little larger than PNG, and decodes in one cheap pass with no inflate
+step; it has no greyscale form, so the greys are stored as RGB and the firmware reads them back as grey. ESPHome's
+`online_image` decodes all three (checked in 2026.9.1: it recognises `image/qoi`).
+None has been measured on the device. To compare them, set `accept_formats` to one type (or set the server
+default), run each for a day, and compare `eink_device_last_wake_seconds` in `/metrics` at a similar
+`eink_device_wifi_rssi_dbm`, rather than assuming.
 
 ## Timing
 

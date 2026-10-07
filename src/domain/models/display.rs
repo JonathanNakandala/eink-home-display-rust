@@ -40,16 +40,20 @@ pub enum ImageFormat {
     Bmp,
     /// 8-bit greyscale, compressed (well under 200 KB). Less to download, but the firmware has to inflate it.
     Png,
+    /// Lossless and about as small as PNG here (a little larger), but decoded in one cheap pass with no inflate
+    /// step. QOI has no greyscale form, so the greys are stored as RGB.
+    Qoi,
 }
 
 impl ImageFormat {
     /// Every format the server can produce, for announcing what it is able to serve.
-    pub const ALL: [ImageFormat; 2] = [Self::Bmp, Self::Png];
+    pub const ALL: [ImageFormat; 3] = [Self::Bmp, Self::Png, Self::Qoi];
 
     pub fn extension(self) -> &'static str {
         match self {
             Self::Bmp => "bmp",
             Self::Png => "png",
+            Self::Qoi => "qoi",
         }
     }
 
@@ -57,6 +61,7 @@ impl ImageFormat {
         match self {
             Self::Bmp => "image/bmp",
             Self::Png => "image/png",
+            Self::Qoi => "image/qoi",
         }
     }
 }

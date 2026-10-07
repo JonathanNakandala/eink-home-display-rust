@@ -85,7 +85,7 @@ fn parse_range(item: &str) -> Option<Range> {
 
 #[cfg(test)]
 mod tests {
-    use ImageFormat::{Bmp, Png};
+    use ImageFormat::{Bmp, Png, Qoi};
 
     use super::*;
 
@@ -136,6 +136,19 @@ mod tests {
         assert_eq!(pick(Some("*/*;q=0.1, image/*;q=0.5, image/png"), Bmp), [Png, Bmp]);
         // Naming a type with q=0 refuses it even though a wildcard would allow it.
         assert_eq!(pick(Some("*/*, image/png;q=0"), Png), [Bmp]);
+    }
+
+    #[test]
+    fn qoi_is_offered_like_any_other_format() {
+        let all = ImageFormat::ALL;
+        assert_eq!(acceptable(Some("image/qoi"), Bmp, &all), [Qoi]);
+        assert_eq!(acceptable(Some("image/qoi, image/png;q=0.5"), Bmp, &all), [Qoi, Png]);
+        // Equal weights: the server's preference, then the order of ALL.
+        assert_eq!(acceptable(Some("image/bmp, image/png, image/qoi"), Qoi, &all), [Qoi, Bmp, Png]);
+        assert_eq!(acceptable(Some("image/*"), Bmp, &all), [Bmp, Png, Qoi]);
+        // A device that can't decode it never gets it.
+        assert_eq!(acceptable(Some("image/bmp, image/png"), Qoi, &all), [Bmp, Png]);
+        assert_eq!(acceptable(Some("*/*, image/qoi;q=0"), Qoi, &all), [Bmp, Png]);
     }
 
     #[test]
