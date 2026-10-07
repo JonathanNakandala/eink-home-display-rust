@@ -7,6 +7,8 @@
 #include "esp_heap_caps.h"
 #include "esphome/core/log.h"
 
+#include "eink_wake.h"
+
 namespace eink_health {
 
 static const char *const TAG = "eink_health";
@@ -15,7 +17,7 @@ static const char *const TAG = "eink_health";
 // online_image allocates it in one block from PSRAM, so the largest free block is what matters,
 // not the total. `margin` leaves room for the download buffer and decoder state.
 inline bool image_buffer_fits(uint32_t width, uint32_t height, size_t margin = 96 * 1024) {
-  const size_t needed = (size_t) width * height + margin;
+  const size_t needed = eink_wake::image_bytes_needed(width, height, margin);
   const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
   if (largest >= needed)
     return true;

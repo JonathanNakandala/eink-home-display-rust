@@ -140,6 +140,32 @@ mod tests {
         assert!(late["age_seconds"].as_u64().unwrap() >= 3 * 3600);
     }
 
+    /// The query string the firmware builds, character for character (esphome/tests/report_test.cpp,
+    /// `a_full_report_has_every_field_in_a_fixed_order`). The two halves are written and tested apart, so this
+    /// is what stops a renamed field or a changed range on one side going unnoticed on the other.
+    const FIRMWARE_REPORT: &str = "&device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47\
+        &battery_state=ok&rssi=-67&last_failure=download&last_wake_s=24";
+
+    #[tokio::test]
+    async fn the_exact_report_the_firmware_builds_is_understood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
+
+        assert_eq!(reqwest::get(format!("{base}/plan?have=1{FIRMWARE_REPORT}")).await.unwrap().status(), 200);
+
+        let status = reqwest::get(format!("{base}/status")).await.unwrap().json::<serde_json::Value>().await.unwrap();
+        let device = &status["devices"][0];
+        assert_eq!(device["name"], "reterminal-e1003-a1b2c3");
+        assert_eq!(device["failed_wakes"], 2);
+        assert_eq!(device["battery_millivolts"], 3712);
+        assert_eq!(device["battery_percent"], 47);
+        assert_eq!(device["battery_state"], "ok");
+        assert_eq!(device["wifi_rssi_dbm"], -67);
+        assert_eq!(device["last_failure"], "download");
+        assert_eq!(device["last_wake_seconds"], 24);
+    }
+
     #[tokio::test]
     async fn bad_telemetry_never_stops_the_plan() {
         let tmp = tempfile::tempdir().unwrap();

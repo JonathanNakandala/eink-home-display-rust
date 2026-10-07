@@ -1,0 +1,85 @@
+#include "check.h"
+#include "../eink_report.h"
+
+using namespace eink_report;
+
+static const Battery GOOD = {true, 3712, 47, "ok"};
+static const Battery NONE_KNOWN = {false, 0, 0, "ok"};
+
+TEST(a_first_report_has_only_what_is_known) {
+  CHECK_EQ(query("kitchen", 0, NONE_KNOWN, 0, EMPTY), "&device=kitchen&failed_wakes=0");
+}
+
+// The same string is parsed by the server in src/adapters/image_server/plan.rs
+// (`the_exact_report_the_firmware_builds_is_understood`). Change one and the other test fails.
+TEST(a_full_report_has_every_field_in_a_fixed_order) {
+  Last last = EMPTY;
+  set_failure(last, "download");
+  set_wake(last, 24400);
+  CHECK_EQ(query("reterminal-e1003-a1b2c3", 2, GOOD, -67, last),
+           "&device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47&battery_state=ok"
+           "&rssi=-67&last_failure=download&last_wake_s=24");
+}
+
+TEST(a_signal_that_is_not_a_reading_is_left_out) {
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, EMPTY).find("rssi"), std::string::npos);
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 5, EMPTY).find("rssi"), std::string::npos);
+  CHECK(query("a", 0, NONE_KNOWN, -1, EMPTY).find("&rssi=-1") != std::string::npos);
+}
+
+TEST(a_battery_that_could_not_be_read_is_left_out) {
+  CHECK_EQ(query("a", 1, NONE_KNOWN, 0, EMPTY).find("battery"), std::string::npos);
+}
+
+TEST(every_failure_name_is_set_and_reported_and_none_is_absent) {
+  for (const char *name : {"wifi", "server", "download", "memory", "timeout"}) {
+    Last last = EMPTY;
+    set_failure(last, name);
+    CHECK(query("a", 1, NONE_KNOWN, 0, last).find(std::string("&last_failure=") + name) != std::string::npos);
+  }
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, EMPTY).find("last_failure"), std::string::npos);
+}
+
+TEST(an_unknown_reason_leaves_what_was_there) {
+  Last last = EMPTY;
+  set_failure(last, "server");
+  set_failure(last, "gremlins");
+  set_failure(last, "");
+  CHECK_EQ(std::string(failure_name(last.failure)), "server");
+}
+
+TEST(the_failure_names_match_what_the_server_understands) {
+  // src/application/devices.rs, FailureReason::as_str.
+  CHECK_EQ(std::string(failure_name(WIFI)), "wifi");
+  CHECK_EQ(std::string(failure_name(SERVER)), "server");
+  CHECK_EQ(std::string(failure_name(DOWNLOAD)), "download");
+  CHECK_EQ(std::string(failure_name(MEMORY)), "memory");
+  CHECK_EQ(std::string(failure_name(TIMEOUT)), "timeout");
+  CHECK(failure_name(NONE) == nullptr);
+  CHECK(failure_name(200) == nullptr);
+}
+
+TEST(a_wake_time_is_rounded_and_capped_at_what_the_server_believes) {
+  Last last = EMPTY;
+  set_wake(last, 0);
+  CHECK_EQ(last.wake_seconds, (uint16_t) 0);
+  CHECK(last.wake_known);
+  set_wake(last, 24499);
+  CHECK_EQ(last.wake_seconds, (uint16_t) 24);
+  set_wake(last, 24500);
+  CHECK_EQ(last.wake_seconds, (uint16_t) 25);
+  set_wake(last, 600000);
+  CHECK_EQ(last.wake_seconds, (uint16_t) 600);
+  set_wake(last, 4000000000u);  // no overflow of the 16-bit field
+  CHECK_EQ(last.wake_seconds, (uint16_t) 600);
+}
+
+TEST(memory_left_by_another_firmware_is_not_believed) {
+  CHECK(valid(EMPTY));
+  Last stale = EMPTY;
+  stale.magic = 0;
+  CHECK(!valid(stale));
+  Last odd = EMPTY;
+  odd.failure = 99;
+  CHECK(!valid(odd));
+}
