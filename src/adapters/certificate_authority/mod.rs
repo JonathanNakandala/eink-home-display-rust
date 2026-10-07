@@ -15,9 +15,10 @@ use anyhow::{Context, anyhow};
 use chrono::{DateTime, Duration, Utc};
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PublicKeyData, SerialNumber,
+    Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PublicKeyData, SanType, SerialNumber,
     SignatureAlgorithm,
 };
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use time::OffsetDateTime;
 use x509_parser::prelude::FromDer;
 
@@ -35,6 +36,12 @@ const AUTHORITY_YEARS: i64 = 20;
 /// A certificate starts a little before it was made, so a display whose clock is a few minutes behind
 /// doesn't find it "not yet valid".
 const BACKDATE: Duration = Duration::hours(1);
+
+/// The server's own certificate and key, for it to prove who it is to a display.
+pub struct ServerIdentity {
+    pub certificate: CertificateDer<'static>,
+    pub key: PrivateKeyDer<'static>,
+}
 
 pub struct PrivateAuthority {
     issuer: Issuer<'static, KeyPair>,
@@ -111,6 +118,53 @@ impl PrivateAuthority {
         })
     }
 
+    /// A certificate for the server, under a new key, for `names` (host names or IP addresses). It
+    /// is for proving the server's identity and nothing else, and short-lived: the key is made
+    /// fresh each time and kept only in memory, so there is nothing to protect on disk.
+    pub fn issue_server(
+        &self,
+        names: &[String],
+        now: DateTime<Utc>,
+        not_after: DateTime<Utc>,
+    ) -> anyhow::Result<ServerIdentity> {
+        if names.is_empty() {
+            return Err(anyhow!("A server certificate needs at least one name"));
+        }
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+            .context("Failed to generate the server's key")?;
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "E-ink home display server");
+        params.subject_alt_names = names
+            .iter()
+            .map(|name| match name.parse::<std::net::IpAddr>() {
+                Ok(address) => Ok(SanType::IpAddress(address)),
+                Err(_) if is_host_name(name) => name
+                    .as_str()
+                    .try_into()
+                    .map(SanType::DnsName)
+                    .map_err(|e| anyhow!("{name:?} is not a usable host name: {e}")),
+                Err(_) => Err(anyhow!("{name:?} is not a usable host name")),
+            })
+            .collect::<anyhow::Result<_>>()?;
+        params.is_ca = IsCa::ExplicitNoCa;
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        params.not_before = to_time(now - BACKDATE)?;
+        params.not_after = to_time(not_after)?;
+        params.serial_number = Some(serial()?);
+        params.use_authority_key_identifier_extension = true;
+        let certificate = params
+            .signed_by(&key, &self.issuer)
+            .context("Failed to sign the server's certificate")?;
+        Ok(ServerIdentity {
+            certificate: certificate.der().clone(),
+            key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+        })
+    }
+
     /// When the authority's certificate ends, after which nothing it signed is trusted.
     pub fn not_after(&self) -> DateTime<Utc> {
         self.not_after
@@ -174,6 +228,22 @@ impl CertificateAuthority for PrivateAuthority {
             not_after,
         })
     }
+}
+
+/// A plain host name: dot-separated labels of letters, digits and hyphens (and underscores, which
+/// service names use), none empty, none starting or ending with a hyphen, no wildcard. The certificate
+/// library takes anything that is ASCII, a space included.
+fn is_host_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 253
+        && name.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        })
 }
 
 fn to_time(at: DateTime<Utc>) -> anyhow::Result<OffsetDateTime> {

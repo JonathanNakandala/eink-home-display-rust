@@ -11,7 +11,7 @@ use anyhow::{Context, bail};
 use mdns_sd::{DaemonEvent, IfKind, IfPredicate, ServiceDaemon, ServiceInfo};
 
 use super::ServerSettings;
-use super::listen::Families;
+use crate::adapters::listen::Families;
 use crate::domain::models::display::ImageFormat;
 
 const SERVICE_SUBTYPE: &str = "_eink-display._sub._http._tcp.local.";

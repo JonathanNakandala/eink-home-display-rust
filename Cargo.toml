@@ -23,7 +23,7 @@ serde_valid = { version = "3", features = ["toml"] }
 tempfile = "3.10.1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6.2", features = ["trace"] }
+tower-http = { version = "0.6", features = ["timeout", "trace"] }
 url = "2"
 futures-util = "0.3"
 trait-variant = "0.1.2"
@@ -48,11 +48,18 @@ time = "0.3"
 getrandom = "0.4.3"
 base64 = "0.23.1"
 rustls-pki-types = "1.15.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1.21", features = ["server", "http1", "tokio", "service"] }
+arc-swap = "1.9.2"
+yasna = "0.6"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 httpmock = "0.8"
 speculoos = "0.13"
+cms = "0.2.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

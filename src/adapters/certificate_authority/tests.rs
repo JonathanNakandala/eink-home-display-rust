@@ -364,6 +364,114 @@ fn the_authority_may_sign_displays_but_not_further_authorities() {
     );
 }
 
+fn names() -> Vec<String> {
+    ["eink.local", "192.168.1.5", "::1"]
+        .map(str::to_owned)
+        .to_vec()
+}
+
+#[test]
+fn the_servers_certificate_names_the_server_and_is_for_proving_it_to_a_display() {
+    let authority = authority();
+    let identity = authority
+        .issue_server(&names(), now(), now() + Duration::days(90))
+        .unwrap();
+    let (_, cert) = X509Certificate::from_der(&identity.certificate).unwrap();
+    assert!(!cert.is_ca());
+    let alt = cert.subject_alternative_name().unwrap().unwrap().value;
+    let found: Vec<String> = alt
+        .general_names
+        .iter()
+        .map(|n| match n {
+            GeneralName::DNSName(name) => name.to_string(),
+            GeneralName::IPAddress(bytes) => format!("{bytes:?}"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(found[0], "eink.local");
+    assert_eq!(found[1], "[192, 168, 1, 5]");
+    assert_eq!(found.len(), 3, "{found:?}");
+    let eku = cert.extended_key_usage().unwrap().unwrap().value;
+    assert!(eku.server_auth && !eku.client_auth && !eku.any);
+    let usage = cert.key_usage().unwrap().unwrap().value;
+    assert!(usage.digital_signature() && !usage.key_cert_sign());
+    assert_eq!(
+        cert.validity().not_after.timestamp(),
+        (now() + Duration::days(90)).timestamp()
+    );
+}
+
+#[test]
+fn the_servers_certificate_is_signed_by_the_authority_and_matches_its_key() {
+    let authority = authority();
+    let identity = authority
+        .issue_server(&names(), now(), now() + Duration::days(90))
+        .unwrap();
+    let (_, ca) = X509Certificate::from_der(authority.certificate()).unwrap();
+    let (_, cert) = X509Certificate::from_der(&identity.certificate).unwrap();
+    cert.verify_signature(Some(ca.public_key())).unwrap();
+
+    let rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) = &identity.key else {
+        panic!("expected a PKCS #8 key");
+    };
+    let key = KeyPair::from_pkcs8_der_and_sign_algo(pkcs8, &PKCS_ECDSA_P256_SHA256).unwrap();
+    assert_eq!(
+        cert.public_key().raw,
+        key.subject_public_key_info().as_slice()
+    );
+}
+
+#[test]
+fn each_server_certificate_has_a_key_of_its_own() {
+    let authority = authority();
+    let one = authority
+        .issue_server(&names(), now(), now() + Duration::days(90))
+        .unwrap();
+    let two = authority
+        .issue_server(&names(), now(), now() + Duration::days(90))
+        .unwrap();
+    assert_ne!(one.certificate.as_ref(), two.certificate.as_ref());
+}
+
+#[test]
+fn a_server_certificate_needs_usable_names() {
+    let authority = authority();
+    let long = "a".repeat(64);
+    for bad in [
+        vec![],
+        vec!["has space".to_owned()],
+        vec!["bad\u{e9}name".to_owned()],
+        vec!["*.example.com".to_owned()],
+        vec!["-leading.example".to_owned()],
+        vec!["trailing-.example".to_owned()],
+        vec!["double..dot".to_owned()],
+        vec![format!("{long}.example")],
+        // One good name does not excuse a bad one.
+        vec!["fine.local".to_owned(), "not fine".to_owned()],
+    ] {
+        assert!(
+            authority
+                .issue_server(&bad, now(), now() + Duration::days(90))
+                .is_err(),
+            "{bad:?}"
+        );
+    }
+    for good in [
+        "eink",
+        "eink.local",
+        "my-host.example.com",
+        "_svc.local",
+        "localhost",
+    ] {
+        assert!(
+            authority
+                .issue_server(&[good.to_owned()], now(), now() + Duration::days(90))
+                .is_ok(),
+            "{good}"
+        );
+    }
+}
+
 mod saved {
     use super::*;
 
