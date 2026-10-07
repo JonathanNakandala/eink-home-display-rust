@@ -9,7 +9,7 @@
 
 use std::fmt::Write;
 
-use crate::application::devices::BatteryState;
+use crate::application::devices::{BatteryState, FailureReason};
 use crate::application::status::{Health, Status};
 use crate::domain::models::render_report::SourceState;
 
@@ -84,10 +84,35 @@ pub fn render(status: &Status) -> String {
         for device in &status.devices {
             let _ = writeln!(out, "eink_device_overdue{{device=\"{}\"}} {}", escape(&device.name), u8::from(device.overdue));
         }
-        gauge(&mut out, "eink_device_failed_wakes", "Wakes in a row that could not reach the server.");
+        gauge(&mut out, "eink_device_failed_wakes", "Wakes in a row that failed, for any reason.");
         for device in &status.devices {
             if let Some(failed) = device.failed_wakes {
                 let _ = writeln!(out, "eink_device_failed_wakes{{device=\"{}\"}} {failed}", escape(&device.name));
+            }
+        }
+        gauge(&mut out, "eink_device_wifi_rssi_dbm", "The display's Wi-Fi signal strength at its last check-in.");
+        for device in &status.devices {
+            if let Some(dbm) = device.wifi_rssi_dbm {
+                let _ = writeln!(out, "eink_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}", escape(&device.name));
+            }
+        }
+        gauge(&mut out, "eink_device_last_wake_seconds", "How long the display's previous wake was awake.");
+        for device in &status.devices {
+            if let Some(seconds) = device.last_wake_seconds {
+                let _ = writeln!(out, "eink_device_last_wake_seconds{{device=\"{}\"}} {seconds}", escape(&device.name));
+            }
+        }
+        gauge(&mut out, "eink_device_last_failure", "1 for why the display's last failed wake failed (none if it didn't), 0 for the others.");
+        for device in &status.devices {
+            let name = escape(&device.name);
+            let _ = writeln!(out, "eink_device_last_failure{{device=\"{name}\",reason=\"none\"}} {}", u8::from(device.last_failure.is_none()));
+            for reason in FailureReason::ALL {
+                let _ = writeln!(
+                    out,
+                    "eink_device_last_failure{{device=\"{name}\",reason=\"{}\"}} {}",
+                    reason.as_str(),
+                    u8::from(device.last_failure == Some(reason))
+                );
             }
         }
         gauge(&mut out, "eink_device_battery_volts", "The display's battery voltage.");
@@ -157,6 +182,9 @@ mod tests {
                 battery_percent: Some(47),
                 battery_state: Some(BatteryState::Low),
                 failed_wakes: Some(2),
+                wifi_rssi_dbm: Some(-71),
+                last_failure: Some(FailureReason::Download),
+                last_wake_seconds: Some(24),
             }],
             next_render: None,
             schedule: Vec::new(),
@@ -175,6 +203,11 @@ mod tests {
             "eink_uptime_seconds 3600",
             "eink_device_overdue{device=\"kitchen\"} 1",
             "eink_device_failed_wakes{device=\"kitchen\"} 2",
+            "eink_device_wifi_rssi_dbm{device=\"kitchen\"} -71",
+            "eink_device_last_wake_seconds{device=\"kitchen\"} 24",
+            "eink_device_last_failure{device=\"kitchen\",reason=\"download\"} 1",
+            "eink_device_last_failure{device=\"kitchen\",reason=\"wifi\"} 0",
+            "eink_device_last_failure{device=\"kitchen\",reason=\"none\"} 0",
             "eink_device_battery_volts{device=\"kitchen\"} 3.712",
             "eink_device_battery_ratio{device=\"kitchen\"} 0.47",
             "eink_device_battery_state{device=\"kitchen\",state=\"low\"} 1",
