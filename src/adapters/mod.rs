@@ -6,6 +6,7 @@ pub mod http;
 pub mod image_display_service;
 pub mod image_repository;
 pub mod image_server;
+pub mod pairing_store;
 pub mod published_images;
 pub mod stop_points;
 pub mod train_schedule;
