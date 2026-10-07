@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     let start = match &args.start {
         Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").context("Invalid --start date")?,
-        None => chrono::Local::now().date_naive(),
+        None => chrono::Utc::now().with_timezone(&eink_home_display_rust::adapters::zone::host()).date_naive(),
     };
 
     let app = QuietTimesApplication::new(

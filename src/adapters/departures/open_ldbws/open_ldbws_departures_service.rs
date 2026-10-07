@@ -1,4 +1,5 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 use reqwest::header::HeaderValue;
 use reqwest::Client;
 use secrecy::{ExposeSecret, SecretString};
@@ -34,7 +35,7 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
     async fn get_departures(
         &self,
         num_rows: u8,
-        now: DateTime<Local>,
+        now: DateTime<Tz>,
     ) -> Result<Departures, SourceError> {
         let url = format!("{}/{}", self.host_url, self.from);
 
@@ -69,7 +70,7 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
 
 /// Entries without a scheduled departure time are arrivals-only (the board
 /// covers both), and aren't relevant to a departures listing.
-fn to_domain_service(service: Service, now: DateTime<Local>) -> Option<DepartureService> {
+fn to_domain_service(service: Service, now: DateTime<Tz>) -> Option<DepartureService> {
     let std = service.std?;
     let destination = service
         .destination

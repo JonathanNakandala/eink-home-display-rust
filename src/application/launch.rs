@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 
 use crate::application::plan::render_due;
 use crate::domain::models::display::ImageFormat;
@@ -22,12 +23,12 @@ use crate::domain::services::render_observer::RenderObserver;
 
 /// When to make the first render, or None to wait for the first scheduled slot.
 pub fn first_render_at(
-    now: DateTime<Local>,
+    now: DateTime<Tz>,
     skip: bool,
     image_is_current: bool,
-    last_attempt: Option<DateTime<Local>>,
+    last_attempt: Option<DateTime<Utc>>,
     cooldown: Duration,
-) -> Option<DateTime<Local>> {
+) -> Option<DateTime<Tz>> {
     if skip || image_is_current {
         return None;
     }
@@ -35,7 +36,7 @@ pub fn first_render_at(
     // corrected since). Counted from there, the cooldown would hold off every render until then, so it
     // is counted from now instead.
     let earliest = last_attempt.and_then(|at| {
-        chrono::Duration::from_std(cooldown).ok().and_then(|c| at.min(now).checked_add_signed(c))
+        chrono::Duration::from_std(cooldown).ok().and_then(|c| at.with_timezone(&now.timezone()).min(now).checked_add_signed(c))
     });
     Some(earliest.map_or(now, |earliest| earliest.max(now)))
 }
@@ -45,14 +46,14 @@ pub async fn served_image_is_current(
     images: &dyn PublishedImages,
     format: ImageFormat,
     schedule: &Schedule,
-    now: DateTime<Local>,
+    now: DateTime<Tz>,
 ) -> bool {
     images
         .published_at(format)
         .await
         .ok()
         .flatten()
-        .and_then(|rendered| render_due(now, rendered, schedule).ok())
+        .and_then(|rendered| render_due(now, rendered.with_timezone(&now.timezone()), schedule).ok())
         .is_some_and(|due| !due)
 }
 
@@ -76,19 +77,20 @@ impl RenderObserver for AttemptMarker {
         }
     }
 
-    fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {}
+    fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {}
 
-    fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {}
+    fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {}
 }
 
 /// When the last render was started, from the marker; None if there is none or it can't be read.
-pub fn last_attempt(marker: &Path) -> Option<DateTime<Local>> {
+pub fn last_attempt(marker: &Path) -> Option<DateTime<Utc>> {
     let text = std::fs::read_to_string(marker).ok()?;
-    DateTime::parse_from_rfc3339(text.trim()).ok().map(|at| at.with_timezone(&Local))
+    DateTime::parse_from_rfc3339(text.trim()).ok().map(|at| at.with_timezone(&Utc))
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
@@ -96,8 +98,13 @@ mod tests {
 
     const COOLDOWN: Duration = Duration::from_secs(120);
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    }
+
+    /// The same moment as an instant, which is how the marker and the published image are read.
+    fn utc(h: u32, m: u32, s: u32) -> DateTime<Utc> {
+        at(h, m, s).with_timezone(&Utc)
     }
 
     #[test]
@@ -107,26 +114,26 @@ mod tests {
 
     #[test]
     fn waits_out_the_cooldown_after_a_recent_attempt() {
-        let recent = Some(at(11, 59, 30));
+        let recent = Some(utc(11, 59, 30));
         assert_eq!(first_render_at(at(12, 0, 0), false, false, recent, COOLDOWN), Some(at(12, 1, 30)));
     }
 
     #[test]
     fn an_attempt_in_the_future_counts_from_now_not_from_then() {
         // Written while the clock was a day ahead: the render must not wait a day for it.
-        let future = Some(at(12, 0, 0) + chrono::Duration::days(1));
+        let future = Some(utc(12, 0, 0) + chrono::Duration::days(1));
         assert_eq!(first_render_at(at(12, 0, 0), false, false, future, COOLDOWN), Some(at(12, 2, 0)));
     }
 
     #[test]
     fn a_cooldown_too_large_to_add_is_ignored_not_a_panic() {
         let huge = Duration::from_secs(u64::MAX / 2);
-        assert_eq!(first_render_at(at(12, 0, 0), false, false, Some(at(11, 59, 0)), huge), Some(at(12, 0, 0)));
+        assert_eq!(first_render_at(at(12, 0, 0), false, false, Some(utc(11, 59, 0)), huge), Some(at(12, 0, 0)));
     }
 
     #[test]
     fn an_old_attempt_does_not_delay_anything() {
-        let old = Some(at(11, 0, 0));
+        let old = Some(utc(11, 0, 0));
         assert_eq!(first_render_at(at(12, 0, 0), false, false, old, COOLDOWN), Some(at(12, 0, 0)));
     }
 
@@ -147,11 +154,11 @@ mod tests {
         // The clock, not the file's modification time, says when the attempt was.
         let clock = FixedClock::at(at(9, 30, 0));
         AttemptMarker::new(marker.clone(), clock.clone()).render_started();
-        assert_eq!(last_attempt(&marker), Some(at(9, 30, 0)));
+        assert_eq!(last_attempt(&marker), Some(utc(9, 30, 0)));
 
         clock.set(at(9, 45, 0));
         AttemptMarker::new(marker.clone(), clock).render_started();
-        assert_eq!(last_attempt(&marker), Some(at(9, 45, 0)));
+        assert_eq!(last_attempt(&marker), Some(utc(9, 45, 0)));
     }
 
     #[test]
@@ -167,7 +174,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let images = DirectoryImages::new(tmp.path());
         let schedule = Schedule::parse_every("1h").unwrap();
-        let now = Local::now();
+        let now = chrono::Utc::now().with_timezone(&London);
         assert!(!served_image_is_current(&images, ImageFormat::Bmp, &schedule, now).await);
 
         images.publish(ImageFormat::Bmp, b"x").await.unwrap();

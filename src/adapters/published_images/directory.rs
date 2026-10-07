@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use async_trait::async_trait;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Utc};
 
 use crate::domain::models::display::ImageFormat;
 use crate::domain::services::published_images::PublishedImages;
@@ -42,10 +42,10 @@ impl PublishedImages for DirectoryImages {
         Ok(())
     }
 
-    async fn published_at(&self, format: ImageFormat) -> anyhow::Result<Option<DateTime<Local>>> {
+    async fn published_at(&self, format: ImageFormat) -> anyhow::Result<Option<DateTime<Utc>>> {
         let path = self.path(format);
         match tokio::fs::metadata(&path).await.and_then(|metadata| metadata.modified()) {
-            Ok(modified) => Ok(Some(DateTime::<Local>::from(modified))),
+            Ok(modified) => Ok(Some(DateTime::<Utc>::from(modified))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e).with_context(|| format!("Failed to inspect {}", path.display())),
         }
@@ -75,7 +75,7 @@ mod tests {
         images.publish(ImageFormat::Bmp, &[1, 2, 3]).await.unwrap();
         assert_eq!(images.read(ImageFormat::Bmp).await.unwrap().unwrap(), [1, 2, 3]);
         let at = images.published_at(ImageFormat::Bmp).await.unwrap().unwrap();
-        assert!((Local::now() - at).num_seconds().abs() < 5);
+        assert!((Utc::now() - at).num_seconds().abs() < 5);
         // Another format is its own file.
         assert!(images.published_at(ImageFormat::Png).await.unwrap().is_none());
     }

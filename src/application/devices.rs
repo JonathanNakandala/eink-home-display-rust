@@ -15,7 +15,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration};
+use chrono_tz::Tz;
 use serde::Serialize;
 
 use crate::domain::models::device_id::DeviceId;
@@ -137,10 +138,10 @@ impl RawTelemetry {
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceStatus {
     pub name: DeviceId,
-    pub last_seen: DateTime<Local>,
+    pub last_seen: DateTime<Tz>,
     pub age_seconds: u64,
     /// When the display was told to come back.
-    pub expected_by: DateTime<Local>,
+    pub expected_by: DateTime<Tz>,
     /// Later than it was told to be, plus the grace period.
     pub overdue: bool,
     pub battery_millivolts: Option<u32>,
@@ -162,7 +163,7 @@ pub struct DeviceStatus {
 pub struct DeliveryStatus {
     pub format: ImageFormat,
     pub bytes: u64,
-    pub at: DateTime<Local>,
+    pub at: DateTime<Tz>,
     pub age_seconds: u64,
 }
 
@@ -170,12 +171,12 @@ pub struct DeliveryStatus {
 struct Delivery {
     format: ImageFormat,
     bytes: u64,
-    at: DateTime<Local>,
+    at: DateTime<Tz>,
 }
 
 struct Record {
-    last_seen: DateTime<Local>,
-    expected_by: DateTime<Local>,
+    last_seen: DateTime<Tz>,
+    expected_by: DateTime<Tz>,
     telemetry: Telemetry,
     /// What the display was last sent. Kept when it checks in again, which replaces the rest.
     delivery: Option<Delivery>,
@@ -201,7 +202,7 @@ impl DeviceBoard {
     /// Notes a check-in at `now`, from a display just told to come back in `next_seconds`.
     /// Logs what an operator would want to hear about: a battery getting worse, or a display
     /// that returns after going quiet.
-    pub fn record(&self, now: DateTime<Local>, telemetry: Telemetry, next_seconds: u64) {
+    pub fn record(&self, now: DateTime<Tz>, telemetry: Telemetry, next_seconds: u64) {
         let expected_by = Duration::try_seconds(next_seconds.try_into().unwrap_or(i64::MAX))
             .and_then(|wait| now.checked_add_signed(wait))
             .unwrap_or(now);
@@ -252,14 +253,14 @@ impl DeviceBoard {
     /// Notes that `device` was sent an image of `bytes` in `format` at `now`. Only for a display that has
     /// checked in: a stray request can't add a device (the display always asks `/plan` first), so the limit
     /// on how many are tracked holds here too.
-    pub fn image_served(&self, device: &DeviceId, format: ImageFormat, bytes: u64, now: DateTime<Local>) {
+    pub fn image_served(&self, device: &DeviceId, format: ImageFormat, bytes: u64, now: DateTime<Tz>) {
         match self.devices().get_mut(device) {
             Some(record) => record.delivery = Some(Delivery { format, bytes, at: now }),
             None => log::debug!("{device} fetched the image without checking in first"),
         }
     }
 
-    pub fn snapshot(&self, now: DateTime<Local>) -> Vec<DeviceStatus> {
+    pub fn snapshot(&self, now: DateTime<Tz>) -> Vec<DeviceStatus> {
         self.devices()
             .iter()
             .map(|(name, record)| DeviceStatus {
@@ -303,12 +304,13 @@ fn describe_battery(telemetry: &Telemetry) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
 
-    fn at(h: u32, m: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap()
+    fn at(h: u32, m: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap()
     }
 
     fn raw(pairs: &[(&str, &str)]) -> RawTelemetry {

@@ -340,6 +340,7 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use crate::domain::models::DateInfo;
     use crate::domain::models::display::Palette;
     use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
@@ -357,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_fresh_dashboard_carries_no_staleness_markers() {
-        let html = html_for(&GlanceData::sample(chrono::Local::now()));
+        let html = html_for(&GlanceData::sample(chrono::Utc::now().with_timezone(&London)));
         assert!(!html.contains(" ago<"), "no age label expected");
         assert!(!html.contains("Unavailable"));
         assert!(!html.contains("Weather unavailable"));
@@ -366,7 +367,7 @@ mod tests {
 
     #[test]
     fn degraded_data_shows_ages_and_unavailable_parts() {
-        let html = html_for(&GlanceData::sample_degraded(chrono::Local::now()));
+        let html = html_for(&GlanceData::sample_degraded(chrono::Utc::now().with_timezone(&London)));
         assert!(html.contains("8 min ago</span>"));
         assert!(html.contains("Updated 40 min ago"));
         assert!(html.contains(">Unavailable: service error</div>"));
@@ -374,13 +375,13 @@ mod tests {
 
     #[test]
     fn unavailable_weather_keeps_its_column_and_says_so() {
-        let data = GlanceData::new(None, vec![], DateInfo::new(chrono::Local::now())).with_weather_unavailable("timed out");
+        let data = GlanceData::new(None, vec![], DateInfo::new(chrono::Utc::now().with_timezone(&London))).with_weather_unavailable("timed out");
         let html = html_for(&data);
         assert!(html.contains("Weather unavailable: timed out"));
         assert!(html.contains("container has-weather"));
 
         // Weather that is simply switched off leaves no column and no message.
-        let off = html_for(&GlanceData::new(None, vec![], DateInfo::new(chrono::Local::now())));
+        let off = html_for(&GlanceData::new(None, vec![], DateInfo::new(chrono::Utc::now().with_timezone(&London))));
         assert!(!off.contains("Weather unavailable"));
         assert!(!off.contains("container has-weather"));
     }
@@ -455,7 +456,7 @@ mod tests {
         let data = GlanceData::new(
             Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
             vec![],
-            DateInfo::new(chrono::Local::now()));
+            DateInfo::new(chrono::Utc::now().with_timezone(&London)));
 
         let image = ChromeRenderDisplayImageGenerator::new(
             std::env::temp_dir().join("eink_test_chrome"),
@@ -474,7 +475,7 @@ mod tests {
         GlanceData::new(
             Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
             vec![],
-            DateInfo::new(chrono::Local::now()),
+            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
         )
     }
 

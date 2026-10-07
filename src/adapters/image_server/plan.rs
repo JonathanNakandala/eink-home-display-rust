@@ -73,6 +73,7 @@ async fn plan_response(published: &Published, have: Option<u32>, telemetry: Opti
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use super::super::testing::{publish, set_age, start};
     use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
@@ -127,14 +128,14 @@ mod tests {
         use super::super::testing::start_with_clock;
 
         let tmp = tempfile::tempdir().unwrap();
-        let clock = FixedClock::at(chrono::Local::now());
+        let clock = FixedClock::at(chrono::Utc::now().with_timezone(&London));
         let (base, _) = start_with_clock(tmp.path().to_path_buf(), ImageFormat::Bmp, clock.clone()).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         let plan = || async { reqwest::get(format!("{base}/plan")).await.unwrap().json::<serde_json::Value>().await.unwrap() };
         assert_eq!(plan().await["stale"], false);
 
         // Three hours on, with an hourly schedule and no render since, nothing about the file changed.
-        clock.set(chrono::Local::now() + chrono::Duration::hours(3));
+        clock.set(chrono::Utc::now().with_timezone(&London) + chrono::Duration::hours(3));
         let late = plan().await;
         assert_eq!(late["stale"], true);
         assert!(late["age_seconds"].as_u64().unwrap() >= 3 * 3600);

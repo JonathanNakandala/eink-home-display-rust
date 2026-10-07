@@ -4,7 +4,8 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 use serde::Serialize;
 
 use crate::domain::models::schedule::Schedule;
@@ -41,7 +42,7 @@ pub struct Plan {
 
 /// The version of an image rendered at `rendered_at`: its Unix time in seconds, which fits a
 /// 32-bit value until 2106.
-pub fn version_of(rendered_at: DateTime<Local>) -> u32 {
+pub fn version_of(rendered_at: DateTime<Tz>) -> u32 {
     u32::try_from(rendered_at.timestamp()).unwrap_or(u32::MAX)
 }
 
@@ -49,19 +50,19 @@ pub fn version_of(rendered_at: DateTime<Local>) -> u32 {
 /// rendered before the clock was set back, so its real age is unknown and it counts as rendered just now.
 /// Taken at its word, the next render would be due that much later than any that follows, and a display
 /// would be sent to sleep until then.
-fn believable(rendered_at: DateTime<Local>, now: DateTime<Local>) -> DateTime<Local> {
+fn believable(rendered_at: DateTime<Tz>, now: DateTime<Tz>) -> DateTime<Tz> {
     rendered_at.min(now)
 }
 
 /// Whether the render that should follow the one served has come due, so a new one is wanted.
-pub fn render_due(now: DateTime<Local>, rendered_at: DateTime<Local>, schedule: &Schedule) -> anyhow::Result<bool> {
+pub fn render_due(now: DateTime<Tz>, rendered_at: DateTime<Tz>, schedule: &Schedule) -> anyhow::Result<bool> {
     Ok(now >= schedule.next_after(believable(rendered_at, now))?)
 }
 
 /// Whether a render that was due after `rendered_at` is more than `grace` late.
 pub fn is_stale(
-    now: DateTime<Local>,
-    rendered_at: DateTime<Local>,
+    now: DateTime<Tz>,
+    rendered_at: DateTime<Tz>,
     schedule: &Schedule,
     grace: Duration,
 ) -> anyhow::Result<bool> {
@@ -71,8 +72,8 @@ pub fn is_stale(
 
 /// `rendered_at` is when the served image was written; `have` is the version the display reports.
 pub fn compute(
-    now: DateTime<Local>,
-    rendered_at: DateTime<Local>,
+    now: DateTime<Tz>,
+    rendered_at: DateTime<Tz>,
     schedule: &Schedule,
     timing: PlanTiming,
     have: Option<u32>,
@@ -103,6 +104,7 @@ pub fn compute(
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
@@ -110,11 +112,11 @@ mod tests {
     const TIMING: PlanTiming =
         PlanTiming { wake_delay: Duration::from_secs(30), stale_grace: Duration::from_secs(300) };
 
-    fn at(day: u32, h: u32, m: u32, s: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, day, h, m, s).unwrap()
+    fn at(day: u32, h: u32, m: u32, s: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, day, h, m, s).unwrap()
     }
 
-    fn plan(schedule: &str, rendered: DateTime<Local>, now: DateTime<Local>) -> Plan {
+    fn plan(schedule: &str, rendered: DateTime<Tz>, now: DateTime<Tz>) -> Plan {
         let schedule = Schedule::parse_cron(schedule).unwrap();
         compute(now, rendered, &schedule, TIMING, None).unwrap()
     }

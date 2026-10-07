@@ -1,7 +1,8 @@
 use std::future::Future;
 use std::time::Duration;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 use tokio::sync::Notify;
 
 pub use crate::domain::models::schedule::Schedule;
@@ -14,12 +15,12 @@ pub const PERIODIC_IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// What the schedule means, for a person to check against what they meant: each expression in words,
 /// how many refreshes each of the next days gets (the number that decides battery life), and the next few.
-pub fn schedule_summary(schedule: &Schedule, now: DateTime<Local>) -> Vec<String> {
+pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
     let mut lines = vec!["Schedule:".to_owned()];
     lines.extend(schedule.describe().into_iter().map(|line| format!("  {line}")));
     let days: Vec<String> = (0..7)
         .filter_map(|offset| now.date_naive().checked_add_days(chrono::Days::new(offset)))
-        .map(|day| match schedule.runs_on(day) {
+        .map(|day| match schedule.runs_on(day, now.timezone()) {
             Ok(runs) => format!("{} {runs}", day.format("%a")),
             Err(e) => format!("{} ({e:#})", day.format("%a")),
         })
@@ -35,7 +36,7 @@ pub fn schedule_summary(schedule: &Schedule, now: DateTime<Local>) -> Vec<String
     lines
 }
 
-pub fn log_schedule(schedule: &Schedule, now: DateTime<Local>) {
+pub fn log_schedule(schedule: &Schedule, now: DateTime<Tz>) {
     for line in schedule_summary(schedule, now) {
         log::info!("{line}");
     }
@@ -75,7 +76,7 @@ where
 /// Set back, the next run is planned again from the new time: kept, it would be hours or days away.
 pub async fn run_periodically_from<F, Fut>(
     schedule: &Schedule,
-    first: Option<DateTime<Local>>,
+    first: Option<DateTime<Tz>>,
     wake: &Notify,
     clock: &dyn Clock,
     shutdown: impl Future<Output = ()>,
@@ -166,6 +167,7 @@ pub async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
@@ -173,7 +175,7 @@ mod tests {
         use chrono::TimeZone;
         let schedule = Schedule::parse_crons(["* 7-8 * * 1-5", "0 8-21 * * 6,0"]).unwrap();
         // Monday 2026-06-15, 06:30.
-        let lines = schedule_summary(&schedule, Local.with_ymd_and_hms(2026, 6, 15, 6, 30, 0).unwrap());
+        let lines = schedule_summary(&schedule, London.with_ymd_and_hms(2026, 6, 15, 6, 30, 0).unwrap());
         assert_eq!(
             lines,
             [
@@ -205,7 +207,7 @@ mod tests {
         run_periodically(
             &schedule,
             true,
-            &SystemClock,
+            &SystemClock::new(London),
             tokio::time::sleep(Duration::from_millis(250)),
             move || {
                 let n = counter.fetch_add(1, Ordering::SeqCst);
@@ -233,7 +235,7 @@ mod tests {
             waker.notify_one();
         });
 
-        run_periodically_from(&schedule, None, &wake, &SystemClock, tokio::time::sleep(Duration::from_millis(300)), move || {
+        run_periodically_from(&schedule, None, &wake, &SystemClock::new(London), tokio::time::sleep(Duration::from_millis(300)), move || {
             counter.fetch_add(1, Ordering::SeqCst);
             async { Ok(()) }
         })
@@ -252,7 +254,7 @@ mod tests {
         run_periodically(
             &schedule,
             false,
-            &SystemClock,
+            &SystemClock::new(London),
             tokio::time::sleep(Duration::from_millis(50)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -275,7 +277,7 @@ mod tests {
         run_periodically(
             &schedule,
             true,
-            &SystemClock,
+            &SystemClock::new(London),
             tokio::time::sleep(Duration::from_millis(100)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -292,19 +294,19 @@ mod tests {
         assert!(begun.elapsed() < Duration::from_secs(5));
     }
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
     }
 
     /// A clock that follows tokio's (pausable) time and can be set forward or back, as NTP would.
     struct SteppedClock {
-        start: DateTime<Local>,
+        start: DateTime<Tz>,
         origin: tokio::time::Instant,
         offset: Mutex<chrono::Duration>,
     }
 
     impl SteppedClock {
-        fn new(start: DateTime<Local>) -> Self {
+        fn new(start: DateTime<Tz>) -> Self {
             Self { start, origin: tokio::time::Instant::now(), offset: Mutex::new(chrono::Duration::zero()) }
         }
 
@@ -314,7 +316,7 @@ mod tests {
     }
 
     impl Clock for SteppedClock {
-        fn now(&self) -> DateTime<Local> {
+        fn now(&self) -> DateTime<Tz> {
             self.start + chrono::Duration::from_std(self.origin.elapsed()).unwrap() + *self.offset.lock().unwrap()
         }
     }

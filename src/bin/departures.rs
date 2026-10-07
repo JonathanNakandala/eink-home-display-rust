@@ -10,6 +10,7 @@ async fn main() -> Result<()> {
     bootstrap::init_logging("debug");
 
     let args = DeparturesArgs::parse();
+    let zone = eink_home_display_rust::adapters::zone::host();
 
     let config = bootstrap::load_application_config(&args.config_file)?;
 
@@ -33,7 +34,7 @@ async fn main() -> Result<()> {
             continue;
         };
         let rows = args.rows.unwrap_or(board_config.rows);
-        match board.fetch(rows, chrono::Local::now()).await {
+        match board.fetch(rows, chrono::Utc::now().with_timezone(&zone)).await {
             Ok(departures) => print_board(&board_config.name, &departures),
             Err(e) => println!("\n{}\n  error: {e:#}", board_config.name),
         }

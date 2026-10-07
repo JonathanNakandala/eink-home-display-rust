@@ -7,7 +7,8 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime};
+use chrono_tz::Tz;
 use tokio::sync::{watch, Notify};
 
 use crate::domain::models::render_report::RenderReport;
@@ -71,11 +72,11 @@ impl RenderObserver for RefreshControl {
         *self.last_started.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
     }
 
-    fn render_succeeded(&self, _at: DateTime<Local>, _report: &RenderReport) {
+    fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {
         self.render_finished();
     }
 
-    fn render_failed(&self, _at: DateTime<Local>, _error: &anyhow::Error) {
+    fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {
         self.render_finished();
     }
 }

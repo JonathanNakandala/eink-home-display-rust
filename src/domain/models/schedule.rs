@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
-use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, NaiveDate, TimeZone};
+use chrono_tz::Tz;
 use croner::Cron;
 
 /// Counting a day's runs stops here, so a schedule with a tiny interval can't make it loop for ages.
@@ -45,12 +46,12 @@ impl Schedule {
     }
 
     /// The first time strictly after `after` at which a run is due.
-    pub fn next_after(&self, after: DateTime<Local>) -> anyhow::Result<DateTime<Local>> {
+    pub fn next_after(&self, after: DateTime<Tz>) -> anyhow::Result<DateTime<Tz>> {
         match self {
             Self::Cron(crons) => {
                 // One that has nothing left to give (a date that never comes) doesn't stop the others.
                 let mut first_error = None;
-                let mut earliest: Option<DateTime<Local>> = None;
+                let mut earliest: Option<DateTime<Tz>> = None;
                 for cron in crons {
                     match cron.find_next_occurrence(&after, false) {
                         Ok(next) => earliest = Some(earliest.map_or(next, |best| best.min(next))),
@@ -79,13 +80,13 @@ impl Schedule {
         }
     }
 
-    /// How many runs fall on `day`, in local time. Stops counting at a large number, so a tiny interval
+    /// How many runs fall on `day`, a calendar day in `zone`. Stops counting at a large number, so a tiny interval
     /// gives that number, not the true one.
-    pub fn runs_on(&self, day: NaiveDate) -> anyhow::Result<usize> {
-        let start = start_of_day(day).with_context(|| format!("Can't tell when {day} starts"))?;
+    pub fn runs_on(&self, day: NaiveDate, zone: Tz) -> anyhow::Result<usize> {
+        let start = start_of_day(day, zone).with_context(|| format!("Can't tell when {day} starts"))?;
         let end = day
             .succ_opt()
-            .and_then(start_of_day)
+            .and_then(|next| start_of_day(next, zone))
             .with_context(|| format!("Can't tell when {day} ends"))?;
         let mut count = 0;
         // Strictly after, so a run at the very start of the day is counted.
@@ -101,7 +102,7 @@ impl Schedule {
     }
 
     /// The next `count` runs after `after`.
-    pub fn upcoming(&self, after: DateTime<Local>, count: usize) -> anyhow::Result<Vec<DateTime<Local>>> {
+    pub fn upcoming(&self, after: DateTime<Tz>, count: usize) -> anyhow::Result<Vec<DateTime<Tz>>> {
         let mut at = after;
         (0..count)
             .map(|_| {
@@ -113,22 +114,22 @@ impl Schedule {
 }
 
 /// Midnight at the start of `day`; in a zone where the clocks change at midnight, the first moment that exists.
-fn start_of_day(day: NaiveDate) -> Option<DateTime<Local>> {
+fn start_of_day(day: NaiveDate, zone: Tz) -> Option<DateTime<Tz>> {
     let midnight = day.and_hms_opt(0, 0, 0)?;
-    Local
-        .from_local_datetime(&midnight)
+    zone.from_local_datetime(&midnight)
         .earliest()
-        .or_else(|| Local.from_local_datetime(&(midnight + chrono::Duration::hours(1))).earliest())
+        .or_else(|| zone.from_local_datetime(&(midnight + chrono::Duration::hours(1))).earliest())
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono_tz::Europe::London;
     use chrono::TimeZone;
 
     use super::*;
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Local> {
-        Local.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
+        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
     }
 
     #[test]
@@ -187,19 +188,19 @@ mod tests {
     fn the_week_has_the_runs_it_was_written_for() {
         let schedule = Schedule::parse_crons(WEEK).unwrap();
         // 4 h a minute, 11 h every five minutes, 9 h every fifteen.
-        assert_eq!(schedule.runs_on(day(15)).unwrap(), 240 + 132 + 36);
-        assert_eq!(schedule.runs_on(day(19)).unwrap(), 240 + 132 + 36, "Friday");
+        assert_eq!(schedule.runs_on(day(15), London).unwrap(), 240 + 132 + 36);
+        assert_eq!(schedule.runs_on(day(19), London).unwrap(), 240 + 132 + 36, "Friday");
         // Hourly from 08:00 to 21:00, and nothing in the small hours or the evening.
-        assert_eq!(schedule.runs_on(day(20)).unwrap(), 14, "Saturday");
-        assert_eq!(schedule.runs_on(day(21)).unwrap(), 14, "Sunday");
+        assert_eq!(schedule.runs_on(day(20), London).unwrap(), 14, "Saturday");
+        assert_eq!(schedule.runs_on(day(21), London).unwrap(), 14, "Sunday");
     }
 
     #[test]
     fn runs_are_counted_for_the_other_kinds_too() {
-        assert_eq!(Schedule::parse_cron("*/10 * * * *").unwrap().runs_on(day(15)).unwrap(), 144);
-        assert_eq!(Schedule::parse_every("1h").unwrap().runs_on(day(15)).unwrap(), 24);
+        assert_eq!(Schedule::parse_cron("*/10 * * * *").unwrap().runs_on(day(15), London).unwrap(), 144);
+        assert_eq!(Schedule::parse_every("1h").unwrap().runs_on(day(15), London).unwrap(), 24);
         // A tiny interval is counted up to a limit, not for ever.
-        assert_eq!(Schedule::parse_every("1ms").unwrap().runs_on(day(15)).unwrap(), MAX_RUNS_COUNTED);
+        assert_eq!(Schedule::parse_every("1ms").unwrap().runs_on(day(15), London).unwrap(), MAX_RUNS_COUNTED);
     }
 
     #[test]

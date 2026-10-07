@@ -9,3 +9,4 @@ pub mod stop_points;
 pub mod image_server;
 pub mod http;
 pub mod published_images;
+pub mod zone;

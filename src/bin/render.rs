@@ -25,6 +25,7 @@ use eink_home_display_rust::domain::services::image_repository::ImageRepository;
 async fn main() -> Result<()> {
     bootstrap::init_logging("info");
     let args = RenderArgs::parse();
+    let zone = eink_home_display_rust::adapters::zone::host();
 
     let config = args
         .config_file
@@ -47,9 +48,9 @@ async fn main() -> Result<()> {
         .unwrap_or_default();
 
     let data = match (&config, args.live) {
-        (Some(config), true) => fetch_live(config).await?,
-        _ if args.degraded => GlanceData::sample_degraded(chrono::Local::now()),
-        _ => GlanceData::sample(chrono::Local::now()),
+        (Some(config), true) => fetch_live(config, zone).await?,
+        _ if args.degraded => GlanceData::sample_degraded(chrono::Utc::now().with_timezone(&zone)),
+        _ => GlanceData::sample(chrono::Utc::now().with_timezone(&zone)),
     };
 
     std::fs::create_dir_all(&args.output_dir)
@@ -96,12 +97,12 @@ fn file_name(kind: DisplayKind) -> &'static str {
     }
 }
 
-async fn fetch_live(config: &ApplicationConfig) -> Result<GlanceData> {
+async fn fetch_live(config: &ApplicationConfig, zone: chrono_tz::Tz) -> Result<GlanceData> {
     // A live fetch uses the weather settings, so those are checked; the sample render never does.
     config.weather.validate_in_use().context("The [weather] configuration is invalid")?;
     // Reuse the application's own fetching by running it against a capture-only generator.
     let (tx, rx) = std::sync::mpsc::channel();
-    let app = bootstrap::assemble(config, Capture(tx), NoDisplay, NoStore, Arc::new(SystemClock))?;
+    let app = bootstrap::assemble(config, Capture(tx), NoDisplay, NoStore, Arc::new(SystemClock::new(zone)))?;
     app.run(Location::new(config.location.latitude, config.location.longitude))
         .await?;
     Ok(rx.recv()?)

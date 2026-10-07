@@ -1,4 +1,5 @@
-use chrono::{DateTime, Duration, Local, Timelike};
+use chrono::{DateTime, Duration, Timelike};
+use chrono_tz::Tz;
 use serde::Serialize;
 
 use crate::domain::models::air_quality::AirQuality;
@@ -70,7 +71,7 @@ pub struct DateInfo {
 }
 
 impl DateInfo {
-    pub fn new(now: DateTime<Local>) -> Self {
+    pub fn new(now: DateTime<Tz>) -> Self {
         Self {
             current_time: now.format("%H:%M").to_string(),
             current_day: now.format("%a").to_string(),
@@ -137,7 +138,7 @@ impl GlanceData {
 impl GlanceData {
     /// The sample with some sources failed, to preview how that looks: the first board and the
     /// weather are from earlier fetches, and the last board is unavailable.
-    pub fn sample_degraded(now: DateTime<Local>) -> Self {
+    pub fn sample_degraded(now: DateTime<Tz>) -> Self {
         let mut data = Self::sample(now);
         if let Some(first) = data.departures.first_mut() {
             first.age = format_age(Duration::minutes(8));
@@ -153,7 +154,7 @@ impl GlanceData {
     /// services), timed relative to `now`, for previewing the layout offline.
     /// The first service on each board leaves after the journey to it: 5 minutes
     /// to Hornsey and 15 to Turnpike Lane.
-    pub fn sample(now: DateTime<Local>) -> Self {
+    pub fn sample(now: DateTime<Tz>) -> Self {
         let at = |minutes: i64| (now + Duration::minutes(minutes)).format("%H:%M").to_string();
         let timetabled = |minutes: i64, destination: &str, status, expected: Option<i64>| {
             let leaves_in = expected.unwrap_or(minutes);
