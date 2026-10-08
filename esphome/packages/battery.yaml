@@ -1,0 +1,156 @@
+# =============================================================================
+# The battery: measuring it, the warning label, and stopping when it is empty.
+# Reads once at the start of every wake, before the radio is on (see `battery_gate`).
+# =============================================================================
+substitutions:
+  # The board halves the cell voltage before the ADC pin (two equal resistors); this undoes it.
+  battery_divider: "2.0"
+  # Battery thresholds, in volts (see the README). Below `low` a label says so on every picture;
+  # below `empty` the device stops refreshing and sleeps `battery_halt_sleep_ms` between checks;
+  # it starts again, and clears both, only once the voltage is back above `resume`.
+  battery_low_v: "3.40"
+  battery_empty_v: "3.30"
+  battery_resume_v: "3.60"
+  battery_halt_sleep_ms: "21600000"
+
+output:
+  # Battery measurement enable
+  - platform: gpio
+    pin: GPIO40
+    id: bsp_battery_enable
+
+sensor:
+  - platform: adc
+    pin: GPIO1
+    id: battery_voltage
+    name: "Battery Voltage"
+    attenuation: 12db
+    # Averaged inside each reading, which is what battery_gate takes.
+    samples: 16
+    update_interval: 60s
+    filters:
+      # Onboard 1:2 voltage divider
+      - multiply: ${battery_divider}
+  - platform: template
+    id: battery_level
+    name: "Battery Level"
+    unit_of_measurement: "%"
+    device_class: battery
+    lambda: 'return id(battery_voltage).state;'
+    update_interval: 60s
+    filters:
+      - calibrate_linear:
+          - 4.15 -> 100.0
+          - 3.96 -> 90.0
+          - 3.91 -> 80.0
+          - 3.85 -> 70.0
+          - 3.80 -> 60.0
+          - 3.75 -> 50.0
+          - 3.68 -> 40.0
+          - 3.58 -> 30.0
+          - 3.49 -> 20.0
+          - 3.41 -> 10.0
+          - 3.30 -> 5.0
+          - 3.27 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+globals:
+  # The battery has gone below `battery_empty_v` and not yet recovered past `battery_resume_v`:
+  # nothing is refreshed. Kept across deep sleep.
+  - id: battery_halted
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # Below `battery_low_v` and not yet recovered past `battery_resume_v`: every picture carries a label.
+  - id: battery_low
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # This wake's battery reading.
+  - id: battery_known
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: battery_mv
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: battery_pct
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # 0 ok, 1 low, 2 empty.
+  - id: battery_state
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: battery_action
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+script:
+  # First thing every wake, before the radio or the panel are used: read the battery and, if it is too
+  # low to carry on, stop. Voltage is read once, with the load light, so it isn't pulled down by Wi-Fi.
+  - id: battery_gate
+    then:
+      - lambda: |-
+          // sample() is the voltage at the pin, before the sensor's filters, so undo the divider here.
+          float v = id(battery_voltage).sample() * ${battery_divider}f;
+          // What the reading means, and the latches and what to do about them, are worked out in eink_battery.h.
+          auto battery = eink_battery::assess(v, id(battery_halted), id(battery_low), ${battery_low_v},
+                                              ${battery_empty_v}, ${battery_resume_v});
+          id(battery_known) = battery.known;
+          id(battery_action) = battery.verdict.action;
+          if (!battery.known) {
+            // No battery, or a bad reading: never a reason to stop.
+            ESP_LOGW("battery", "Unusable reading (%.2f V); carrying on", v);
+            return;
+          }
+          id(battery_mv) = battery.mv;
+          id(battery_pct) = battery.pct;
+          id(battery_halted) = battery.verdict.halted;
+          id(battery_low) = battery.verdict.low;
+          id(battery_state) = battery.verdict.state;
+          ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(id(battery_state)));
+      - if:
+          condition:
+            lambda: 'return id(battery_action) == 2;'
+          then:
+            - logger.log: "Battery empty: showing the notice and stopping"
+            - lambda: |-
+                id(notice_text) = "Battery empty - charge to resume";
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+            - script.execute: battery_sleep
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(battery_action) == 1;'
+                then:
+                  - logger.log: "Battery still empty: sleeping"
+                  - script.execute: battery_sleep
+                else:
+                  - script.execute: start_wake
+
+  # Halted: no Wi-Fi, no refresh; just wake now and then to see whether it has been charged.
+  - id: battery_sleep
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(maintenance);'
+          then:
+            - lambda: 'eink_telemetry::record_wake(millis());'
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                sleep_duration: ${battery_halt_sleep_ms}ms

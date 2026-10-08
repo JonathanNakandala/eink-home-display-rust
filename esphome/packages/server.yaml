@@ -1,0 +1,226 @@
+# =============================================================================
+# The server: finding it on the network, asking it for the plan and fetching the image.
+# Its address and port are found over mDNS and remembered across sleeps.
+# =============================================================================
+substitutions:
+  # The server is found over mDNS, so nothing here needs to change when its address or
+  # port does. Used only until the first successful scan, or if a scan finds nothing:
+  fallback_base: "http://e-ink-home-display.local:8080"
+  # The paths the Rust app serves the image and its plan at.
+  image_path: /image
+  plan_path: /plan
+  refresh_path: /refresh
+  # Pick a server by the name a scan shows (the Rust app's server.instance_name).
+  # Empty takes the first image server found.
+  server_name: ""
+
+http_request:
+  # Plain HTTP on the LAN; TLS would cost a lot of RAM for nothing.
+  # Long enough for the server to render when the button asks for it (it waits up to 40 s).
+  timeout: 50s
+  watchdog_timeout: 70s
+
+json:
+
+globals:
+  # The server found last time. Kept across deep sleep; 0 means none yet.
+  - id: server_ip
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+
+  - id: server_port
+    type: uint16_t
+    restore_value: yes
+    initial_value: '0'
+
+  # How far ahead of UTC the server's timezone is, in seconds, as of its last /plan. The device has no timezone
+  # database, and a failure is often a server it couldn't reach, so it is kept across sleeps. Used only for the time
+  # in the failure notice; unknown until the first /plan.
+  - id: utc_offset_s
+    type: int32_t
+    restore_value: yes
+    initial_value: '0'
+
+  - id: utc_offset_known
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # This wake's state.
+  - id: plan_version
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: plan_ok
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: plan_changed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+  - id: plan_stale
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: plan_age_seconds
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: searched
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: server_found
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+script:
+  # Asks the server what is current: whether the image changed, whether it is stale, and when to come back.
+  # After a button wake it asks for a render first (POST /refresh), which answers the same way.
+  - id: check_plan
+    then:
+      - if:
+          condition:
+            lambda: 'return id(force_refresh);'
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
+                  return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
+                         eink_telemetry::query(App.get_name().str(), id(failed_wakes),
+                                               {id(battery_known), id(battery_mv), id(battery_pct),
+                                                eink_battery::state_name(id(battery_state))});
+                capture_response: true
+                max_response_buffer_size: 1024
+                on_response:
+                  - script.execute:
+                      id: handle_plan
+                      code: !lambda 'return response->status_code;'
+                      body: !lambda 'return body;'
+          else:
+            - http_request.get:
+                url: !lambda |-
+                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
+                  return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
+                         eink_telemetry::query(App.get_name().str(), id(failed_wakes),
+                                               {id(battery_known), id(battery_mv), id(battery_pct),
+                                                eink_battery::state_name(id(battery_state))});
+                capture_response: true
+                max_response_buffer_size: 1024
+                on_response:
+                  - script.execute:
+                      id: handle_plan
+                      code: !lambda 'return response->status_code;'
+                      body: !lambda 'return body;'
+
+  # Reads the server's plan, then downloads the image, or skips it when it hasn't changed.
+  - id: handle_plan
+    parameters:
+      code: int
+      body: string
+    then:
+      - lambda: |-
+          bool ok = code == 200 && json::parse_json(body, [](JsonObject root) -> bool {
+            if (!root["version"].is<uint32_t>() || !root["next_seconds"].is<uint32_t>())
+              return false;
+            id(plan_version) = root["version"].as<uint32_t>();
+            id(plan_changed) = root["changed"] | true;
+            id(plan_stale) = root["stale"] | false;
+            id(plan_age_seconds) = root["age_seconds"] | 0;
+            // The server's zone, as how far it is ahead of UTC now. Kept only if it is a real offset.
+            if (eink_plan::keeps_offset(root["utc_offset_seconds"].is<int32_t>(),
+                                        root["utc_offset_seconds"].as<int32_t>())) {
+              id(utc_offset_s) = root["utc_offset_seconds"].as<int32_t>();
+              id(utc_offset_known) = true;
+            }
+            id(plan_sleep_ms) = eink_wake::plan_sleep_ms(root["next_seconds"].as<uint32_t>());
+            return true;
+          });
+          if (!ok)
+            ESP_LOGW("plan", "No usable plan (HTTP %d): %s", code, body.c_str());
+          id(plan_ok) = ok;
+          if (ok) {
+            // Not `failed_wakes = 0` here: the plan answering isn't the wake succeeding. The image can still
+            // fail to download, and resetting now would keep that failure at the first backoff step forever.
+            id(plan_received_ms) = millis();
+            // The picture is also redrawn to clear a notice or to add or remove the battery label (eink_plan.h).
+            id(plan_changed) = eink_plan::needs_draw(id(plan_changed), id(plan_stale),
+                                                     {id(notice_on_panel), id(low_label_on_panel), id(battery_low)});
+          }
+      - if:
+          condition:
+            lambda: 'return !id(plan_ok);'
+          then:
+            - script.execute: server_failed
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(plan_changed);'
+                then:
+                  - logger.log: "Image changed, downloading"
+                  - script.execute: fetch_image
+                else:
+                  - logger.log: "Image unchanged, skipping refresh"
+                  - script.execute: after_image
+
+  # Downloads the image from the remembered server, if there is memory to decode it into.
+  - id: fetch_image
+    then:
+      - if:
+          condition:
+            lambda: 'return eink_health::image_buffer_fits(${image_width}, ${image_height});'
+          then:
+            - online_image.set_url:
+                id: dashboard
+                # The download is started by the component.update below, once; set_url would otherwise start
+                # it too, and a second request would run after a failed one.
+                update: false
+                # Says who is asking, so the server knows which display it sent this image to.
+                url: !lambda |-
+                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
+                  return base + "${image_path}?device=" + App.get_name().str();
+            - component.update: dashboard
+          else:
+            # Not the server's fault, so don't go looking for it.
+            - lambda: 'id(fail_reason) = "memory";'
+            - script.execute: give_up
+
+  # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
+  - id: server_failed
+    then:
+      - lambda: 'id(fail_reason) = "server";'
+      - if:
+          condition:
+            lambda: 'return !id(searched);'
+          then:
+            - script.execute: discover
+            - if:
+                condition:
+                  lambda: 'return id(server_found);'
+                then:
+                  - script.execute: check_plan
+                else:
+                  - script.execute: give_up
+          else:
+            - script.execute: give_up
+
+  # Asks the network where the server is, and remembers the answer.
+  - id: discover
+    then:
+      - lambda: |-
+          id(searched) = true;
+          eink_discovery::Server server;
+          id(server_found) = eink_discovery::find(server, "${server_name}");
+          if (!id(server_found))
+            return;
+          id(server_ip) = server.ip;
+          id(server_port) = server.port;
