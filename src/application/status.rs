@@ -461,11 +461,10 @@ mod tests {
 
     fn pairing(state: PairingState) -> Pairing {
         use crate::domain::models::device_id::DeviceId;
-        use crate::domain::models::pairing::{Fingerprint, PairingCode, PublicKey};
+        use crate::domain::models::pairing::PublicKey;
         let device = DeviceId::parse("kitchen").unwrap();
         let key = PublicKey::from_der(vec![1; 91]);
-        let code = PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key);
-        Pairing::new(device, key, code, state, at(8, 0, 0).to_utc())
+        Pairing::new(device, key, state, at(8, 0, 0).to_utc())
     }
 
     #[test]
@@ -519,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_key_change_and_a_replacement_waiting_are_shown() {
-        use crate::domain::models::pairing::{PairingCode, PublicKey, Replacement, Rollover};
+        use crate::domain::models::pairing::{PublicKey, Replacement, Rollover};
         let mut changing = pairing(PairingState::Pending);
         assert!(!MemberStatus::of(&changing, at(12, 0, 0)).changing_keys);
         changing.rollover = Some(Rollover {
@@ -528,7 +527,6 @@ mod tests {
         });
         changing.replacement = Some(Replacement {
             key: PublicKey::from_der(vec![3; 91]),
-            code: PairingCode::parse("0000-0000-0001").unwrap(),
             approved: false,
             requested_at: at(10, 0, 0).to_utc(),
         });

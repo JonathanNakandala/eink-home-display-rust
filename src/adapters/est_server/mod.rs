@@ -81,6 +81,13 @@ impl Default for EstSettings {
     }
 }
 
+/// The most the head of a request (its line and headers) may come to. A display's is a few hundred bytes. The
+/// default, about 400 KB, would let sixteen strangers hold six megabytes between them for nothing; the least
+/// `hyper` accepts is 8 KiB, so this is twice that.
+const MAX_HEAD: usize = 16 * 1024;
+/// The most headers a request may have. A display sends about five.
+const MAX_HEADERS: usize = 32;
+
 /// How often the server's own certificate is looked at. Only a comparison of two dates, so it is cheap, and it
 /// is short so that a clock set to the right time is noticed within a minute, not an hour (see `is_due`).
 const RENEWAL_CHECK: Duration = Duration::from_secs(60);
@@ -247,21 +254,37 @@ async fn serve_connection(
                 .export_keying_material([0u8; BINDING_LEN], BINDING_LABEL, Some(&[]))
                 .ok()
                 .map(|v| v.to_vec()),
-            client: session
-                .peer_certificates()
-                .and_then(|chain| chain.first())
-                .and_then(|certificate| client_named_in(certificate.as_ref())),
+            client: identity_of(session.peer_certificates())?,
         }
     };
     let service = TowerToHyperService::new(app.layer(axum::Extension(connection)));
     let served = http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(settings.header_timeout)
+        .max_buf_size(MAX_HEAD)
+        .max_headers(MAX_HEADERS)
         .serve_connection(TokioIo::new(tls), service);
     tokio::time::timeout(settings.connection_lifetime, served)
         .await
         .context("The connection went on too long")?
         .context("The connection failed")
+}
+
+/// Who the client is, from the certificate chain it showed (which TLS has already checked against the authority).
+///
+/// No certificate is an anonymous client, which the routes that need no identity serve. A certificate that TLS
+/// accepted but that names no usable display is not that: it is refused, not quietly served as if the client had
+/// shown nothing. Our own authority only signs a certificate with a valid name, so this does not happen unless
+/// something other than this program signed it.
+fn identity_of(
+    chain: Option<&[rustls::pki_types::CertificateDer<'_>]>,
+) -> anyhow::Result<Option<ClientIdentity>> {
+    let Some(certificate) = chain.and_then(|chain| chain.first()) else {
+        return Ok(None);
+    };
+    client_named_in(certificate.as_ref())
+        .map(Some)
+        .context("The client's certificate is valid but does not name a display")
 }
 
 /// Who a (verified) client certificate is for: the common name, and the key it certifies.

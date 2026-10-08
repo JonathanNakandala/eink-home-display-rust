@@ -456,10 +456,10 @@ async fn a_display_joins_waits_for_the_owner_collects_its_certificate_and_renews
             .contains(&panel_code.as_str().replace('-', ""))
     );
 
-    // 4. The server holds what the display worked out for itself: same code, so the owner can approve.
+    // 4. The server works out the same code from what it was sent, so the owner, typing what the panel shows,
+    // can approve. (It keeps no copy of the code: it is worked out when one is typed.)
     let pairings = harness.enrollment.pairings().await.unwrap();
     assert_eq!(pairings.len(), 1);
-    assert_eq!(pairings[0].code, panel_code);
     harness
         .enrollment
         .approve(&device(name), &panel_code)
@@ -1306,5 +1306,102 @@ fn the_servers_own_certificate_is_looked_at_at_least_once_a_minute() {
         super::RENEWAL_CHECK <= Duration::from_secs(60),
         "{:?}",
         super::RENEWAL_CHECK
+    );
+}
+
+// --- who a certificate names ---------------------------------------------------------------------------------
+
+fn self_signed(common_name: Option<&str>) -> rustls::pki_types::CertificateDer<'static> {
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut params = rcgen::CertificateParams::default();
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    if let Some(name) = common_name {
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, name);
+    }
+    params.self_signed(&key).unwrap().der().clone()
+}
+
+#[test]
+fn a_client_with_no_certificate_is_anonymous_and_one_with_a_good_certificate_is_named() {
+    assert_eq!(super::identity_of(None).unwrap(), None);
+    assert_eq!(super::identity_of(Some(&[])).unwrap(), None);
+    let good = self_signed(Some("kitchen"));
+    let identity = super::identity_of(Some(std::slice::from_ref(&good)))
+        .unwrap()
+        .expect("named");
+    assert_eq!(identity.device, device("kitchen"));
+    // The key is the certificate's own, not anything the client says.
+    let (_, parsed) = x509_parser::parse_x509_certificate(good.as_ref()).unwrap();
+    assert_eq!(identity.key.as_der(), parsed.public_key().raw);
+}
+
+#[test]
+fn a_certificate_that_names_no_usable_display_is_refused_not_served_as_anonymous() {
+    for bad in [
+        self_signed(Some("has a space")),
+        self_signed(Some("")),
+        self_signed(Some(&"x".repeat(64))),
+        self_signed(None),
+        rustls::pki_types::CertificateDer::from(vec![0x30, 0x03, 0x02, 0x01, 0x01]),
+    ] {
+        let error = super::identity_of(Some(&[bad])).unwrap_err().to_string();
+        assert!(error.contains("does not name a display"), "{error}");
+    }
+}
+
+// --- the size of a request's head ------------------------------------------------------------------------------
+
+/// What the server answers to `head` sent as a request's line and headers, as its status (0 if it just closed).
+async fn answer_to_head(harness: &Harness, head: String) -> u16 {
+    let mut stream = connect(harness, Trust::Anything, None).await;
+    let _ = stream.write_all(head.as_bytes()).await;
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 2048];
+    let _ = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Ok(n) = stream.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            raw.extend_from_slice(&chunk[..n]);
+            if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+    })
+    .await;
+    String::from_utf8_lossy(&raw)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn a_request_head_that_is_far_bigger_than_any_display_sends_is_refused() {
+    let harness = start().await;
+    let line = format!("GET {CSRATTRS} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n");
+    // A normal head is served.
+    assert_eq!(answer_to_head(&harness, format!("{line}\r\n")).await, 200);
+    // One header of 40 KB is not, and neither is a head of 60 small ones (hyper's own limit is 100).
+    let big = format!("{line}X-Padding: {}\r\n\r\n", "a".repeat(40_000));
+    let refused = answer_to_head(&harness, big).await;
+    assert!(refused == 0 || refused >= 400, "answered {refused}");
+    let many: String = (0..60).map(|i| format!("X-{i}: v\r\n")).collect();
+    let refused = answer_to_head(&harness, format!("{line}{many}\r\n")).await;
+    assert!(refused == 0 || refused >= 400, "answered {refused}");
+}
+
+#[tokio::test]
+async fn a_head_with_a_sensible_number_of_headers_of_a_sensible_size_is_still_served() {
+    let harness = start().await;
+    let line = format!("GET {CSRATTRS} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n");
+    let some: String = (0..20)
+        .map(|i| format!("X-{i}: {}\r\n", "v".repeat(200)))
+        .collect();
+    assert_eq!(
+        answer_to_head(&harness, format!("{line}{some}\r\n")).await,
+        200
     );
 }

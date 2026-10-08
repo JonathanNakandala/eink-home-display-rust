@@ -130,6 +130,29 @@ fn a_request_for_a_key_its_sender_does_not_hold_is_refused() {
 }
 
 #[test]
+fn a_request_of_any_version_but_zero_is_refused_as_such() {
+    // RFC 2986 defines only version 0. The version is the first INTEGER in the request; it is changed here, which
+    // also breaks the signature, so the error being about the version shows it is looked at first.
+    let (_, request) = display("kitchen");
+    let at = request
+        .windows(3)
+        .position(|w| w == [0x02, 0x01, 0x00])
+        .expect("the version is there");
+    for version in [1u8, 2, 0x7f] {
+        let mut changed = request.clone();
+        changed[at + 2] = version;
+        match authority().inspect(&changed) {
+            Err(RequestError::Malformed(message)) => {
+                assert!(message.contains(&format!("version {version}")), "{message}");
+            }
+            other => panic!("version {version}: {other:?}"),
+        }
+    }
+    // And the real thing is still accepted.
+    assert!(authority().inspect(&request).is_ok());
+}
+
+#[test]
 fn garbage_and_truncated_requests_are_refused() {
     let (_, request) = display("kitchen");
     for bad in [

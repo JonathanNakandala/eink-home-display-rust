@@ -32,6 +32,15 @@ pub fn read(der: &[u8]) -> Result<CertificateRequest, RequestError> {
     let info = &request.certification_request_info;
     let key = &info.subject_pki;
 
+    // RFC 2986 section 4.1: the version "shall be 0" (v1). Anything else is a request this was not written for,
+    // and it is refused before anything in it is looked at.
+    if info.version.0 != 0 {
+        return Err(RequestError::Malformed(format!(
+            "the request is version {}, and only version 0 is defined",
+            info.version.0
+        )));
+    }
+
     // Only the kind of key and signature that is asked for. Checked before the signature, which is
     // what would otherwise pick the algorithm from whatever the request says.
     if key.algorithm.algorithm.to_id_string() != EC_PUBLIC_KEY

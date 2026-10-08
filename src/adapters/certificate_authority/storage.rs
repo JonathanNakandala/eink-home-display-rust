@@ -238,5 +238,15 @@ fn write_atomically(path: &Path, contents: &str, private: bool) -> anyhow::Resul
         .and_then(|()| file.sync_all())
         .with_context(|| format!("Failed to write {}", temporary.display()))?;
     fs::rename(&temporary, path)
-        .with_context(|| format!("Failed to put {} in place", path.display()))
+        .with_context(|| format!("Failed to put {} in place", path.display()))?;
+    // The rename is only durable once the directory entry is, which on Unix needs the directory flushed. Without
+    // it a crash just after could lose the new file, and a start after that would find the authority only
+    // partly there. (The list of displays is written the same way, in `pairing_store`.)
+    #[cfg(unix)]
+    if let Some(directory) = path.parent() {
+        fs::File::open(directory)
+            .and_then(|directory| directory.sync_all())
+            .with_context(|| format!("Failed to flush {}", directory.display()))?;
+    }
+    Ok(())
 }

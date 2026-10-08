@@ -100,7 +100,7 @@ intermediate, so losing or leaking the intermediate never means pairing every di
 | `root.key` | the root's key. Used only to make an intermediate. The server never loads it to serve | **yes** |
 | `intermediate.pem` | the intermediate's certificate (5 years) and key, in one file so they are replaced together | **yes** |
 | `retired.pem` | earlier intermediates, kept until they end, because what they signed is still good | no |
-| `pairings.json` | which displays are members, written whole through a temporary file and a rename, with the version before the last change kept as `pairings.json.bak` | no |
+| `pairings.json` | which displays are members, written whole through a temporary file and a rename, with the version before the last change kept as `pairings.json.bak`. **It holds no pairing codes**: the server works a code out only when you type one to be compared, so there is no copy in the file or its backup to read | no |
 
 - **Back up the directory**, `root.pem` and `root.key` above all: without them every display has to be paired
   again. The server logs the root's fingerprint at every start, so a changed one is visible.

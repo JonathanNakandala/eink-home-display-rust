@@ -54,9 +54,13 @@ pub struct EnrollmentPolicy {
 pub enum Outcome {
     Issued(IssuedCertificate),
     /// Not yet: the owner has to approve it, then ask again after `retry_after`.
+    ///
+    /// It carries no pairing code, on purpose. The code is what the display itself works out and shows, and the
+    /// owner reads it off the display; a server that handed it up to the layer that answers the display would
+    /// leave the rule that it is never sent resting on that layer remembering not to. The code is worked out here
+    /// only when the owner types one to be compared with it (see `code_for`).
     Pending {
         retry_after: Duration,
-        code: PairingCode,
     },
 }
 
@@ -230,7 +234,6 @@ impl Enrollment {
             PairingState::Revoked => Err(Refusal::Revoked.into()),
             PairingState::Pending if pairing.key == request.key => Ok(Outcome::Pending {
                 retry_after: self.policy.retry_after,
-                code: pairing.code,
             }),
             // The display lost its key (it was wiped and flashed again). Anything can say that, so
             // while it is only waiting the new request takes the old one's place, and the code the
@@ -277,7 +280,6 @@ impl Enrollment {
             if !replacement.approved {
                 return Ok(Outcome::Pending {
                     retry_after: self.policy.retry_after,
-                    code: replacement.code.clone(),
                 });
             }
             // The owner approved it: it takes the name over, and the old key stops being one.
@@ -297,11 +299,8 @@ impl Enrollment {
             return Err(Refusal::KeyMismatch.into());
         }
         self.ensure_room(&pairing.device).await?;
-        let code =
-            PairingCode::derive(&self.authority.fingerprint(), &pairing.device, &request.key);
         pairing.replacement = Some(Replacement {
             key: request.key,
-            code: code.clone(),
             approved: false,
             requested_at: now,
         });
@@ -316,7 +315,6 @@ impl Enrollment {
         );
         Ok(Outcome::Pending {
             retry_after: self.policy.retry_after,
-            code,
         })
     }
 
@@ -417,9 +415,9 @@ impl Enrollment {
             .await?
             .ok_or_else(|| ApproveError::Unknown(device.clone()))?;
         let waiting_for = match (&pairing.state, &pairing.replacement) {
-            (PairingState::Pending, _) => Some(pairing.code.clone()),
+            (PairingState::Pending, _) => Some(self.code_for(&pairing.device, &pairing.key)),
             (PairingState::Enrolled { .. }, Some(replacement)) if !replacement.approved => {
-                Some(replacement.code.clone())
+                Some(self.code_for(&pairing.device, &replacement.key))
             }
             _ => None,
         };
@@ -581,15 +579,7 @@ impl Enrollment {
             return Err(Refusal::NotAccepting.into());
         }
         self.ensure_room(&request.device).await?;
-        let code =
-            PairingCode::derive(&self.authority.fingerprint(), &request.device, &request.key);
-        let pairing = Pairing::new(
-            request.device,
-            request.key,
-            code.clone(),
-            PairingState::Pending,
-            now,
-        );
+        let pairing = Pairing::new(request.device, request.key, PairingState::Pending, now);
         self.store.put(&pairing).await?;
         // Not the code itself: the owner reads it off the display's own panel (see above).
         log::info!(
@@ -598,8 +588,13 @@ impl Enrollment {
         );
         Ok(Outcome::Pending {
             retry_after: self.policy.retry_after,
-            code,
         })
+    }
+
+    /// What the display with this name and key shows on its panel: worked out when it is needed and never kept,
+    /// so there is no stored copy to read, and a change of key can't leave a stale one behind.
+    fn code_for(&self, device: &DeviceId, key: &PublicKey) -> PairingCode {
+        PairingCode::derive(&self.authority.fingerprint(), device, key)
     }
 
     /// Gives `pairing`'s display a certificate for the key in `request`, which becomes its key.
@@ -610,8 +605,6 @@ impl Enrollment {
         now: DateTime<Utc>,
     ) -> Result<Outcome, EnrollError> {
         let certificate = self.certificate_for(&request, now)?;
-        pairing.code =
-            PairingCode::derive(&self.authority.fingerprint(), &pairing.device, &request.key);
         pairing.key = request.key;
         self.record(&mut pairing, &certificate, now);
         self.store.put(&pairing).await?;
@@ -658,11 +651,6 @@ impl Enrollment {
     /// Makes the key a display is changing to its key.
     fn promote(&self, pairing: &mut Pairing) {
         if let Some(rollover) = pairing.rollover.take() {
-            pairing.code = PairingCode::derive(
-                &self.authority.fingerprint(),
-                &pairing.device,
-                &rollover.key,
-            );
             pairing.key = rollover.key;
         }
     }
@@ -842,7 +830,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_the_window_open_it_waits_with_the_code_its_panel_shows() {
+    async fn with_the_window_open_a_new_display_waits_and_the_code_its_panel_shows_approves_it() {
         let f = Fixture::new();
         f.enrollment.open_window(Duration::minutes(10));
         let outcome = f
@@ -854,9 +842,13 @@ mod tests {
             outcome,
             Outcome::Pending {
                 retry_after: Duration::minutes(5),
-                code: f.code("kitchen", "k1"),
             }
         );
+        // What the display's own panel shows is what approves it: the server works the same code out.
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1088,7 +1080,6 @@ mod tests {
             outcome,
             Outcome::Pending {
                 retry_after: Duration::minutes(5),
-                code: f.code("kitchen", "k9"),
             }
         );
         // Asking again changes nothing, and the member is untouched while it waits.
@@ -1140,7 +1131,6 @@ mod tests {
             outcome,
             Outcome::Pending {
                 retry_after: Duration::minutes(5),
-                code: f.code("kitchen", "k2"),
             }
         );
         // The code of the replaced request no longer approves anything.

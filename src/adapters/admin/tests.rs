@@ -882,14 +882,23 @@ async fn a_name_that_cannot_be_a_displays_is_refused_and_one_that_is_not_known_i
             ErrorCode::InvalidName
         );
     }
-    // A name of dots passes the naming rule, so it is an unknown display and not a way into anything: names are
-    // keys in a file of records, never paths.
-    let (status, text) = raw(&f.socket, Method::GET, "/v1/displays/%2e%2e", None, "").await;
-    assert_eq!(status, 404, "{text}");
-    assert_eq!(
-        serde_json::from_str::<ApiError>(&text).unwrap().error.code,
-        ErrorCode::UnknownDisplay
-    );
+    // Names of only dots are not names (and so are never taken for "here" or "up" anywhere): `.` and `..`.
+    for dots in ["%2e", "%2e%2e", "...."] {
+        let (status, text) = raw(
+            &f.socket,
+            Method::GET,
+            &format!("/v1/displays/{dots}"),
+            None,
+            "",
+        )
+        .await;
+        assert_eq!(status, 400, "{dots}: {text}");
+        assert_eq!(
+            serde_json::from_str::<ApiError>(&text).unwrap().error.code,
+            ErrorCode::InvalidName,
+            "{dots}"
+        );
+    }
     assert_eq!(
         code_of(f.client.display("nobody").await.unwrap_err()),
         ErrorCode::UnknownDisplay
