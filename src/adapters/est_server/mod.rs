@@ -29,12 +29,13 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use x509_parser::prelude::FromDer;
 
-pub use self::routes::Connection;
+pub use self::routes::{ClientIdentity, Connection};
 use self::tls::RenewingCertificate;
 use crate::adapters::certificate_authority::PrivateAuthority;
 use crate::adapters::listen::{self, Bound};
 use crate::application::enrollment::Enrollment;
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::pairing::PublicKey;
 use crate::domain::services::certificate_authority::CertificateAuthority;
 
 /// RFC 9266: the label, and no context, whose exported value identifies one TLS 1.3 connection.
@@ -193,7 +194,7 @@ async fn serve_connection(
             client: session
                 .peer_certificates()
                 .and_then(|chain| chain.first())
-                .and_then(|certificate| device_named_in(certificate.as_ref())),
+                .and_then(|certificate| client_named_in(certificate.as_ref())),
         }
     };
     let service = TowerToHyperService::new(app.layer(axum::Extension(connection)));
@@ -207,8 +208,8 @@ async fn serve_connection(
         .context("The connection failed")
 }
 
-/// The display a (verified) client certificate is for: its common name.
-fn device_named_in(certificate: &[u8]) -> Option<DeviceId> {
+/// Who a (verified) client certificate is for: the common name, and the key it certifies.
+fn client_named_in(certificate: &[u8]) -> Option<ClientIdentity> {
     let (_, certificate) = x509_parser::certificate::X509Certificate::from_der(certificate).ok()?;
     let name = certificate
         .subject()
@@ -216,5 +217,8 @@ fn device_named_in(certificate: &[u8]) -> Option<DeviceId> {
         .next()?
         .as_str()
         .ok()?;
-    DeviceId::parse(name).ok()
+    Some(ClientIdentity {
+        device: DeviceId::parse(name).ok()?,
+        key: PublicKey::from_der(certificate.public_key().raw.to_vec()),
+    })
 }
