@@ -4,6 +4,10 @@
 //! It is published as an ordinary `_http._tcp` service, which every service browser
 //! lists and can open, with the `path` TXT key naming the page. The `_eink-display`
 //! subtype lets a scan ask for just this server.
+//!
+//! When the server speaks HTTPS and nothing else, it is `_https._tcp` instead (RFC 6763 and the
+//! IANA service registry), on the HTTPS port. Announcing a TLS-only port as `_http._tcp` would send a
+//! browser, or any client that goes by the service type, to speak plain HTTP to it.
 
 use std::time::Duration;
 
@@ -15,6 +19,7 @@ use crate::adapters::listen::Families;
 use crate::domain::models::display::ImageFormat;
 
 const SERVICE_SUBTYPE: &str = "_eink-display._sub._http._tcp.local.";
+const SECURE_SERVICE_SUBTYPE: &str = "_eink-display._sub._https._tcp.local.";
 /// Instance names, like any DNS label, are at most 63 bytes (RFC 6763 section 4.1.1).
 const MAX_LABEL_BYTES: usize = 63;
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -26,6 +31,16 @@ const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
 pub struct SecureOffer {
     pub port: u16,
     pub required: bool,
+}
+
+impl SecureOffer {
+    /// The service type to announce under: `_https._tcp` when plain HTTP is not served, else `_http._tcp`.
+    fn subtype(offer: Option<Self>) -> &'static str {
+        match offer {
+            Some(Self { required: true, .. }) => SECURE_SERVICE_SUBTYPE,
+            _ => SERVICE_SUBTYPE,
+        }
+    }
 }
 
 /// A registered service. Dropping it withdraws the service with a goodbye (a record with a
@@ -143,12 +158,13 @@ fn service_info(
         ));
     }
 
+    let service_type = SecureOffer::subtype(secure);
     let ip = settings.bind.ip();
     let mut info = if ip.is_unspecified() {
         // Listening everywhere, so announce every address the host has, and follow it when they change.
-        ServiceInfo::new(SERVICE_SUBTYPE, name, &host, "", port, &txt[..])?.enable_addr_auto()
+        ServiceInfo::new(service_type, name, &host, "", port, &txt[..])?.enable_addr_auto()
     } else {
-        ServiceInfo::new(SERVICE_SUBTYPE, name, &host, ip, port, &txt[..])?
+        ServiceInfo::new(service_type, name, &host, ip, port, &txt[..])?
     };
     // Only the interfaces a client on the network can be on: not loopback, and only the IP versions served.
     info.set_interfaces(vec![IfKind::Predicate(IfPredicate::new(move |intf| {
@@ -289,6 +305,38 @@ mod tests {
     }
 
     #[test]
+    fn plain_and_both_are_announced_as_http_and_https_only_as_https() {
+        let kinds = |offer| {
+            let info =
+                service_info(&settings(), 8443, ImageFormat::Png, Families::Both, offer).unwrap();
+            (
+                info.get_type().to_owned(),
+                info.get_subtype().clone().unwrap(),
+                info.get_fullname().to_owned(),
+            )
+        };
+        for offer in [
+            None,
+            Some(SecureOffer {
+                port: 8443,
+                required: false,
+            }),
+        ] {
+            let (ty, sub, full) = kinds(offer);
+            assert_eq!(ty, "_http._tcp.local.", "{offer:?}");
+            assert_eq!(sub, "_eink-display._sub._http._tcp.local.");
+            assert_eq!(full, "E-ink home display._http._tcp.local.");
+        }
+        let (ty, sub, full) = kinds(Some(SecureOffer {
+            port: 8443,
+            required: true,
+        }));
+        assert_eq!(ty, "_https._tcp.local.");
+        assert_eq!(sub, "_eink-display._sub._https._tcp.local.");
+        assert_eq!(full, "E-ink home display._https._tcp.local.");
+    }
+
+    #[test]
     fn https_only_is_announced_on_the_https_port_and_as_required() {
         let offer = SecureOffer {
             port: 8443,
@@ -382,6 +430,70 @@ mod tests {
         assert_eq!(resolved.get_port(), 18080);
         assert_eq!(resolved.get_property_val_str("path"), Some("/image"));
         assert!(!resolved.get_addresses().is_empty());
+
+        drop(advertisement);
+        let _ = scanner.shutdown();
+    }
+
+    /// Needs working multicast, like the one above:
+    /// `cargo test strict_https_is_found_as_an_https_service -- --ignored`
+    #[tokio::test]
+    #[ignore = "needs multicast networking"]
+    async fn strict_https_is_found_as_an_https_service_and_not_as_an_http_one() {
+        let config = ServerSettings {
+            instance_name: "Eink strict test".to_owned(),
+            ..settings()
+        };
+        let offer = SecureOffer {
+            port: 18443,
+            required: true,
+        };
+        let advertisement = Advertisement::start(
+            &config,
+            18443,
+            ImageFormat::Bmp,
+            Families::Both,
+            Some(offer),
+        )
+        .unwrap();
+
+        let scanner = ServiceDaemon::new().unwrap();
+        let secure = scanner.browse("_https._tcp.local.").unwrap();
+        let found = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Ok(event) = secure.recv_async().await {
+                if let ServiceEvent::ServiceResolved(service) = event
+                    && service.get_fullname().starts_with("Eink strict test.")
+                {
+                    return Some(service);
+                }
+            }
+            None
+        })
+        .await
+        .expect("timed out waiting for the service")
+        .expect("scan ended without finding it");
+        assert_eq!(found.get_port(), 18443);
+        assert_eq!(found.get_property_val_str("secure"), Some("required"));
+        assert_eq!(found.get_property_val_str("tlsport"), Some("18443"));
+
+        // And a client that browses for plain HTTP services is not pointed at it.
+        let plain = scanner.browse("_http._tcp.local.").unwrap();
+        let seen_as_http = tokio::time::timeout(Duration::from_secs(4), async {
+            while let Ok(event) = plain.recv_async().await {
+                if let ServiceEvent::ServiceResolved(service) = event
+                    && service.get_fullname().starts_with("Eink strict test.")
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(
+            !seen_as_http,
+            "a TLS-only port must not be listed as _http._tcp"
+        );
 
         drop(advertisement);
         let _ = scanner.shutdown();

@@ -170,9 +170,11 @@ close to its end:
 A display that is simply off will trigger this, which is also the right thing to know.
 
 - **TLS 1.3 only.** Older versions are refused.
-- **Announced over mDNS** beside the service, for a display to find: `tlsport` (where HTTPS is) and `secure`
-  (`optional` when plain HTTP is served too, `required` when it is not). With `https` the service itself points at
-  the HTTPS port.
+- **Announced over mDNS** for a display to find. With `prefer-https` it is the usual `_http._tcp` service with
+  two more keys: `tlsport` (where HTTPS is) and `secure=optional`. With `https` it is announced as
+  **`_https._tcp`** on the HTTPS port (`secure=required`), and not as `_http._tcp` at all, so a browser or any
+  client that goes by the service type is never sent to speak plain HTTP to a TLS port. Scan with
+  `dns-sd -B _https._tcp` (macOS) or `avahi-browse -rt _https._tcp` (Linux).
 - **Monitoring with `https`.** `/healthz`, `/status` and `/metrics` are display routes like the rest, so with
   `https` they need a member's certificate too. A monitor outside the network of displays can't reach them.
 
