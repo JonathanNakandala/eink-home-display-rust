@@ -1,0 +1,108 @@
+# =============================================================================
+# The e-paper panel and what is on it: the picture, a notice in the corner, the battery label.
+# =============================================================================
+substitutions:
+  # The panel's size: the decoded image buffer is this many bytes (checked against PSRAM before a download).
+  image_width: "1872"
+  image_height: "1404"
+  # What the device can decode, as an Accept header: the server sends one of these, preferring its own
+  # choice (display.image_format) among equals. Weight one to rank it, e.g. "image/png, image/bmp;q=0.5".
+  accept_formats: "image/bmp, image/png, image/qoi"
+  # How long the panel needs to finish drawing before power is cut.
+  refresh_settle: 15s
+
+online_image:
+  - id: dashboard
+    url: ${fallback_base}${image_path}
+    # Decoded by the response's Content-Type (image/bmp, image/png or image/qoi), so the server decides which to send.
+    format: AUTO
+    request_headers:
+      Accept: ${accept_formats}
+    type: GRAYSCALE
+    update_interval: never
+    # The panel is 1872x1404 and the image is rendered at that size, so no resize.
+    on_download_finished:
+      # Downloaded: what is left (the draw and the settle) takes a known time, and must not be cut short.
+      - script.stop: wake_watchdog
+      - logger.log: "Image downloaded, drawing"
+      - component.update: epaper_display
+      - delay: ${refresh_settle}
+      # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
+      # refresh would leave the device believing it shows an image it doesn't, and the next wake would
+      # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.
+      - lambda: |-
+          id(shown_version) = id(plan_version);
+          id(notice_on_panel) = false;
+          id(low_label_on_panel) = id(battery_low);
+      - script.execute: after_image
+    on_error:
+      # /plan has just answered from this address, so the server is where it should be: looking for it
+      # again would find the same thing. The log line above this says what went wrong.
+      - lambda: 'id(fail_reason) = "download";'
+      - script.execute: give_up
+
+font:
+  # The dashboard's own font, from the Rust app's templates; only the glyphs the notice needs.
+  - file: ../templates/fonts/Overpass/Overpass-SemiBold.ttf
+    id: notice_font
+    size: 36
+    glyphs: " :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+spi:
+  id: epaper_spi_bus
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+  miso_pin: GPIO8
+
+display:
+  - platform: it8951
+    id: epaper_display
+    spi_id: epaper_spi_bus
+    model: seeed-reterminal-e1003
+    update_interval: never
+    grayscale: true
+    # The Rust app already reduced the image to 16 greys (display.dither there).
+    dithering: false
+    update_mode: GC16
+    transform:
+      mirror_x: true
+      mirror_y: false
+    lambda: |-
+      if (id(show_notice)) {
+        // Only this corner is refreshed; the rest of the panel keeps its picture.
+        eink_notice::draw(*id(epaper_display), id(notice_font), id(notice_text));
+      } else {
+        it.image(0, 0, id(dashboard));
+        // Drawn into the same refresh as the picture, so it costs nothing extra.
+        if (id(battery_low))
+          eink_notice::label(it, id(notice_font), "Battery low " + std::to_string(id(battery_pct)) + "% - please charge");
+      }
+
+globals:
+  # The render on the panel now (the server's /plan `version`). Kept across deep sleep; 0 means unknown.
+  - id: shown_version
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+
+  # A notice is on the panel instead of (part of) the picture, so the next good wake must redraw it.
+  - id: notice_on_panel
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # The picture on the panel has that label baked in, so a change in `battery_low` needs a redraw.
+  - id: low_label_on_panel
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # Draw a notice in the corner instead of the picture, and what it says.
+  - id: show_notice
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: notice_text
+    type: std::string
+    restore_value: no

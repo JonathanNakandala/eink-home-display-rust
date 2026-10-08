@@ -28,7 +28,7 @@ secrets.yaml:
 # Checks the YAML (every component, every !lambda's syntax of the YAML around it) in seconds. No toolchain download.
 .PHONY: check
 check: secrets.yaml
-	$(POETRY) run yamllint -c ../.yamllint.yaml $(YAML)
+	$(POETRY) run yamllint -c ../.yamllint.yaml $(YAML) packages
 	$(POETRY) run esphome config $(YAML) > /dev/null
 
 # Builds the firmware, which is what catches errors in the C++ of the lambdas and the device headers. The first run

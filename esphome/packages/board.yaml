@@ -1,0 +1,31 @@
+# =============================================================================
+# The ESP32-S3 board: framework, PSRAM, logging, over-the-air updates and Wi-Fi.
+# =============================================================================
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+    advanced:
+      # Lets lwIP's resolver look up .local names (ESPHome's own mDNS only advertises).
+      # Some versions default it off to save flash, so set it explicitly.
+      enable_lwip_mdns_queries: true
+
+# OPI PSRAM holds the decoded image and the 16-level framebuffer.
+psram:
+  mode: octal
+
+# The CH340K USB bridge is on UART0, not the default USB_CDC.
+logger:
+  hardware_uart: UART0
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  # Off until `start_wake` turns it on, so the battery is read with the radio idle (its transmit bursts
+  # pull the cell down) and a flat battery never starts it at all.
+  enable_on_boot: false

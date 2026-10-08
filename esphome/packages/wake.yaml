@@ -1,0 +1,204 @@
+# =============================================================================
+# How a wake ends: sleeping, the backoff after failures, the watchdog and the maintenance button.
+# =============================================================================
+substitutions:
+  # Only used when the server can't be reached; normally the server's /plan says when to wake.
+  sleep_duration: 10min
+  sleep_duration_ms: "600000"
+  # After repeated failures the sleep doubles each time, up to this.
+  max_backoff_ms: "3600000"
+  # A wake that hasn't finished by now is treated as failed: it counts towards the backoff and sleeps.
+  # Longer than the slowest normal wait for the server (a button refresh waits for it to render), and
+  # shorter than the `run_duration` that backs it up.
+  wake_timeout: 110s
+
+binary_sensor:
+  # KEY1, the middle button: held at wake to stay awake for updates.
+  - platform: gpio
+    pin:
+      number: GPIO4
+      mode: INPUT
+      inverted: true
+    id: maintenance_button
+    internal: true
+
+deep_sleep:
+  id: deep_sleep_1
+  # Last resort behind the `wake_watchdog` script (${wake_timeout}), which does the same with the backoff;
+  # the normal exit is deep_sleep.enter above.
+  # Longer than the watchdog, with room for the failure path it leaves running: two /plan timeouts, a
+  # lookup and then the notice.
+  run_duration: 180s
+  sleep_duration: ${sleep_duration}
+  # KEY0, the right green button, wakes it early for an immediate refresh.
+  esp32_ext1_wakeup:
+    pins:
+      - number: GPIO3
+        mode: INPUT_PULLUP
+    mode: ANY_LOW
+
+globals:
+  # Why this wake failed: wifi, server (no usable /plan), download, memory, or timeout (the `wake_watchdog`
+  # ran out). Empty if it didn't.
+  - id: fail_reason
+    type: std::string
+    restore_value: no
+
+  # Wakes in a row that failed. Drives the backoff; 0 after a wake that finished with the image current.
+  - id: failed_wakes
+    type: uint8_t
+    restore_value: yes
+    initial_value: '0'
+
+  # KEY1 was held at boot: stay awake for an update over the air, however long the button is held.
+  - id: maintenance
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # Woken by the button, so ask the server to render now.
+  - id: force_refresh
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # Milliseconds the server asked us to sleep; 0 means use sleep_duration.
+  - id: plan_sleep_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  # When this wake's plan arrived (millis), so the sleep can be shortened by the time the wake took.
+  # 0 when the sleep isn't the server's plan (a backoff, or no plan).
+  - id: plan_received_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+script:
+  # The normal wake: Wi-Fi, then the server.
+  - id: start_wake
+    then:
+      - wifi.enable
+      - wait_until:
+          condition:
+            wifi.connected:
+          timeout: 30s
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
+            - lambda: |-
+                id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+                if (id(force_refresh))
+                  ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
+            - script.execute: check_plan
+          else:
+            # Without Wi-Fi there is no point asking the server, or looking for it.
+            - lambda: 'id(fail_reason) = "wifi";'
+            - script.execute: give_up
+
+  # The image is current (just drawn, or already on the panel): say so if the server is behind, then sleep.
+  - id: after_image
+    then:
+      # The wake worked: the server answered and the picture on the panel is current.
+      - script.stop: wake_watchdog
+      - lambda: |-
+          id(failed_wakes) = 0;
+          eink_telemetry::clear_failure();
+      - if:
+          condition:
+            # Once per spell: the text has an age in it, which would otherwise redraw every wake.
+            lambda: 'return id(plan_stale) && !id(notice_on_panel);'
+          then:
+            - lambda: |-
+                id(notice_text) = eink_format::stale_notice(id(plan_age_seconds));
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+      - script.execute: sleep_now
+
+  # Sleeps for as long as the server asked, or sleep_duration if it never answered.
+  - id: sleep_now
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(maintenance);'
+          then:
+            # How long this wake was awake, which the next one tells the server (it costs battery).
+            - lambda: 'eink_telemetry::record_wake(millis());'
+            - deep_sleep.enter:
+                id: deep_sleep_1
+                sleep_duration: !lambda |-
+                  // The server counted from when it answered; this takes off what the wake has used since.
+                  return eink_wake::sleep_after(id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms}),
+                                                id(plan_received_ms), millis());
+
+  # Backstop for a wake that hangs (a server that accepts the connection and goes quiet). Without it the
+  # only way out is `run_duration`, which sleeps the normal time and counts nothing, so each wake would burn
+  # that long awake every sleep_duration for as long as the server stayed that way. This counts it as a
+  # failure instead, so the backoff applies. It stands down once the wake reaches a step that ends in a
+  # known time (the image downloaded, the wake succeeded, or it gave up). Not in maintenance mode.
+  - id: wake_watchdog
+    then:
+      - delay: ${wake_timeout}
+      - if:
+          condition:
+            lambda: 'return !id(maintenance);'
+          then:
+            - lambda: 'id(fail_reason) = "timeout";'
+            - logger.log:
+                level: WARN
+                format: "The wake didn't finish in ${wake_timeout}: giving up"
+            - script.execute: backoff
+            - script.execute: sleep_now
+
+  # Counts a failed wake and works out how long to sleep: sleep_duration, doubling with each failure in a row.
+  - id: backoff
+    then:
+      - lambda: |-
+          id(failed_wakes) = eink_wake::count_failure(id(failed_wakes));
+          // 1st failure: sleep_duration, 2nd: twice that, and so on, up to max_backoff_ms.
+          id(plan_sleep_ms) = eink_wake::backoff_ms(id(failed_wakes), ${sleep_duration_ms}, ${max_backoff_ms});
+          // Not the server's plan, so not shortened by the time the wake took.
+          id(plan_received_ms) = 0;
+          // Told to the server by the next wake that gets through.
+          eink_telemetry::set_failure(id(fail_reason));
+          ESP_LOGW("backoff", "Failure %u in a row (%s); sleeping %u s", (unsigned) id(failed_wakes),
+                   id(fail_reason).c_str(), (unsigned) (id(plan_sleep_ms) / 1000));
+
+  # Nothing worked: the picture stays on the panel (e-paper keeps it). The first failure in a row
+  # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time
+  # (doubling, up to max_backoff_ms), so a server that is down doesn't drain the battery.
+  - id: give_up
+    then:
+      # It failed in a way that was noticed, so the watchdog has nothing to add: left running it would count
+      # the failure twice, or cut the notice's refresh short.
+      - script.stop: wake_watchdog
+      - script.execute: backoff
+      - if:
+          condition:
+            lambda: 'return id(failed_wakes) == 1 && !id(notice_on_panel);'
+          then:
+            - logger.log: "First failure, showing notice"
+            # The clock survives deep sleep; this just gives a fresh start a moment to sync.
+            - if:
+                condition:
+                  wifi.connected:
+                then:
+                  - wait_until:
+                      condition:
+                        time.has_time:
+                      timeout: 8s
+            - lambda: |-
+                // What went wrong, in a few words (the log has the detail), and when, if the time can be told.
+                auto now = id(sntp_time).now();
+                id(notice_text) = eink_format::failure_notice(id(fail_reason), now.is_valid(), now.timestamp,
+                                                              id(utc_offset_known), id(utc_offset_s));
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+      - script.execute: sleep_now

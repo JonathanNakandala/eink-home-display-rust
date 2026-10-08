@@ -54,6 +54,16 @@ one network need different `instance_name`s (a clash is resolved by adding a num
 3. To update later over the air, hold the middle button (KEY1) while waking. It is read once, at boot,
    and then the device stays awake until it is reset, so you can let go.
 
+### How the YAML is laid out
+
+`reterminal-e1003.yaml` is the device: its name, the C++ headers it includes, and what runs at boot. The rest is split
+by concern into ESPHome [packages](https://esphome.io/components/packages/) in `packages/`: `board`, `battery`,
+`clock`, `server`, `display` and `wake`. Each file holds the settings it uses (as `substitutions:`, with their
+defaults and what they mean) beside the code that uses them, so changing how the battery behaves means opening
+`battery.yaml` and nothing else. To change a default for one device, set the same name under `substitutions:` in
+`reterminal-e1003.yaml`, which wins over a package's. Ids (globals, scripts, sensors) are shared between packages,
+so a package may refer to another's, and the files only make sense together.
+
 ### Which display is which
 
 The device's name is `reterminal-e1003-` plus the last three bytes of its chip's MAC address, such as
