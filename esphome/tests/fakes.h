@@ -91,8 +91,10 @@ struct FakeEst : Est {
 struct FakeVerifier : Verifier {
   bool accepts = true;
   Bytes checked_against;
-  bool chains_to(const Bytes &, const Bytes &root) override {
+  std::vector<Bytes> checked_through;
+  bool chains_to(const Bytes &, const std::vector<Bytes> &intermediates, const Bytes &root) override {
     checked_against = root;
+    checked_through = intermediates;
     return accepts;
   }
 };

@@ -31,8 +31,12 @@ struct World {
   Outcome run() { return Joiner(clock, identity, est, verifier, "kitchen").run(); }
   // A certificate issued now, as the server does: from this moment, for 90 days.
   void issue(Result result = Result::ISSUED) {
-    est.enroll_reply = {result, CERT, {clock.time, clock.time + 90 * DAY}, 0};
-    est.renew_reply = est.enroll_reply;
+    Reply reply;
+    reply.result = result;
+    reply.certificate = CERT;
+    reply.lifetime = {clock.time, clock.time + 90 * DAY};
+    est.enroll_reply = reply;
+    est.renew_reply = reply;
   }
   // The display holds a good certificate and the root it came under.
   void pair(int64_t not_before = START, int64_t not_after = START + 90 * DAY) {
@@ -107,6 +111,15 @@ TEST(once_approved_the_certificate_is_kept_with_the_root_it_came_under) {
   CHECK_EQ(w.identity.certificates_saved, 1);
   CHECK(w.identity.last == Answer::NONE);
   CHECK(w.verifier.checked_against == ROOT);
+}
+
+TEST(the_certificate_is_checked_through_the_intermediates_the_server_presented) {
+  World w;
+  w.issue();
+  w.est.enroll_reply.intermediates = {Bytes{0x11}, Bytes{0x22}};
+  CHECK(w.run().paired);
+  CHECK_EQ(w.verifier.checked_through.size(), (size_t) 2);
+  CHECK(w.verifier.checked_through[0] == Bytes{0x11});
 }
 
 TEST(a_certificate_not_signed_under_the_root_is_not_kept) {
