@@ -7,6 +7,10 @@
 //! A client may present a certificate, and if it does it is checked against the authority; one that
 //! doesn't is let through to the endpoints that need no identity (a display joining has none yet).
 //! Whether a client certificate is required is each endpoint's decision.
+//!
+//! A client may resume an earlier session with a ticket. The identity of a resumed connection is the
+//! one the original handshake proved; whether that display is still a member is rechecked on each request
+//! as always.
 
 use std::sync::Arc;
 
@@ -218,6 +222,12 @@ pub fn server_config(
         .with_client_cert_verifier(verifier)
         .with_cert_resolver(certificate);
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    // A display that comes back within the ticket's life skips the certificate exchange and its
+    // signatures (the same key exchange still runs, so forward secrecy is kept). The keys that seal
+    // tickets are in memory only: a restart makes every display do one full handshake. Early data stays
+    // off (see `max_early_data_size`), so nothing a client sends can be replayed.
+    config.ticketer = provider::Ticketer::new().context("Failed to set up session tickets")?;
+    config.send_tls13_tickets = 1;
     Ok(config)
 }
 
@@ -305,6 +315,7 @@ mod tests {
         // The configuration offers no older version: a TLS 1.2-only client is refused (see the
         // end-to-end tests), and no tickets that would allow 0-RTT replay are accepted.
         assert_eq!(config.max_early_data_size, 0);
+        assert_eq!(config.send_tls13_tickets, 1);
     }
 
     /// A display's certificate from `authority`, as a bare leaf with nothing sent beside it.

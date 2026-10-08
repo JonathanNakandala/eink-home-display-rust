@@ -1555,3 +1555,85 @@ async fn a_display_that_showed_its_certificate_is_told_why_it_was_refused() {
         after.text()
     );
 }
+
+/// Asks for `path` over a new connection made with `config`, and says how the handshake went and what came back.
+async fn get_resuming(
+    harness: &Harness,
+    config: &Arc<ClientConfig>,
+    path: &str,
+) -> (rustls::HandshakeKind, Response) {
+    let tcp = TcpStream::connect(harness.address).await.unwrap();
+    let mut stream = TlsConnector::from(config.clone())
+        .connect(ServerName::try_from("localhost").unwrap(), tcp)
+        .await
+        .expect("the connection should be made");
+    let kind = stream.get_ref().1.handshake_kind().unwrap();
+    (kind, send(&mut stream, "GET", path, None, b"").await)
+}
+
+fn resuming_client(harness: &Harness, identity: Option<&Identity>) -> Arc<ClientConfig> {
+    Arc::new(client_config(
+        Trust::Authority(harness.authority.certificate()),
+        identity,
+        &[&rustls::version::TLS13],
+    ))
+}
+
+#[tokio::test]
+async fn a_display_that_comes_back_resumes_its_session_and_is_still_known_by_its_certificate() {
+    let harness = start_guarded(Access::Members).await;
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    let config = resuming_client(&harness, Some(&kitchen));
+
+    let (first, answer) = get_resuming(&harness, &config, "/who").await;
+    assert_eq!(first, rustls::HandshakeKind::Full);
+    assert_eq!(answer.text().trim(), "kitchen");
+
+    let (second, answer) = get_resuming(&harness, &config, "/who").await;
+    assert_eq!(second, rustls::HandshakeKind::Resumed);
+    assert_eq!((answer.status, answer.text().trim()), (200, "kitchen"));
+}
+
+#[tokio::test]
+async fn a_resumed_session_does_not_outlive_the_displays_membership() {
+    let harness = start_guarded(Access::Members).await;
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    let config = resuming_client(&harness, Some(&kitchen));
+    get_resuming(&harness, &config, "/who").await;
+
+    harness.enrollment.revoke(&device("kitchen")).await.unwrap();
+    let (kind, answer) = get_resuming(&harness, &config, "/who").await;
+    assert_eq!(kind, rustls::HandshakeKind::Resumed);
+    assert_eq!(answer.status, 403);
+    assert!(!answer.text().contains("kitchen"));
+}
+
+#[tokio::test]
+async fn a_client_with_no_certificate_stays_anonymous_when_it_resumes() {
+    let harness = start_guarded(Access::Open).await;
+    let config = resuming_client(&harness, None);
+    get_resuming(&harness, &config, "/who").await;
+    let (kind, answer) = get_resuming(&harness, &config, "/who").await;
+    assert_eq!(kind, rustls::HandshakeKind::Resumed);
+    assert_eq!(answer.text().trim(), "anonymous");
+}
+
+#[tokio::test]
+async fn a_ticket_the_server_does_not_know_falls_back_to_a_full_handshake() {
+    // One client configuration, so the ticket the first server gave is offered to the second. A different
+    // server has other ticket keys, as the same one has after a restart.
+    let config = Arc::new(client_config(
+        Trust::Anything,
+        None,
+        &[&rustls::version::TLS13],
+    ));
+    let first = start_guarded(Access::Open).await;
+    get_resuming(&first, &config, "/who").await;
+    let (kind, _) = get_resuming(&first, &config, "/who").await;
+    assert_eq!(kind, rustls::HandshakeKind::Resumed);
+
+    let second = start_guarded(Access::Open).await;
+    let (kind, answer) = get_resuming(&second, &config, "/who").await;
+    assert_eq!(kind, rustls::HandshakeKind::Full);
+    assert_eq!(answer.text().trim(), "anonymous");
+}
