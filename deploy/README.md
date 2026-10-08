@@ -90,16 +90,37 @@ certificate from the real one, so it is an error and not a fresh start. The same
 
 ### What is kept, and what to back up
 
-- **The authority**: `authority.pem` (public) and `authority.key` (the secret, readable by its owner only). It
-  lasts 20 years, and the server warns at every start from two years before its end. **Back up the directory.**
-  Without `authority.key` every display has to be paired again. The server logs the authority's fingerprint
-  at every start, so a changed one is visible.
-- **Which displays are members**: `pairings.json`, written whole through a temporary file and a rename, with the
-  version before the last change kept as `pairings.json.bak`. A file that can't be read stops the server from
-  starting instead of starting empty, and says where the `.bak` is. If the file is deleted and the `.bak` is
-  there, copy the `.bak` back: that loses only the last change, and a display whose record was lost
-  with it asks again with the key it holds and is a member again, with no one at the server.
+The authority has two levels, as a private authority should: a **root** that displays pin, and an
+**intermediate** that signs everything else. The root's key is used for one thing, signing a new
+intermediate, so losing or leaking the intermediate never means pairing every display again.
+
+| file in `[server.tls] directory` | what it is | secret? |
+|---|---|---|
+| `root.pem` | the root certificate (20 years): what displays are given to trust the server by | no |
+| `root.key` | the root's key. Used only to make an intermediate. The server never loads it to serve | **yes** |
+| `intermediate.pem` | the intermediate's certificate (5 years) and key, in one file so they are replaced together | **yes** |
+| `retired.pem` | earlier intermediates, kept until they end, because what they signed is still good | no |
+| `pairings.json` | which displays are members, written whole through a temporary file and a rename, with the version before the last change kept as `pairings.json.bak` | no |
+
+- **Back up the directory**, `root.pem` and `root.key` above all: without them every display has to be paired
+  again. The server logs the root's fingerprint at every start, so a changed one is visible.
+- **`root.key` may live elsewhere.** It is on the server for now, so an intermediate that is near its end (under
+  a year left) is replaced automatically at start-up. Moving it off the machine, to a password manager or a
+  USB stick, is better: the server then runs as before, and warns at every start once the intermediate has
+  under a year left. Put the key back, or give its path to the rotation, before the intermediate ends.
+  If the root key is lost, the server keeps working until the intermediate ends; after that the displays must
+  be paired again.
+- **A lost or leaked intermediate** is replaced from the root without touching any display: delete
+  `intermediate.pem` and start with `root.key` in place, and a new one is made. Displays keep their pin and
+  their codes, and renew onto the new intermediate. (A leaked intermediate's certificates stay good until they
+  end, but only members are served, so revoke what you don't trust.)
+- **Which displays are members**: a file that can't be read stops the server from starting instead of starting
+  empty, and says where the `.bak` is. If the file is deleted and the `.bak` is there, copy the `.bak` back:
+  that loses only the last change, and a display whose record was lost with it asks again with the key it holds
+  and is a member again, with no one at the server.
 - **Certificates are not kept** except the display's own. The server's certificate is made fresh in memory.
+- **An authority from before the two levels** (`authority.pem` and `authority.key`) is not read; remove them and
+  pair again.
 
 ### Names
 

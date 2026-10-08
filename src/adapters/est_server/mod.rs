@@ -115,7 +115,7 @@ impl EstServer {
             Utc::now(),
             settings.certificate_lifetime,
         )?);
-        let config = tls::server_config(certificate.clone(), authority.certificate())?;
+        let config = tls::server_config(certificate.clone(), &authority)?;
         let mut app = routes::router(
             enrollment,
             authority.clone() as Arc<dyn CertificateAuthority>,

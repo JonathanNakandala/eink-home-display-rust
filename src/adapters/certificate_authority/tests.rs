@@ -211,7 +211,7 @@ fn a_certificate_names_the_display_and_is_valid_for_the_time_asked() {
             .unwrap()
             .as_str()
             .unwrap(),
-        NAME
+        INTERMEDIATE_NAME
     );
     assert_eq!(
         cert.public_key().raw,
@@ -230,21 +230,47 @@ fn a_certificate_names_the_display_and_is_valid_for_the_time_asked() {
 }
 
 #[test]
-fn a_certificate_is_signed_by_the_authority() {
+fn a_certificate_is_signed_by_the_intermediate_and_by_nothing_else() {
     let authority = authority();
     let (_, request) = display("kitchen");
     let issued = issue(&authority, &request);
-    let (_, ca) = X509Certificate::from_der(authority.certificate()).unwrap();
+    let (_, intermediate) = X509Certificate::from_der(authority.intermediate().unwrap()).unwrap();
     parse(&issued)
-        .verify_signature(Some(ca.public_key()))
+        .verify_signature(Some(intermediate.public_key()))
         .unwrap();
-    // And by nothing else.
-    let other = self::authority();
-    let (_, other_ca) = X509Certificate::from_der(other.certificate()).unwrap();
+    // Not by the root directly: the root signs intermediates only.
+    let (_, root) = X509Certificate::from_der(authority.certificate()).unwrap();
     assert!(
         parse(&issued)
-            .verify_signature(Some(other_ca.public_key()))
+            .verify_signature(Some(root.public_key()))
             .is_err()
+    );
+    // And not by another authority's intermediate.
+    let other = self::authority();
+    let (_, other_intermediate) = X509Certificate::from_der(other.intermediate().unwrap()).unwrap();
+    assert!(
+        parse(&issued)
+            .verify_signature(Some(other_intermediate.public_key()))
+            .is_err()
+    );
+    // It says which key signed it, so a path can be found.
+    let authority_key = parse(&issued)
+        .get_extension_unique(&oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER)
+        .unwrap()
+        .expect("an authority key identifier")
+        .value
+        .to_vec();
+    let subject_key = intermediate
+        .get_extension_unique(&oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER)
+        .unwrap()
+        .expect("a subject key identifier")
+        .value
+        .to_vec();
+    assert!(
+        authority_key
+            .windows(subject_key.len() - 2)
+            .any(|w| w == &subject_key[2..]),
+        "the leaf's authority key identifier should be the intermediate's subject key identifier"
     );
 }
 
@@ -350,17 +376,46 @@ fn the_serial_in_the_certificate_is_the_one_reported() {
 }
 
 #[test]
-fn the_authority_may_sign_displays_but_not_further_authorities() {
+fn the_root_signs_one_level_of_authority_and_the_intermediate_none() {
     let authority = authority();
-    let (_, ca) = X509Certificate::from_der(authority.certificate()).unwrap();
-    let constraints = ca.basic_constraints().unwrap().unwrap().value;
+    let (_, root) = X509Certificate::from_der(authority.certificate()).unwrap();
+    let constraints = root.basic_constraints().unwrap().unwrap().value;
     assert!(constraints.ca);
-    assert_eq!(constraints.path_len_constraint, Some(0));
-    let usage = ca.key_usage().unwrap().unwrap().value;
+    assert_eq!(constraints.path_len_constraint, Some(1));
+    let usage = root.key_usage().unwrap().unwrap().value;
     assert!(usage.key_cert_sign() && !usage.digital_signature());
+    root.verify_signature(None)
+        .expect("the root is self-signed");
     assert_eq!(
         authority.not_after(),
-        now() + Duration::days(365 * AUTHORITY_YEARS)
+        now() + Duration::days(365 * ROOT_YEARS)
+    );
+
+    let (_, intermediate) = X509Certificate::from_der(authority.intermediate().unwrap()).unwrap();
+    let constraints = intermediate.basic_constraints().unwrap().unwrap().value;
+    assert!(constraints.ca);
+    assert_eq!(constraints.path_len_constraint, Some(0));
+    let usage = intermediate.key_usage().unwrap().unwrap().value;
+    assert!(usage.key_cert_sign() && !usage.digital_signature());
+    intermediate
+        .verify_signature(Some(root.public_key()))
+        .expect("the root signed it");
+    assert_eq!(
+        authority.intermediate_not_after(),
+        now() + Duration::days(365 * INTERMEDIATE_YEARS)
+    );
+}
+
+#[test]
+fn the_fingerprint_a_pairing_code_is_made_from_is_the_roots() {
+    let authority = authority();
+    assert_eq!(
+        authority.fingerprint(),
+        Fingerprint::of(authority.certificate())
+    );
+    assert_ne!(
+        authority.fingerprint(),
+        Fingerprint::of(authority.intermediate().unwrap())
     );
 }
 
@@ -402,14 +457,23 @@ fn the_servers_certificate_names_the_server_and_is_for_proving_it_to_a_display()
 }
 
 #[test]
-fn the_servers_certificate_is_signed_by_the_authority_and_matches_its_key() {
+fn the_servers_certificate_comes_with_its_intermediate_and_the_path_to_the_root_checks_out() {
     let authority = authority();
     let identity = authority
         .issue_server(&names(), now(), now() + Duration::days(90))
         .unwrap();
-    let (_, ca) = X509Certificate::from_der(authority.certificate()).unwrap();
+    let (_, root) = X509Certificate::from_der(authority.certificate()).unwrap();
+    let (_, intermediate) = X509Certificate::from_der(&identity.intermediate).unwrap();
     let (_, cert) = X509Certificate::from_der(&identity.certificate).unwrap();
-    cert.verify_signature(Some(ca.public_key())).unwrap();
+    assert_eq!(
+        identity.intermediate.as_ref(),
+        authority.intermediate().unwrap()
+    );
+    cert.verify_signature(Some(intermediate.public_key()))
+        .unwrap();
+    intermediate
+        .verify_signature(Some(root.public_key()))
+        .unwrap();
 
     let rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) = &identity.key else {
         panic!("expected a PKCS #8 key");
@@ -475,6 +539,15 @@ fn a_server_certificate_needs_usable_names() {
 mod saved {
     use super::*;
 
+    fn files(directory: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
     fn never_means_an_empty_directory_is_an_error_and_is_left_empty() {
         let parent = tempfile::tempdir().unwrap();
@@ -494,21 +567,26 @@ mod saved {
     fn a_new_authority_is_made_once_and_found_again() {
         let directory = tempfile::tempdir().unwrap();
         let first = open(directory.path(), Create::IfMissing).unwrap();
+        assert_eq!(
+            files(directory.path()),
+            ["intermediate.pem", "root.key", "root.pem"]
+        );
         let again = open(directory.path(), Create::IfMissing).unwrap();
         assert_eq!(first.fingerprint(), again.fingerprint());
         assert_eq!(first.certificate(), again.certificate());
-        // The reopened one signs for the same authority.
+        assert_eq!(first.intermediate(), again.intermediate());
+        // The reopened one signs under the same root.
         let (_, request) = display("kitchen");
         let issued = issue(&again, &request);
-        let (_, ca) = X509Certificate::from_der(first.certificate()).unwrap();
+        let (_, intermediate) = X509Certificate::from_der(first.intermediate().unwrap()).unwrap();
         parse(&issued)
-            .verify_signature(Some(ca.public_key()))
+            .verify_signature(Some(intermediate.public_key()))
             .unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn the_key_can_be_read_only_by_its_owner() {
+    fn the_keys_can_be_read_only_by_their_owner() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
         open(directory.path(), Create::IfMissing).unwrap();
@@ -519,52 +597,278 @@ mod saved {
                 .mode()
                 & 0o777
         };
-        assert_eq!(mode("authority.key"), 0o600);
+        assert_eq!(mode("root.key"), 0o600);
+        assert_eq!(mode("intermediate.pem"), 0o600);
+        assert_eq!(mode("root.pem"), 0o644);
     }
 
     #[test]
-    fn a_missing_half_is_an_error_not_a_fresh_start() {
-        for missing in ["authority.key", "authority.pem"] {
+    fn serving_does_not_need_the_roots_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let made = open(directory.path(), Create::IfMissing).unwrap();
+        std::fs::remove_file(directory.path().join("root.key")).unwrap();
+        let again = open(directory.path(), Create::Never).unwrap();
+        assert_eq!(made.fingerprint(), again.fingerprint());
+        let (_, request) = display("kitchen");
+        issue(&again, &request);
+        again
+            .issue_server(&names(), now(), now() + Duration::days(90))
+            .unwrap();
+        // And nothing was made in its place.
+        assert_eq!(files(directory.path()), ["intermediate.pem", "root.pem"]);
+    }
+
+    #[test]
+    fn a_missing_part_is_an_error_not_a_fresh_start() {
+        for missing in ["root.pem", "intermediate.pem"] {
             let directory = tempfile::tempdir().unwrap();
-            let original = open(directory.path(), Create::IfMissing).unwrap();
+            open(directory.path(), Create::IfMissing).unwrap();
+            // Without the root's key there is no way to replace the intermediate, so it is an error.
+            std::fs::remove_file(directory.path().join("root.key")).unwrap();
             std::fs::remove_file(directory.path().join(missing)).unwrap();
             let error = open(directory.path(), Create::IfMissing)
                 .err()
                 .expect("should refuse")
                 .to_string();
             assert!(error.contains("not making a new authority"), "{error}");
-            // Nothing was made or overwritten.
             assert_eq!(
-                directory.path().join("authority.pem").exists(),
-                missing != "authority.pem"
+                directory.path().join("root.pem").exists(),
+                missing != "root.pem",
+                "nothing was made or overwritten"
             );
-            drop(original);
         }
+        // A root's key alone is not an authority either.
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("root.key"), "x").unwrap();
+        let error = open(directory.path(), Create::IfMissing)
+            .err()
+            .expect("should refuse")
+            .to_string();
+        assert!(error.contains("not making a new authority"), "{error}");
+        assert_eq!(files(directory.path()), ["root.key"]);
     }
 
     #[test]
-    fn a_key_that_belongs_to_another_authority_is_refused() {
-        let (_, certificate, _) = PrivateAuthority::generate(now()).unwrap();
-        let (_, _, other_key) = PrivateAuthority::generate(now()).unwrap();
-        let error = PrivateAuthority::from_pem(&certificate, &other_key)
-            .err()
-            .expect("should refuse")
+    fn a_lost_intermediate_is_replaced_from_the_root_and_displays_are_not_paired_again() {
+        let directory = tempfile::tempdir().unwrap();
+        let before = open(directory.path(), Create::IfMissing).unwrap();
+        let (_, request) = display("kitchen");
+        let old = issue(&before, &request);
+        std::fs::remove_file(directory.path().join("intermediate.pem")).unwrap();
+
+        let after = open(directory.path(), Create::Never).unwrap();
+        // The same root, so the same pin and the same codes.
+        assert_eq!(before.fingerprint(), after.fingerprint());
+        assert_ne!(before.intermediate(), after.intermediate());
+        // A certificate the lost intermediate signed no longer has an intermediate to check against, and
+        // that is all: the display renews and gets one under the new intermediate.
+        let new = issue(&after, &request);
+        let (_, intermediate) = X509Certificate::from_der(after.intermediate().unwrap()).unwrap();
+        parse(&new)
+            .verify_signature(Some(intermediate.public_key()))
+            .unwrap();
+        assert!(
+            parse(&old)
+                .verify_signature(Some(intermediate.public_key()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn an_old_single_level_authority_is_refused_with_the_reason() {
+        for old in ["authority.pem", "authority.key"] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::write(directory.path().join(old), "x").unwrap();
+            let error = open(directory.path(), Create::IfMissing)
+                .err()
+                .expect("should refuse")
+                .to_string();
+            assert!(error.contains("one level"), "{error}");
+        }
+    }
+
+    /// Replaces the intermediate in `directory` with one made `age` ago, as if the authority were that old.
+    fn age_the_intermediate(directory: &std::path::Path, age: Duration) {
+        let root = std::fs::read_to_string(directory.join("root.pem")).unwrap();
+        let key = std::fs::read_to_string(directory.join("root.key")).unwrap();
+        let aged = new_intermediate(&root, &key, Utc::now() - age).unwrap();
+        std::fs::write(directory.join("intermediate.pem"), aged).unwrap();
+    }
+
+    #[test]
+    fn an_intermediate_near_its_end_is_replaced_when_the_roots_key_is_there() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = open(directory.path(), Create::IfMissing).unwrap();
+        age_the_intermediate(directory.path(), Duration::days(365 * 4 + 200));
+        let aged = open(directory.path(), Create::Never).unwrap();
+        // Opening replaced it, so what is in use now has years left.
+        assert!(aged.intermediate_not_after() - Utc::now() > Duration::days(365 * 4));
+        assert_eq!(first.fingerprint(), aged.fingerprint());
+        // The one it replaced is kept, with what it signed still good.
+        assert!(directory.path().join("retired.pem").exists());
+        assert_eq!(aged.intermediates().len(), 2);
+    }
+
+    #[test]
+    fn an_intermediate_with_plenty_of_time_left_is_left_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        open(directory.path(), Create::IfMissing).unwrap();
+        age_the_intermediate(directory.path(), Duration::days(365 * 3));
+        let before = std::fs::read(directory.path().join("intermediate.pem")).unwrap();
+        open(directory.path(), Create::Never).unwrap();
+        assert_eq!(
+            std::fs::read(directory.path().join("intermediate.pem")).unwrap(),
+            before
+        );
+        assert!(!directory.path().join("retired.pem").exists());
+    }
+
+    #[test]
+    fn without_the_roots_key_an_intermediate_near_its_end_is_still_served_with_a_warning() {
+        let directory = tempfile::tempdir().unwrap();
+        open(directory.path(), Create::IfMissing).unwrap();
+        age_the_intermediate(directory.path(), Duration::days(365 * 4 + 200));
+        let aged_file = std::fs::read(directory.path().join("intermediate.pem")).unwrap();
+        std::fs::remove_file(directory.path().join("root.key")).unwrap();
+        let authority = open(directory.path(), Create::Never).unwrap();
+        // Still in use and untouched; replacing it waits for the key.
+        assert!(authority.intermediate_not_after() - Utc::now() < Duration::days(365));
+        assert_eq!(
+            std::fs::read(directory.path().join("intermediate.pem")).unwrap(),
+            aged_file
+        );
+    }
+
+    #[test]
+    fn rotating_with_the_key_kept_elsewhere_and_what_the_old_intermediate_signed_stays_good() {
+        let directory = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let before = open(directory.path(), Create::IfMissing).unwrap();
+        let moved = elsewhere.path().join("root.key");
+        std::fs::rename(directory.path().join("root.key"), &moved).unwrap();
+        let (_, request) = display("kitchen");
+        let old = issue(&before, &request);
+
+        rotate_intermediate(directory.path(), Some(&moved)).unwrap();
+        let after = open(directory.path(), Create::Never).unwrap();
+        assert_ne!(before.intermediate(), after.intermediate());
+        assert_eq!(before.fingerprint(), after.fingerprint());
+        // Both are known to the server, so a certificate from the old one is still completed to the root.
+        let known = after.intermediates();
+        assert_eq!(known.len(), 2);
+        assert!(known.contains(&before.intermediate().unwrap()));
+        let (_, kept) = X509Certificate::from_der(before.intermediate().unwrap()).unwrap();
+        parse(&old)
+            .verify_signature(Some(kept.public_key()))
+            .unwrap();
+        // New certificates come from the new one.
+        let new = issue(&after, &request);
+        let (_, current) = X509Certificate::from_der(after.intermediate().unwrap()).unwrap();
+        parse(&new)
+            .verify_signature(Some(current.public_key()))
+            .unwrap();
+        // The key was where it had been put and is not in the directory.
+        assert!(!directory.path().join("root.key").exists());
+    }
+
+    #[test]
+    fn a_retired_intermediate_that_has_ended_is_dropped() {
+        let directory = tempfile::tempdir().unwrap();
+        open(directory.path(), Create::IfMissing).unwrap();
+        age_the_intermediate(directory.path(), Duration::days(365 * 6));
+        // It ended a year ago; rotating retires it, and the next open no longer carries it.
+        rotate_intermediate(directory.path(), None).unwrap();
+        let authority = open(directory.path(), Create::Never).unwrap();
+        assert_eq!(authority.intermediates().len(), 1);
+    }
+
+    #[test]
+    fn a_root_key_that_belongs_to_another_root_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        open(directory.path(), Create::IfMissing).unwrap();
+        let (_, other) = PrivateAuthority::generate(now()).unwrap();
+        let root = std::fs::read_to_string(directory.path().join("root.pem")).unwrap();
+        let error = new_intermediate(&root, &other.root_key, now())
+            .expect_err("should refuse")
             .to_string();
         assert!(error.contains("does not belong"), "{error}");
     }
 
     #[test]
-    fn a_certificate_that_is_not_an_authority_is_refused() {
-        // A display's certificate, with its key, is not an authority.
-        let authority = authority();
-        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-        let request = request_with(&key, params("kitchen"), vec![]);
-        let issued = issue(&authority, &request);
-        let pem = pem_of(&issued.der);
-        let error = PrivateAuthority::from_pem(&pem, &key.serialize_pem())
+    fn an_intermediate_signed_by_another_root_is_refused() {
+        let (_, ours) = PrivateAuthority::generate(now()).unwrap();
+        let (_, theirs) = PrivateAuthority::generate(now()).unwrap();
+        let error =
+            PrivateAuthority::from_pem(&ours.root_certificate, &theirs.intermediate, &[], now())
+                .err()
+                .expect("should refuse")
+                .to_string();
+        assert!(error.contains("not signed by this root"), "{error}");
+    }
+
+    #[test]
+    fn an_intermediate_whose_key_is_another_ones_is_refused() {
+        let (_, one) = PrivateAuthority::generate(now()).unwrap();
+        let root_key = key_from_pem(&one.root_key, "root").unwrap();
+        // Same root, a second intermediate: take its certificate with the first one's key.
+        let second = new_intermediate(&one.root_certificate, &one.root_key, now()).unwrap();
+        let mixed = format!(
+            "{}{}",
+            split_pem_blocks(&second).0,
+            split_pem_blocks(&one.intermediate).1
+        );
+        let error = PrivateAuthority::from_pem(&one.root_certificate, &mixed, &[], now())
             .err()
             .expect("should refuse")
             .to_string();
+        assert!(error.contains("does not belong"), "{error}");
+        drop(root_key);
+    }
+
+    /// An intermediate file's certificate and its key.
+    fn split_pem_blocks(pem: &str) -> (String, String) {
+        let at = pem.find("-----BEGIN PRIVATE KEY-----").unwrap();
+        (pem[..at].to_owned(), pem[at..].to_owned())
+    }
+
+    #[test]
+    fn an_intermediate_that_may_sign_further_authorities_is_refused() {
+        // Signed by the right root, but allowed one more level beneath it.
+        let (_, ours) = PrivateAuthority::generate(now()).unwrap();
+        let root_key = key_from_pem(&ours.root_key, "root").unwrap();
+        let root_der = certificate_from_pem(&ours.root_certificate, "root").unwrap();
+        let issuer = Issuer::from_ca_cert_der(&root_der, root_key).unwrap();
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let params = authority_params("too much", now(), 1, 1).unwrap();
+        let certificate = params.signed_by(&key, &issuer).unwrap();
+        let pem = format!("{}{}", certificate.pem(), key.serialize_pem());
+        let error = PrivateAuthority::from_pem(&ours.root_certificate, &pem, &[], now())
+            .err()
+            .expect("should refuse")
+            .to_string();
+        assert!(error.contains("path length"), "{error}");
+    }
+
+    #[test]
+    fn something_that_is_not_a_root_is_refused_as_one() {
+        let (_, ours) = PrivateAuthority::generate(now()).unwrap();
+        // An intermediate offered as the root: it is an authority, but not self-signed.
+        let (certificate, _) = split_pem_blocks(&ours.intermediate);
+        let error = PrivateAuthority::from_pem(&certificate, &ours.intermediate, &[], now())
+            .err()
+            .expect("should refuse")
+            .to_string();
+        assert!(error.contains("not self-signed"), "{error}");
+
+        // A display's certificate is not an authority at all.
+        let authority = authority();
+        let (_, request) = display("kitchen");
+        let issued = issue(&authority, &request);
+        let error =
+            PrivateAuthority::from_pem(&pem_of(&issued.der), &ours.intermediate, &[], now())
+                .err()
+                .expect("should refuse")
+                .to_string();
         assert!(error.contains("not a CA"), "{error}");
     }
 
@@ -584,8 +888,8 @@ mod saved {
     #[test]
     fn garbage_in_the_files_is_an_error_naming_the_directory() {
         let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("authority.pem"), "nonsense").unwrap();
-        std::fs::write(directory.path().join("authority.key"), "nonsense").unwrap();
+        std::fs::write(directory.path().join("root.pem"), "nonsense").unwrap();
+        std::fs::write(directory.path().join("intermediate.pem"), "nonsense").unwrap();
         let error = format!(
             "{:#}",
             open(directory.path(), Create::IfMissing)
@@ -593,5 +897,19 @@ mod saved {
                 .expect("should refuse")
         );
         assert!(error.contains("not usable"), "{error}");
+    }
+
+    #[test]
+    fn an_intermediate_never_outlives_the_root() {
+        // The root was made 19 years ago, so it has a year left. An intermediate made now would run for
+        // five, but it ends with the root.
+        let (_, files) = PrivateAuthority::generate(Utc::now() - Duration::days(365 * 19)).unwrap();
+        let intermediate =
+            new_intermediate(&files.root_certificate, &files.root_key, Utc::now()).unwrap();
+        let authority =
+            PrivateAuthority::from_pem(&files.root_certificate, &intermediate, &[], Utc::now())
+                .unwrap();
+        assert!(authority.not_after() - Utc::now() < Duration::days(366));
+        assert_eq!(authority.intermediate_not_after(), authority.not_after());
     }
 }

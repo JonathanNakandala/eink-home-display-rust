@@ -98,8 +98,13 @@ fn certificates(chain: &[&[u8]]) -> Response {
         .into_response()
 }
 
+/// The root, which a display pins, and the intermediate that signs under it (RFC 7030 section 4.1.3: the
+/// certificates needed to build a path from an issued certificate to the root). The root is the one that
+/// is self-signed.
 async fn cacerts(State(est): State<Arc<Est>>) -> Response {
-    certificates(&[est.authority.certificate()])
+    let mut chain = vec![est.authority.certificate()];
+    chain.extend(est.authority.intermediate());
+    certificates(&chain)
 }
 
 async fn csrattrs(State(est): State<Arc<Est>>) -> Response {

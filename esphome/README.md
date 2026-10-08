@@ -164,15 +164,20 @@ port.
 the fixed name **`eink-home-display.internal`**, which the server's certificate always has and no configuration can
 remove, not against the address and not against the mDNS name (which the owner can change). It trusts exactly one
 certificate authority, the server's, kept in flash and not in the firmware, so one firmware serves every home.
-The server sends one certificate (about 480 bytes), ECDSA on P-256. The name matters: a display's own certificate
+The server sends two certificates in the handshake (its own and the intermediate, about 480 bytes each),
+ECDSA on P-256, and the display builds the path to the root it pins. The intermediate is replaced every few
+years, and nothing on the display changes when it is. The name matters: a display's own certificate
 has none, so it can't pass for the server to another display. (Whether mbedTLS here can check a name other than
 the address connected to is to be verified on a device.)
 
 **Joining (EST, RFC 7030 as updated by RFC 8951; see `reference/`).** All under `/.well-known/est/`, TLS 1.3:
 
 1. First wake with no authority stored: connect to `tlsport` **without verifying the server** and `GET cacerts`.
-   The body is base64 of a DER CMS `SignedData` holding the authority's certificate (`certs-only`). Keep the
-   certificate, in memory for now.
+   The body is base64 of a DER CMS `SignedData` (`certs-only`) holding two certificates: the **root** and the
+   **intermediate** under it. Pick out the root, the one that is self-signed (its subject and issuer are the
+   same and its signature checks against its own key), and keep only that, in memory for now. Ignore the
+   intermediate: the server sends it with its own certificate in every handshake, and completes a display's
+   path itself, so the display never needs to keep or send one.
 2. Make an ECDSA P-256 key (kept in flash, never leaves the display, not regenerated on renewal) and a PKCS #10
    request signed with ECDSA and SHA-256, with the display's name (the same name it sends as `device=`) as its
    only common name. Other fields are ignored. If the server's `csrattrs` includes the challenge-password OID, put
@@ -186,7 +191,7 @@ the address connected to is to be verified on a device.)
    `SubjectPublicKeyInfo` of the display's key. Show it in a large font, upper case; the alphabet leaves out
    `I`, `L`, `O` and `U`, and the server reads a typed `I`/`L` as `1` and `O` as `0`, in any case.
    Example: authority DER `30 03 02 01 01`, name `reterminal-e1003-a1b2c3`, SPKI the 91 bytes `00 01 .. 5a`
-   give `B0AJ-QTW6`. The owner types this at the server; if someone is between the two, the codes differ and
+   give `B0AJ-QTW6`. The authority DER here is the **root's**. The owner types this at the server; if someone is between the two, the codes differ and
    the approval fails. That comparison is the only thing that authenticates the first contact.
 4. `POST simpleenroll` (`Content-Type: application/pkcs10`, body base64 of the DER request, no
    `Content-Transfer-Encoding`). `202` with `Retry-After`: not approved yet; sleep that long and ask again (a new

@@ -43,8 +43,14 @@ pub enum RequestError {
 }
 
 pub trait CertificateAuthority: Send + Sync {
-    /// The authority's own certificate: what a display is given to trust the server by.
+    /// The root's certificate: what a display is given to trust the server by, and pins.
     fn certificate(&self) -> &[u8];
+
+    /// The intermediate that signs certificates under the root, if there is one. It goes with the root to
+    /// whoever asks for the authority's certificates, so a path from a certificate to the root can be built.
+    fn intermediate(&self) -> Option<&[u8]> {
+        None
+    }
 
     fn fingerprint(&self) -> Fingerprint;
 

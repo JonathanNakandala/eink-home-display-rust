@@ -534,9 +534,48 @@ async fn the_authority_can_be_fetched_by_anyone_and_parses_as_a_certs_only_messa
     let harness = start().await;
     let mut stream = connect(&harness, Trust::Anything, None).await;
     let response = send(&mut stream, "GET", CACERTS, None, b"").await;
+    // The root, which a display pins, and then the intermediate it needs to build a path to it.
+    let certificates = response.certificates();
+    assert_eq!(certificates.len(), 2);
+    assert_eq!(certificates[0], harness.authority.certificate());
+    assert_eq!(certificates[1], harness.authority.intermediate().unwrap());
+    let (_, root) = x509_parser::parse_x509_certificate(&certificates[0]).unwrap();
     assert_eq!(
-        response.certificates(),
-        [harness.authority.certificate().to_vec()]
+        root.subject(),
+        root.issuer(),
+        "the root is the self-signed one"
+    );
+    root.verify_signature(None).unwrap();
+}
+
+#[tokio::test]
+async fn the_server_sends_its_intermediate_with_its_certificate_so_a_display_needs_only_the_root() {
+    let harness = start().await;
+    let stream = connect(
+        &harness,
+        Trust::Authority(harness.authority.certificate()),
+        None,
+    )
+    .await;
+    let sent = stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .expect("a chain")
+        .to_vec();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[1].as_ref(), harness.authority.intermediate().unwrap());
+}
+
+#[tokio::test]
+async fn a_display_that_sends_only_its_own_certificate_is_still_known() {
+    // The server completes the path from the intermediates it holds, so the display need not keep or send
+    // its intermediate. `join` and `get_as` show a bare certificate, with nothing else.
+    let harness = start_guarded(Access::Members).await;
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    assert_eq!(
+        get_as(&harness, "/who", Some(&kitchen)).await.text().trim(),
+        "kitchen"
     );
 }
 
@@ -688,7 +727,7 @@ async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_goo
     assert!(anonymous.header("www-authenticate").is_none());
 
     // A certificate from some other authority is refused at the handshake.
-    let (other_authority, _, _) =
+    let (other_authority, _) =
         crate::adapters::certificate_authority::PrivateAuthority::generate(chrono::Utc::now())
             .unwrap();
     let their_key = new_key();

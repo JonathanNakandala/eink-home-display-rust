@@ -1,9 +1,19 @@
-//! Keeps the authority in two files, and makes it the first time.
+//! Keeps the authority in files, and makes it the first time.
 //!
-//! `authority.pem` is the certificate (public: it is what displays are given) and `authority.key` is its
-//! private key, readable only by the server's user. If only one of the two is there, something has
-//! been deleted or moved, and making a new authority would quietly strand every paired display, so it
-//! is an error and not a fresh start.
+//! - `root.pem`: the root certificate. Public: it is what displays are given to trust the server by.
+//! - `root.key`: the root's key, readable only by the server's user. It is used for one thing, signing an
+//!   intermediate, and the server never loads it to serve. It may be moved off the machine: the server then
+//!   runs as before, and an intermediate that is due to be replaced waits for the key to be put back (or
+//!   for `rotate_intermediate` to be given its path).
+//! - `intermediate.pem`: the intermediate's certificate and key together, so the two are always replaced
+//!   as one and can't be found not to match.
+//! - `retired.pem`: earlier intermediates, kept until they end, because certificates they signed are still
+//!   good and a display need not send its intermediate.
+//!
+//! If the files that make up the authority are only partly there, something has been deleted or moved, and
+//! making a new authority would quietly strand every paired display, so it is an error and not a fresh
+//! start. The exception is a root with its key and no intermediate, which is how an intermediate is lost
+//! and replaced.
 
 use std::fs;
 use std::io::Write;
@@ -12,10 +22,15 @@ use std::path::Path;
 use anyhow::{Context, anyhow};
 use chrono::Utc;
 
-use super::PrivateAuthority;
+use super::{PrivateAuthority, ROTATE_WITHIN, new_intermediate};
 
-const CERTIFICATE: &str = "authority.pem";
-const KEY: &str = "authority.key";
+const ROOT_CERTIFICATE: &str = "root.pem";
+const ROOT_KEY: &str = "root.key";
+const INTERMEDIATE: &str = "intermediate.pem";
+const RETIRED: &str = "retired.pem";
+/// What an earlier version of this program called its single-level authority.
+const OLD_CERTIFICATE: &str = "authority.pem";
+const OLD_KEY: &str = "authority.key";
 
 /// Whether to make an authority when there is none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,71 +41,202 @@ pub enum Create {
     Never,
 }
 
-/// The authority kept in `directory`, made there first if there is none and `create` allows it.
+/// The authority kept in `directory`, made there first if there is none and `create` allows it. An
+/// intermediate that is near its end is replaced when the root's key is there to do it.
 pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority> {
-    let certificate_path = directory.join(CERTIFICATE);
-    let key_path = directory.join(KEY);
-    match (certificate_path.exists(), key_path.exists()) {
-        (true, true) => {
-            let certificate = fs::read_to_string(&certificate_path)
-                .with_context(|| format!("Failed to read {}", certificate_path.display()))?;
-            let key = fs::read_to_string(&key_path)
-                .with_context(|| format!("Failed to read {}", key_path.display()))?;
-            PrivateAuthority::from_pem(&certificate, &key)
-                .with_context(|| format!("The authority in {} is not usable", directory.display()))
+    for old in [OLD_CERTIFICATE, OLD_KEY] {
+        if directory.join(old).exists() {
+            return Err(anyhow!(
+                "{} is from an earlier version that had one level of authority, which is no longer read. \
+                 Nothing it signed can be used; remove it and start again",
+                directory.join(old).display()
+            ));
         }
-        (false, false) if create == Create::Never => Err(anyhow!(
-            "There is no certificate authority in {}",
-            directory.display()
-        )),
-        (false, false) => {
-            fs::create_dir_all(directory)
-                .with_context(|| format!("Failed to create {}", directory.display()))?;
-            // Holds the authority's key, so no one else needs to see in.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-                    .with_context(|| format!("Failed to restrict {}", directory.display()))?;
+    }
+    let root = directory.join(ROOT_CERTIFICATE);
+    let root_key = directory.join(ROOT_KEY);
+    let intermediate = directory.join(INTERMEDIATE);
+    match (root.exists(), intermediate.exists()) {
+        (true, true) => {
+            let authority = load(directory)?;
+            let left = authority.intermediate_not_after() - Utc::now();
+            if left >= ROTATE_WITHIN {
+                return Ok(authority);
             }
-            let (authority, certificate, key) = PrivateAuthority::generate(Utc::now())?;
-            // The key first: with a certificate and no key, a crash in between would leave the
-            // half-made state that is refused above, not a usable one.
-            write_private(&key_path, &key)?;
-            fs::write(&certificate_path, certificate)
-                .with_context(|| format!("Failed to write {}", certificate_path.display()))?;
-            log::info!(
-                "Made a new certificate authority in {}",
-                directory.display()
+            if root_key.exists() {
+                log::info!(
+                    "The intermediate ends in {} days; replacing it",
+                    left.num_days()
+                );
+                rotate_intermediate(directory, None)?;
+                return load(directory);
+            }
+            log::warn!(
+                "The intermediate certificate ends in {} days and {} is not here to replace it. Put the \
+                 root's key back, or run the rotation with its path, before then: after it ends no display \
+                 can be served",
+                left.num_days().max(0),
+                root_key.display()
             );
             Ok(authority)
         }
-        (true, false) => Err(anyhow!(
-            "{} is there but {} is not; not making a new authority, which would strand the paired displays",
-            certificate_path.display(),
-            key_path.display()
-        )),
-        (false, true) => Err(anyhow!(
-            "{} is there but {} is not; not making a new authority, which would strand the paired displays",
-            key_path.display(),
-            certificate_path.display()
+        (true, false) if root_key.exists() => {
+            // The intermediate is gone but the root and its key are not: the way an intermediate is replaced.
+            log::warn!(
+                "{} is missing; making a new intermediate from the root",
+                intermediate.display()
+            );
+            rotate_intermediate(directory, None)?;
+            load(directory)
+        }
+        (false, false) if !root_key.exists() => match create {
+            Create::Never => Err(anyhow!(
+                "There is no certificate authority in {}",
+                directory.display()
+            )),
+            Create::IfMissing => create_all(directory),
+        },
+        _ => Err(anyhow!(
+            "{} is only partly there (it needs {ROOT_CERTIFICATE} and {INTERMEDIATE}, and {ROOT_KEY} to replace \
+             the intermediate); not making a new authority, which would strand the paired displays",
+            directory.display()
         )),
     }
 }
 
-/// Writes a file only its owner can read, from the moment it exists (not made open and then
-/// narrowed), and never over one that is already there.
-fn write_private(path: &Path, contents: &str) -> anyhow::Result<()> {
+fn load(directory: &Path) -> anyhow::Result<PrivateAuthority> {
+    let read = |name: &str| {
+        let path = directory.join(name);
+        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))
+    };
+    let retired = match read(RETIRED) {
+        Ok(text) => split_certificates(&text),
+        Err(_) if !directory.join(RETIRED).exists() => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    PrivateAuthority::from_pem(
+        &read(ROOT_CERTIFICATE)?,
+        &read(INTERMEDIATE)?,
+        &retired,
+        Utc::now(),
+    )
+    .with_context(|| format!("The authority in {} is not usable", directory.display()))
+}
+
+fn create_all(directory: &Path) -> anyhow::Result<PrivateAuthority> {
+    fs::create_dir_all(directory)
+        .with_context(|| format!("Failed to create {}", directory.display()))?;
+    // Holds the keys, so no one else needs to see in.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("Failed to restrict {}", directory.display()))?;
+    }
+    let (authority, files) = PrivateAuthority::generate(Utc::now())?;
+    // The root's key first and the intermediate last. Without the intermediate nothing has been signed,
+    // so a crash before it is a start that can be repeated; and with it, the authority is whole.
+    write_atomically(&directory.join(ROOT_KEY), &files.root_key, true)?;
+    write_atomically(
+        &directory.join(ROOT_CERTIFICATE),
+        &files.root_certificate,
+        false,
+    )?;
+    write_atomically(&directory.join(INTERMEDIATE), &files.intermediate, true)?;
+    log::info!(
+        "Made a new certificate authority in {}. {ROOT_KEY} there is used only to replace the intermediate \
+         every few years; back it up, and keep it off this machine if you can",
+        directory.display()
+    );
+    Ok(authority)
+}
+
+/// Replaces the intermediate with a new one signed by the root, keeping the old one until it ends so
+/// that what it signed stays good. The root's key is `root_key`, or `root.key` in `directory`.
+///
+/// The two files change one after the other, each whole or not at all: the retired list first, so that a
+/// crash between them leaves the old intermediate still in use and also kept, which is harmless.
+pub fn rotate_intermediate(directory: &Path, root_key: Option<&Path>) -> anyhow::Result<()> {
+    let key_path = root_key
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| directory.join(ROOT_KEY));
+    let read = |path: &Path| {
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))
+    };
+    let root_certificate = read(&directory.join(ROOT_CERTIFICATE))?;
+    let new = new_intermediate(&root_certificate, &read(&key_path)?, Utc::now())?;
+
+    let intermediate_path = directory.join(INTERMEDIATE);
+    if intermediate_path.exists() {
+        let old = read(&intermediate_path)?;
+        let certificate = split_certificates(&old)
+            .into_iter()
+            .next()
+            .context("The intermediate being replaced has no certificate in it")?;
+        let retired_path = directory.join(RETIRED);
+        let mut retired = if retired_path.exists() {
+            read(&retired_path)?
+        } else {
+            String::new()
+        };
+        if !retired.is_empty() && !retired.ends_with('\n') {
+            retired.push('\n');
+        }
+        retired.push_str(&certificate);
+        write_atomically(&retired_path, &retired, false)?;
+    }
+    write_atomically(&intermediate_path, &new, true)?;
+    log::info!("Replaced the intermediate certificate");
+    Ok(())
+}
+
+/// The certificates in `pem`, each as its own PEM.
+fn split_certificates(pem: &str) -> Vec<String> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let mut found = Vec::new();
+    let mut rest = pem;
+    while let Some(start) = rest.find(BEGIN) {
+        let Some(end) = rest[start..].find(END) else {
+            break;
+        };
+        let stop = start + end + END.len();
+        found.push(format!("{}\n", &rest[start..stop]));
+        rest = &rest[stop..];
+    }
+    found
+}
+
+/// Writes a file whole or not at all: to a new file beside it, then renamed over. A `private` one can be
+/// read only by its owner from the moment it exists (not made open and then narrowed).
+fn write_atomically(path: &Path, contents: &str, private: bool) -> anyhow::Result<()> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("A file has no name")?;
+    let temporary = path.with_file_name(format!(".{name}.new"));
+    match fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(e).with_context(|| format!("Failed to clear {}", temporary.display()));
+        }
+    }
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(if private { 0o600 } else { 0o644 });
     }
+    #[cfg(not(unix))]
+    let _ = private;
     let mut file = options
-        .open(path)
-        .with_context(|| format!("Failed to create {}", path.display()))?;
+        .open(&temporary)
+        .with_context(|| format!("Failed to create {}", temporary.display()))?;
     file.write_all(contents.as_bytes())
-        .with_context(|| format!("Failed to write {}", path.display()))
+        .and_then(|()| file.sync_all())
+        .with_context(|| format!("Failed to write {}", temporary.display()))?;
+    fs::rename(&temporary, path)
+        .with_context(|| format!("Failed to put {} in place", path.display()))
 }
