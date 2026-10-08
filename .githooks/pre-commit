@@ -1,0 +1,30 @@
+#!/bin/sh
+# Checks the parts of the repository a commit touches, so what GitHub Actions would catch is caught here, for
+# nothing. Quick (a few seconds): the slower `cargo test` runs before a push (pre-push).
+#
+# It checks the working tree, not the staged content, so a file staged only in part is checked whole.
+# Skip it for one commit with `git commit --no-verify`. Turn the hooks on with:
+#   git config core.hooksPath .githooks
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+touches() { printf '%s\n' "$staged" | grep -Eq "$1"; }
+
+if touches '(\.rs$|^Cargo\.(toml|lock)$)'; then
+    echo "pre-commit: Rust (cargo fmt, clippy)"
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+fi
+
+if touches '^(esphome/|pyproject\.toml$|poetry\.lock$|\.yamllint\.yaml$)'; then
+    # Poetry is how the firmware's tools are installed (see pyproject.toml). Without it these can't run, which
+    # is said out loud and not skipped quietly.
+    export PATH="$HOME/.local/bin:$PATH"
+    if command -v poetry >/dev/null 2>&1 && [ -x .venv/bin/esphome ]; then
+        echo "pre-commit: firmware (lint, YAML check, host tests)"
+        make -C esphome lint check test
+    else
+        echo "pre-commit: SKIPPED the firmware checks: run 'poetry install' (needs Poetry) to set them up." >&2
+    fi
+fi

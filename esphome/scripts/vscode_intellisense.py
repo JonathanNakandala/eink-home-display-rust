@@ -28,7 +28,7 @@ def main_command() -> list[str]:
 
 
 def flag_values(command: list[str], prefix: str) -> list[str]:
-    return [arg[len(prefix):] for arg in command if arg.startswith(prefix)]
+    return [arg[len(prefix) :] for arg in command if arg.startswith(prefix)]
 
 
 def portable(path: str) -> str:
@@ -36,14 +36,14 @@ def portable(path: str) -> str:
     so the file does not hold this machine's user name or where the repository is checked out."""
     for prefix, variable in ((str(ROOT), "${workspaceFolder}"), (str(Path.home()), "${env:HOME}")):
         if path == prefix or path.startswith(prefix + "/"):
-            return variable + path[len(prefix):]
+            return variable + path[len(prefix) :]
     return path
 
 
 def standard(command: list[str], default: str) -> str:
     for arg in command:
         if arg.startswith("-std="):
-            return arg[len("-std="):].replace("gnu++", "c++").replace("gnu", "c")
+            return arg[len("-std=") :].replace("gnu++", "c++").replace("gnu", "c")
     return default
 
 

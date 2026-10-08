@@ -37,17 +37,20 @@ check: secrets.yaml
 compile: secrets.yaml
 	$(POETRY) run esphome compile $(YAML)
 
-# The C++ is held to .clang-format, which is the style it is already written in. `lint` fails on a difference and
+# The C++ is held to .clang-format, and the helper script to ruff (configured in ../pyproject.toml), which is the style it is already written in. `lint` fails on a difference and
 # `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
 CPP := $(wildcard eink_*.h) $(wildcard tests/*.cpp) tests/check.h
 
 .PHONY: lint
 lint:
 	$(POETRY) run clang-format --dry-run -Werror $(CPP)
+	$(POETRY) run ruff check scripts
+	$(POETRY) run ruff format --check scripts
 
 .PHONY: format
 format:
 	$(POETRY) run clang-format -i $(CPP)
+	$(POETRY) run ruff format scripts
 
 # Writes .vscode/c_cpp_properties.json from the compiler command the last `compile` recorded, so the editor finds
 # ESPHome's and ESP-IDF's headers. The file holds paths on this machine and is git-ignored. Pick the configuration
