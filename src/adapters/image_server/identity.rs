@@ -13,7 +13,6 @@
 
 use std::convert::Infallible;
 
-use axum::async_trait;
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use serde::Deserialize;
@@ -30,7 +29,6 @@ struct Named {
     device: Option<String>,
 }
 
-#[async_trait]
 impl<S: Send + Sync> FromRequestParts<S> for Caller {
     type Rejection = Infallible;
 
