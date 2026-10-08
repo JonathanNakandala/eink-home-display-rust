@@ -146,6 +146,8 @@ finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 
 ### Secure transport (what the firmware has to do)
 
+*Status: this is the contract the firmware is to be written to. None of it is built yet.*
+
 The server can offer HTTPS (see `[server] transport` in [deploy/README.md](../deploy/README.md)). The display
 has the same three choices, as a substitution, and its choice matters as much as the server's: the server can
 only offer, and only a display set to HTTPS-only is certain not to fall back.
@@ -173,21 +175,37 @@ same way.
 **TLS.** TLS 1.3 only. The display connects to the address mDNS gave it and verifies the certificate against
 the fixed name **`eink-home-display.internal`**, which the server's certificate always has and no configuration can
 remove, not against the address and not against the mDNS name (which the owner can change). It trusts exactly one
-certificate authority, the server's, kept in flash and not in the firmware, so one firmware serves every home.
-The server sends two certificates in the handshake (its own and the intermediate, about 480 bytes each),
+certificate authority, the server's root, which it gets in one of the two ways under "Which root the display trusts"
+below. The server sends two certificates in the handshake (its own and the intermediate, about 480 bytes each),
 ECDSA on P-256, and the display builds the path to the root it pins. The intermediate is replaced every few
 years, and nothing on the display changes when it is. The name matters: a display's own certificate
 has none, so it can't pass for the server to another display. (Whether mbedTLS here can check a name other than
 the address connected to is to be verified on a device.)
 
+**Which root the display trusts.** There are two ways, and only the first step of joining differs:
+
+| | `server_root` left out (**default**) | `server_root` set in `secrets.yaml` |
+|---|---|---|
+| Where the root comes from | fetched from the server on first contact and confirmed by the pairing code | the owner's `root.pem`, compiled into the firmware |
+| First contact | an unverified TLS connection to `GET cacerts` (step 1 below) | none: the display verifies the server from its first connection |
+| Someone in the middle at pairing | caught by the pairing code | cannot happen |
+| One firmware for every home | yes | no: each owner builds their own, as they already do for Wi-Fi |
+| If the root ever changes | the display pairs again | reflash |
+
+The default is the easier one to use: flash once, then approve the code on the panel. `server_root` is for an owner
+who would rather not rely on the code for that first step, and costs a line in `secrets.yaml`. Everything after the
+root is known is the same either way, including the pairing code on the panel (it still tells the owner which display
+is asking). A display with `server_root` set that is shown a different root refuses it and says so; it never
+falls back to fetching one.
+
 **Joining (EST, RFC 7030 as updated by RFC 8951; see `reference/`).** All under `/.well-known/est/`, TLS 1.3:
 
-1. First wake with no authority stored: connect to `tlsport` **without verifying the server** and `GET cacerts`.
+1. First wake with no root stored (and none compiled in): connect to `tlsport` **without verifying the server** and `GET cacerts`.
    The body is base64 of a DER CMS `SignedData` (`certs-only`) holding two certificates: the **root** and the
    **intermediate** under it. Pick out the root, the one that is self-signed (its subject and issuer are the
    same and its signature checks against its own key), and keep only that, in memory for now. Ignore the
    intermediate: the server sends it with its own certificate in every handshake, and completes a display's
-   path itself, so the display never needs to keep or send one.
+   path itself, so the display never needs to keep or send one. (With `server_root` set this step is skipped.)
 2. Make an ECDSA P-256 key (kept in flash, never leaves the display, not regenerated on renewal) and a PKCS #10
    request signed with ECDSA and SHA-256, with the display's name (the same name it sends as `device=`) as its
    only common name. Other fields are ignored. If the server's `csrattrs` includes the challenge-password OID, put
@@ -237,6 +255,28 @@ previous one used.
 **What to tell the owner, on the panel** (each different, none blank): waiting for approval and the code; the clock
 is not set; the server can't be reached; the certificate is refused (and by what); not recognised, ask the owner to
 approve. And report which in the telemetry's `last_failure`, so `/status` says why.
+
+**How the firmware is organised.** The same split the other `eink_*.h` headers use: what can be decided without
+hardware is pure and is tested on the host (`make -C esphome test`); what touches the radio, the flash or mbedTLS is
+thin and does as little deciding as it can.
+
+| Layer | File (proposed) | Does | Tested |
+|---|---|---|---|
+| Pure logic | `eink_pairing.h` | the pairing code (hash, Crockford encoding), and which step comes next from what is stored, the clock and the answer last received | on the host, against the pinned test vector `B0AJ-QTW6-Y8SA` |
+| Pure logic | `eink_trust.h` | which root to trust (compiled in, stored, or none yet), whether a certificate has expired or is due to renew | on the host |
+| Storage | `eink_credentials.h` | the key, the certificate and the stored root, in their own storage area, written to a spare slot and switched only when complete | on the device |
+| Transport | `eink_secure_http` (a `http_request` subclass) | TLS 1.3 with the fixed name, the pinned root and the client certificate; classifies a failure (clock, certificate, refused, unreachable) | on the device |
+| Discovery | `eink_discovery.h` (extended) | `_https._tcp` or `_http._tcp`, `tlsport`, `secure` | on the device |
+| Orchestration | the YAML wake script | calls the above in order; draws the panel for each state | on the device |
+
+The stock `http_request` component cannot be used for the secure path: it takes its CA certificate at compile time,
+sets no name to check, and has no client certificate. Subclassing `HttpRequestComponent` and overriding `perform`
+lets `online_image` and the `http_request` actions keep working unchanged.
+
+The states, so each has one meaning on the panel and in `last_failure`: *no root yet* (fetching it), *asking*
+(has a key and a root, no certificate), *waiting for approval* (shows the code), *paired*, *renewing*, *expired*
+(asking again with the same key), *not recognised* (the server doesn't know this key: the owner must approve), and
+*clock not set* (nothing else can be tried until it is).
 
 ### Which image format: content negotiation
 

@@ -7,6 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, Offset};
 use chrono_tz::Tz;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::domain::models::schedule::Schedule;
 
@@ -24,9 +25,11 @@ pub struct PlanTiming {
     pub stale_grace: Duration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// What a display is told after it asks: which image is current, whether it is out of date, and when to come back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct Plan {
     /// When the image was rendered, in seconds since 1970. Newer images have larger versions.
+    #[schema(examples(1791463200))]
     pub version: u32,
     /// False when the display said it already shows this version, so it can skip the download and refresh.
     pub changed: bool,
@@ -35,14 +38,18 @@ pub struct Plan {
     /// A render is due or running, so a new image is about to appear.
     pub pending: bool,
     /// How long the display should sleep before asking again.
+    #[schema(examples(600))]
     pub next_seconds: u64,
     /// Time since the image was rendered.
+    #[schema(examples(100))]
     pub age_seconds: u64,
     /// The zone the server works in (an IANA name such as `Europe/London`), so the display needn't be told it in
     /// its own configuration, where it could disagree.
+    #[schema(examples("Europe/London"))]
     pub timezone: String,
     /// How far ahead of UTC that zone is right now, in seconds (3600 in the UK in summer). A display has no
     /// timezone database, so this is what it needs to show local time; it is right until the next clock change.
+    #[schema(examples(3600))]
     pub utc_offset_seconds: i32,
 }
 

@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.86"
 axum = { version = "0.8", features = ["http1", "tokio", "macros"] }
+utoipa = { version = "6", features = ["chrono", "axum_extras", "preserve_order"] }
+utoipa-axum = "0.3"
 async-trait = "0.1.81"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -60,6 +62,7 @@ tokio = { version = "1", features = ["test-util"] }
 httpmock = "0.8"
 speculoos = "0.13"
 cms = "0.2.3"
+jsonschema = { version = "0.58", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -18,6 +18,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use chrono::{DateTime, Duration};
 use chrono_tz::Tz;
 use serde::Serialize;
+use utoipa::{IntoParams, ToSchema};
+
+use super::api_schema::ImageFormatSchema;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::display::ImageFormat;
@@ -26,8 +29,9 @@ use crate::domain::models::display::ImageFormat;
 const MAX_DEVICES: usize = 16;
 /// A Li-ion cell is never outside this, so anything else is a misread.
 const MILLIVOLTS: std::ops::RangeInclusive<u32> = 2000..=5000;
+const PERCENT: std::ops::RangeInclusive<u32> = 0..=100;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BatteryState {
     Ok,
@@ -56,7 +60,7 @@ impl BatteryState {
 /// Why a display's last wake failed, as it reports it on the next wake that gets through. A wake can't
 /// report its own failure (it asks `/plan` before it knows), and a Wi-Fi or server failure can only be
 /// told once the display is talking to the server again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureReason {
     /// Couldn't join the network.
@@ -100,15 +104,51 @@ const RSSI_DBM: std::ops::RangeInclusive<i16> = -127..=-1;
 /// Longer than any wake is allowed to run, so anything more is a misread.
 const WAKE_SECONDS: std::ops::RangeInclusive<u32> = 0..=600;
 
-/// The query parameters as received. All text, so a malformed one can't fail the request.
-#[derive(Debug, Default, Clone, serde::Deserialize)]
+/// What a display's readings must be for the server to keep them. A reading outside its range, or not a
+/// whole number, is ignored: the request is still answered, as the display must always get its plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelemetryLimits {
+    pub battery_millivolts: std::ops::RangeInclusive<u32>,
+    pub battery_percent: std::ops::RangeInclusive<u32>,
+    pub wifi_rssi_dbm: std::ops::RangeInclusive<i16>,
+    pub wake_seconds: std::ops::RangeInclusive<u32>,
+}
+
+pub fn telemetry_limits() -> TelemetryLimits {
+    TelemetryLimits {
+        battery_millivolts: MILLIVOLTS,
+        battery_percent: PERCENT,
+        wifi_rssi_dbm: RSSI_DBM,
+        wake_seconds: WAKE_SECONDS,
+    }
+}
+
+/// The query parameters as received. All text, so a malformed one can't fail the request. A display adds
+/// these to the `/plan` or `/refresh` call it makes anyway, so reporting costs no extra radio time. Every one
+/// is optional, and one that is missing, malformed or out of range is ignored.
+#[derive(Debug, Default, Clone, serde::Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct RawTelemetry {
+    /// Battery voltage, in millivolts.
+    #[param(value_type = Option<u32>, example = 3712)]
     pub battery_mv: Option<String>,
+    /// Battery charge, as a percentage.
+    #[param(value_type = Option<u8>, example = 47)]
     pub battery_pct: Option<String>,
+    /// How the display rates its own battery. The display decides: the server only passes it on.
+    #[param(value_type = Option<BatteryState>)]
     pub battery_state: Option<String>,
+    /// How many wakes in a row have failed, for any reason.
+    #[param(value_type = Option<u32>, example = 2)]
     pub failed_wakes: Option<String>,
+    /// Wi-Fi signal strength, in dBm.
+    #[param(value_type = Option<i16>, example = -71)]
     pub rssi: Option<String>,
+    /// Why the wake before this one failed, if it did.
+    #[param(value_type = Option<FailureReason>)]
     pub last_failure: Option<String>,
+    /// How long the wake before this one was awake, in seconds: what costs battery.
+    #[param(value_type = Option<u32>, example = 24)]
     pub last_wake_s: Option<String>,
 }
 
@@ -132,7 +172,7 @@ impl RawTelemetry {
             device,
             battery_millivolts: number(&self.battery_mv).filter(|mv| MILLIVOLTS.contains(mv)),
             battery_percent: number(&self.battery_pct)
-                .filter(|pct| *pct <= 100)
+                .filter(|pct| PERCENT.contains(pct))
                 .map(|pct| pct as u8),
             battery_state: self.battery_state.as_deref().and_then(BatteryState::parse),
             failed_wakes: number(&self.failed_wakes),
@@ -148,8 +188,11 @@ impl RawTelemetry {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A display that has checked in: its battery, signal and how its last wakes went.
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeviceStatus {
+    /// The name the display gives itself.
+    #[schema(value_type = String, examples("reterminal-e1003-a1b2c3"), max_length = 32, pattern = "^[A-Za-z0-9._-]+$")]
     pub name: DeviceId,
     pub last_seen: DateTime<Tz>,
     pub age_seconds: u64,
@@ -172,8 +215,9 @@ pub struct DeviceStatus {
 }
 
 /// The last image a display was sent: which format, how big, and when.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeliveryStatus {
+    #[schema(value_type = ImageFormatSchema)]
     pub format: ImageFormat,
     pub bytes: u64,
     pub at: DateTime<Tz>,
