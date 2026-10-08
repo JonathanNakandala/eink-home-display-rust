@@ -606,6 +606,30 @@ async fn when_required_a_request_must_carry_the_binding() {
     assert_eq!(tied.status, 202);
 }
 
+/// Whether the server answers a request on a connection made with `config`. A client certificate that
+/// the server rejects shows up not at the client's handshake (in TLS 1.3 that is already done) but as
+/// an alert instead of an answer, so the question is whether any HTTP came back. The connection is read
+/// until it ends, however it ends: the server closes without a TLS close_notify.
+async fn gets_an_answer(harness: &Harness, config: ClientConfig) -> bool {
+    let Ok(mut stream) = connect_with(harness, config).await else {
+        return false;
+    };
+    let request =
+        format!("GET {CSRATTRS} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    let mut received = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while let Ok(n) = stream.read(&mut chunk).await {
+        if n == 0 {
+            break;
+        }
+        received.extend_from_slice(&chunk[..n]);
+    }
+    received.starts_with(b"HTTP/1.1 ")
+}
+
 #[tokio::test]
 async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_good() {
     let harness = start().await;
@@ -613,7 +637,8 @@ async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_goo
     let mut stream = connect(&harness, Trust::Anything, None).await;
     let body = request("kitchen", &key, Some(&binding(&stream)));
     let anonymous = send(&mut stream, "POST", REENROLL, Some(PKCS10), body.as_bytes()).await;
-    assert_eq!(anonymous.status, 401);
+    assert_eq!(anonymous.status, 403, "{}", anonymous.text());
+    assert!(anonymous.header("www-authenticate").is_none());
 
     // A certificate from some other authority is refused at the handshake.
     let (other_authority, _, _) =
@@ -635,19 +660,18 @@ async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_goo
         key: their_key,
     };
     let config = client_config(Trust::Anything, Some(&stranger), &[&rustls::version::TLS13]);
-    let outcome = async {
-        let mut stream = connect_with(&harness, config).await?;
-        // In TLS 1.3 the server's rejection of the client's certificate arrives after the client
-        // considers the handshake done, so it shows up on the first use of the connection.
-        stream
-            .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
-            .await?;
-        let mut buffer = Vec::new();
-        stream.read_to_end(&mut buffer).await?;
-        Ok::<_, std::io::Error>(buffer)
-    }
-    .await;
-    assert!(outcome.is_err() || outcome.unwrap().is_empty());
+    assert!(
+        !gets_an_answer(&harness, config).await,
+        "a certificate from another authority should be turned away"
+    );
+    // The same helper does see an answer when the certificate is good, so "no answer" means something.
+    let member = join(&harness, "kitchen", new_key()).await;
+    let config = client_config(
+        Trust::Authority(harness.authority.certificate()),
+        Some(&member),
+        &[&rustls::version::TLS13],
+    );
+    assert!(gets_an_answer(&harness, config).await);
 }
 
 #[tokio::test]
@@ -818,5 +842,108 @@ async fn a_connection_that_goes_on_too_long_is_ended() {
     assert!(
         finished.is_ok(),
         "the server should have closed the connection"
+    );
+}
+
+/// A display joining, start to finish, and holding its certificate.
+async fn join(harness: &Harness, name: &str, key: KeyPair) -> Identity {
+    let (authority, code) = first_contact(harness, name, &key).await;
+    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    let waiting = enroll(harness, Trust::Authority(&authority), name, &key).await;
+    assert_eq!(waiting.status, 202, "{}", waiting.text());
+    harness
+        .enrollment
+        .approve(&device(name), &code)
+        .await
+        .unwrap();
+    let granted = enroll(harness, Trust::Authority(&authority), name, &key).await;
+    Identity {
+        certificate: granted.certificates().remove(0),
+        key,
+    }
+}
+
+/// Renews as `identity`, over a verified connection, and says what the server answered.
+async fn renew_as(harness: &Harness, identity: &Identity, name: &str) -> Response {
+    let mut stream = connect(
+        harness,
+        Trust::Authority(harness.authority.certificate()),
+        Some(identity),
+    )
+    .await;
+    let body = request(name, &identity.key, Some(&binding(&stream)));
+    send(&mut stream, "POST", REENROLL, Some(PKCS10), body.as_bytes()).await
+}
+
+#[tokio::test]
+async fn a_certificate_of_a_forgotten_display_can_not_renew_once_another_has_taken_the_name() {
+    let harness = start().await;
+    let first = join(&harness, "kitchen", new_key()).await;
+    assert_eq!(renew_as(&harness, &first, "kitchen").await.status, 200);
+
+    // The owner forgets it (say, it was lost) and a new display takes the name.
+    harness.enrollment.forget(&device("kitchen")).await.unwrap();
+    let second = join(&harness, "kitchen", new_key()).await;
+
+    // The first one's certificate is still valid as far as TLS can tell, and says "kitchen".
+    let stale = renew_as(&harness, &first, "kitchen").await;
+    assert_eq!(stale.status, 403, "{}", stale.text());
+    // The one now enrolled is unaffected.
+    assert_eq!(renew_as(&harness, &second, "kitchen").await.status, 200);
+}
+
+#[tokio::test]
+async fn the_servers_own_certificate_is_not_accepted_as_a_display() {
+    // It is signed by the same authority, but it is for proving the server, not a display.
+    let harness = start().await;
+    let server = harness
+        .authority
+        .issue_server(
+            &["localhost".to_owned()],
+            chrono::Utc::now(),
+            chrono::Utc::now() + ChronoDuration::days(1),
+        )
+        .unwrap();
+    let PrivateKeyDer::Pkcs8(pkcs8) = &server.key else {
+        panic!("expected a PKCS #8 key");
+    };
+    let impostor = Identity {
+        certificate: server.certificate.to_vec(),
+        key: KeyPair::from_pkcs8_der_and_sign_algo(pkcs8, &PKCS_ECDSA_P256_SHA256).unwrap(),
+    };
+    let config = client_config(
+        Trust::Authority(harness.authority.certificate()),
+        Some(&impostor),
+        &[&rustls::version::TLS13],
+    );
+    assert!(
+        !gets_an_answer(&harness, config).await,
+        "the server's certificate should not be taken for a display's"
+    );
+}
+
+#[tokio::test]
+async fn a_client_that_sends_its_body_too_slowly_is_told_to_stop() {
+    let harness = start_with(false, |s| s.request_timeout = Duration::from_millis(300)).await;
+    let mut stream = connect(&harness, Trust::Anything, None).await;
+    stream
+        .write_all(
+            format!(
+                "POST {ENROLL} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: {PKCS10}\r\nContent-Length: 100\r\n\r\nAAAA"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut raw = Vec::new();
+    let finished = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut raw)).await;
+    assert!(
+        finished.is_ok(),
+        "the server should have answered, not waited"
+    );
+    assert!(
+        String::from_utf8_lossy(&raw).starts_with("HTTP/1.1 408"),
+        "{}",
+        String::from_utf8_lossy(&raw)
     );
 }

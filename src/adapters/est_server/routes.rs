@@ -26,11 +26,20 @@ use tower_http::timeout::TimeoutLayer;
 use super::wire;
 use crate::application::enrollment::{EnrollError, Enrollment, Outcome, Refusal};
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::pairing::PublicKey;
 use crate::domain::services::certificate_authority::{CertificateAuthority, IssuedCertificate};
 
 const BASE: &str = "/.well-known/est";
 /// A certificate request is a few hundred bytes; this leaves room for any reasonable one and no more.
 const MAX_BODY: usize = 8 * 1024;
+
+/// Who a client certificate says its holder is: the name in it and the key it certifies. TLS has
+/// already checked it against the authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientIdentity {
+    pub device: DeviceId,
+    pub key: PublicKey,
+}
 
 /// What the server knows about the connection a request arrived on, from the TLS layer.
 #[derive(Debug, Clone)]
@@ -38,9 +47,8 @@ pub struct Connection {
     /// The connection's channel binding (RFC 9266 `tls-exporter`), which a request can carry to prove
     /// it was signed on this very connection.
     pub binding: Option<Vec<u8>>,
-    /// The display the client certificate names, if the client showed one. TLS has already checked it
-    /// against the authority.
-    pub client: Option<DeviceId>,
+    /// The display the client certificate names, if the client showed one.
+    pub client: Option<ClientIdentity>,
 }
 
 struct Est {
@@ -163,9 +171,11 @@ async fn simple_reenroll(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // Not 401, which must come with a `WWW-Authenticate` challenge (RFC 9110 section 15.5.2), and there
+    // is no HTTP scheme for "show a TLS client certificate".
     let Some(caller) = &connection.client else {
         return text(
-            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
             "Renewing needs the display's current certificate",
         );
     };
@@ -175,7 +185,12 @@ async fn simple_reenroll(
     };
     match est
         .enrollment
-        .renew(caller, &der, connection.binding.as_deref())
+        .renew(
+            &caller.device,
+            &caller.key,
+            &der,
+            connection.binding.as_deref(),
+        )
         .await
     {
         Ok(certificate) => issued(&certificate),
@@ -202,6 +217,7 @@ fn failure(error: EnrollError) -> Response {
                 | Refusal::Rejected
                 | Refusal::Revoked
                 | Refusal::KeyMismatch
+                | Refusal::CertificateSuperseded
                 | Refusal::WrongDevice => StatusCode::FORBIDDEN,
                 Refusal::TooManyPending => StatusCode::SERVICE_UNAVAILABLE,
             };

@@ -19,7 +19,7 @@ use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
-use crate::domain::models::pairing::{Pairing, PairingCode, PairingState};
+use crate::domain::models::pairing::{Pairing, PairingCode, PairingState, PublicKey};
 use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,
 };
@@ -77,6 +77,10 @@ pub enum Refusal {
     NotEnrolled,
     #[error("the request is for a different display than the one asking")]
     WrongDevice,
+    /// The certificate shown names this display but is not for the key now enrolled under that name,
+    /// as when the display was forgotten and another joined with the same name.
+    #[error("the certificate shown is not this display's current one")]
+    CertificateSuperseded,
 }
 
 #[derive(Debug, Error)]
@@ -111,6 +115,10 @@ pub struct Enrollment {
     policy: EnrollmentPolicy,
     /// When the window the owner opened closes, if one is open.
     window: Mutex<Option<DateTime<Utc>>>,
+    /// Held while a pairing is read, decided on and written back, so two changes to the same display
+    /// can't interleave: a renewal that has read a display as a member must not write it back as one
+    /// after the owner has revoked it.
+    changes: tokio::sync::Mutex<()>,
 }
 
 impl Enrollment {
@@ -126,6 +134,7 @@ impl Enrollment {
             clock,
             policy,
             window: Mutex::new(None),
+            changes: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -166,6 +175,7 @@ impl Enrollment {
         connection: Option<&[u8]>,
     ) -> Result<Outcome, EnrollError> {
         let request = self.read(request, connection)?;
+        let _changing = self.changes.lock().await;
         let now = self.now();
         let Some(pairing) = self.store.get(&request.device).await? else {
             return self.begin(request, now).await;
@@ -194,11 +204,14 @@ impl Enrollment {
         }
     }
 
-    /// A member renewing its certificate, perhaps with a new key. `caller` is who the connection's
-    /// client certificate says it is.
+    /// A member renewing its certificate, perhaps with a new key. `caller` and `caller_key` are who the
+    /// connection's client certificate says it is and the key it holds. A name alone isn't enough: a
+    /// certificate for a display that was forgotten, or replaced by another of the same name, must not
+    /// renew itself into the new display's place.
     pub async fn renew(
         &self,
         caller: &DeviceId,
+        caller_key: &PublicKey,
         request: &[u8],
         connection: Option<&[u8]>,
     ) -> Result<IssuedCertificate, EnrollError> {
@@ -206,24 +219,29 @@ impl Enrollment {
         if request.device != *caller {
             return Err(Refusal::WrongDevice.into());
         }
+        let _changing = self.changes.lock().await;
         let pairing = self.store.get(caller).await?;
         let pairing = match pairing {
             Some(p) if matches!(p.state, PairingState::Enrolled { .. }) => p,
             Some(p) if p.state == PairingState::Revoked => return Err(Refusal::Revoked.into()),
             _ => return Err(Refusal::NotEnrolled.into()),
         };
+        if pairing.key != *caller_key {
+            return Err(Refusal::CertificateSuperseded.into());
+        }
         match self.issue(pairing, request, self.now()).await? {
             Outcome::Issued(certificate) => Ok(certificate),
             Outcome::Pending { .. } => unreachable!("issuing never leaves a request pending"),
         }
     }
 
-    /// Whether `device` is a member now, as its certificate alone can't say: a revoked display's
-    /// certificate is still valid until it expires.
-    pub async fn is_member(&self, device: &DeviceId) -> anyhow::Result<bool> {
+    /// Whether `device`, holding `key`, is a member now, as its certificate alone can't say: a revoked
+    /// display's certificate is still valid until it expires, and so is that of one that was replaced.
+    pub async fn is_member(&self, device: &DeviceId, key: &PublicKey) -> anyhow::Result<bool> {
         let pairing = self.store.get(device).await?;
         Ok(pairing.is_some_and(|p| {
-            matches!(p.state, PairingState::Enrolled { not_after, .. } if not_after > self.now())
+            p.key == *key
+                && matches!(p.state, PairingState::Enrolled { not_after, .. } if not_after > self.now())
         }))
     }
 
@@ -233,6 +251,7 @@ impl Enrollment {
         device: &DeviceId,
         typed: &PairingCode,
     ) -> Result<(), ApproveError> {
+        let _changing = self.changes.lock().await;
         let mut pairing = self
             .store
             .get(device)
@@ -285,6 +304,7 @@ impl Enrollment {
 
     /// Forgets a display, whatever its state, so it can ask again as if for the first time.
     pub async fn forget(&self, device: &DeviceId) -> anyhow::Result<()> {
+        let _changing = self.changes.lock().await;
         self.store.remove(device).await?;
         log::info!("Forgot {device}");
         Ok(())
@@ -300,6 +320,7 @@ impl Enrollment {
         state: PairingState,
         allowed: impl Fn(&PairingState) -> bool,
     ) -> Result<(), ApproveError> {
+        let _changing = self.changes.lock().await;
         let mut pairing = self
             .store
             .get(device)
@@ -549,6 +570,11 @@ mod tests {
         DeviceId::parse(name).unwrap()
     }
 
+    /// The public key the fake authority reads out of a request made with `key`.
+    fn held_key(key: &str) -> PublicKey {
+        PublicKey::from_der(key.as_bytes().to_vec())
+    }
+
     fn csr(name: &str, key: &str) -> Vec<u8> {
         format!("{name}|{key}|").into_bytes()
     }
@@ -663,7 +689,12 @@ mod tests {
             certificate.not_after,
             f.clock.now().to_utc() + Duration::days(365)
         );
-        assert!(f.enrollment.is_member(&device("kitchen")).await.unwrap());
+        assert!(
+            f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -915,14 +946,24 @@ mod tests {
         f.advance(Duration::days(300));
         let renewed = f
             .enrollment
-            .renew(&device("kitchen"), &csr("kitchen", "k1"), None)
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k1"),
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(
             renewed.not_after,
             f.clock.now().to_utc() + Duration::days(365)
         );
-        assert!(f.enrollment.is_member(&device("kitchen")).await.unwrap());
+        assert!(
+            f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -930,7 +971,12 @@ mod tests {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
         f.enrollment
-            .renew(&device("kitchen"), &csr("kitchen", "k2"), None)
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k2"),
+                None,
+            )
             .await
             .unwrap();
         let old = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
@@ -950,7 +996,12 @@ mod tests {
         member(&f, "hall", "k2").await;
         let result = f
             .enrollment
-            .renew(&device("kitchen"), &csr("hall", "k9"), None)
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("hall", "k9"),
+                None,
+            )
             .await;
         assert!(matches!(
             result,
@@ -963,7 +1014,12 @@ mod tests {
         let f = Fixture::new();
         let result = f
             .enrollment
-            .renew(&device("kitchen"), &csr("kitchen", "k1"), None)
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k1"),
+                None,
+            )
             .await;
         assert!(matches!(
             result,
@@ -976,10 +1032,20 @@ mod tests {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
         f.enrollment.revoke(&device("kitchen")).await.unwrap();
-        assert!(!f.enrollment.is_member(&device("kitchen")).await.unwrap());
+        assert!(
+            !f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
         let result = f
             .enrollment
-            .renew(&device("kitchen"), &csr("kitchen", "k1"), None)
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k1"),
+                None,
+            )
             .await;
         assert!(matches!(
             result,
@@ -994,9 +1060,19 @@ mod tests {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
         f.advance(Duration::days(364));
-        assert!(f.enrollment.is_member(&device("kitchen")).await.unwrap());
+        assert!(
+            f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
         f.advance(Duration::days(2));
-        assert!(!f.enrollment.is_member(&device("kitchen")).await.unwrap());
+        assert!(
+            !f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1093,5 +1169,219 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(tied, Outcome::Pending { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_certificate_for_a_display_that_was_replaced_can_not_renew_into_its_place() {
+        // The owner forgot "kitchen" and another display joined under the same name. The first one's
+        // certificate is still valid for months and names "kitchen", but it is not the one enrolled.
+        let f = Fixture::new();
+        member(&f, "kitchen", "k1").await;
+        f.enrollment.forget(&device("kitchen")).await.unwrap();
+        member(&f, "kitchen", "k2").await;
+
+        let result = f
+            .enrollment
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k9"),
+                None,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(EnrollError::Refused(Refusal::CertificateSuperseded))
+        ));
+        // The new display is untouched, and renews as itself.
+        assert!(
+            f.enrollment
+                .is_member(&device("kitchen"), &held_key("k2"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
+        f.enrollment
+            .renew(
+                &device("kitchen"),
+                &held_key("k2"),
+                &csr("kitchen", "k2"),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn after_a_change_of_key_only_the_new_key_is_a_member() {
+        let f = Fixture::new();
+        member(&f, "kitchen", "k1").await;
+        f.enrollment
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k2"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            f.enrollment
+                .is_member(&device("kitchen"), &held_key("k2"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !f.enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
+        let old = f
+            .enrollment
+            .renew(
+                &device("kitchen"),
+                &held_key("k1"),
+                &csr("kitchen", "k1"),
+                None,
+            )
+            .await;
+        assert!(matches!(
+            old,
+            Err(EnrollError::Refused(Refusal::CertificateSuperseded))
+        ));
+    }
+
+    /// A store that holds a write of a member until told to let it through, to put a change in the
+    /// middle of another.
+    #[derive(Default)]
+    struct GatedStore {
+        inner: MemoryStore,
+        armed: std::sync::atomic::AtomicBool,
+        waiting: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl PairingStore for GatedStore {
+        async fn get(&self, device: &DeviceId) -> anyhow::Result<Option<Pairing>> {
+            self.inner.get(device).await
+        }
+        async fn put(&self, pairing: &Pairing) -> anyhow::Result<()> {
+            let enrolled = matches!(pairing.state, PairingState::Enrolled { .. });
+            if enrolled && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                self.waiting.notify_one();
+                self.release.notified().await;
+            }
+            self.inner.put(pairing).await
+        }
+        async fn remove(&self, device: &DeviceId) -> anyhow::Result<()> {
+            self.inner.remove(device).await
+        }
+        async fn all(&self) -> anyhow::Result<Vec<Pairing>> {
+            self.inner.all().await
+        }
+    }
+
+    /// A member, "kitchen", on a store that can hold one of its writes, with a renewal started and paused
+    /// just before it writes the display back as a member.
+    async fn renewal_under_way() -> (
+        Arc<Enrollment>,
+        Arc<GatedStore>,
+        tokio::task::JoinHandle<Result<IssuedCertificate, EnrollError>>,
+    ) {
+        let store = Arc::new(GatedStore::default());
+        let clock = Arc::new(TestClock(Mutex::new(
+            Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap(),
+        )));
+        let enrollment = Arc::new(Enrollment::new(
+            Arc::new(FakeAuthority::new()),
+            store.clone(),
+            clock,
+            EnrollmentPolicy {
+                certificate_lifetime: Duration::days(365),
+                retry_after: Duration::minutes(5),
+                require_channel_binding: false,
+            },
+        ));
+        enrollment.open_window(Duration::minutes(10));
+        enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        let code = PairingCode::derive(
+            &Fingerprint::of(b"authority"),
+            &device("kitchen"),
+            &held_key("k1"),
+        );
+        enrollment.approve(&device("kitchen"), &code).await.unwrap();
+        enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+
+        store.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+        let renewing = tokio::spawn({
+            let enrollment = enrollment.clone();
+            async move {
+                enrollment
+                    .renew(
+                        &device("kitchen"),
+                        &held_key("k1"),
+                        &csr("kitchen", "k1"),
+                        None,
+                    )
+                    .await
+            }
+        });
+        store.waiting.notified().await;
+        (enrollment, store, renewing)
+    }
+
+    #[tokio::test]
+    async fn a_revocation_is_not_undone_by_a_renewal_that_was_already_under_way() {
+        let (enrollment, store, renewing) = renewal_under_way().await;
+        let revoking = tokio::spawn({
+            let enrollment = enrollment.clone();
+            async move { enrollment.revoke(&device("kitchen")).await }
+        });
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        store.release.notify_one();
+        renewing.await.unwrap().unwrap();
+        revoking.await.unwrap().unwrap();
+
+        // The revocation came last, so it is what stands.
+        let state = enrollment.pairings().await.unwrap().remove(0).state;
+        assert_eq!(state, PairingState::Revoked);
+        assert!(
+            !enrollment
+                .is_member(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_display_is_not_undone_by_a_renewal_that_was_already_under_way() {
+        let (enrollment, store, renewing) = renewal_under_way().await;
+        let forgetting = tokio::spawn({
+            let enrollment = enrollment.clone();
+            async move { enrollment.forget(&device("kitchen")).await }
+        });
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        store.release.notify_one();
+        renewing.await.unwrap().unwrap();
+        forgetting.await.unwrap().unwrap();
+
+        assert!(enrollment.pairings().await.unwrap().is_empty());
     }
 }
