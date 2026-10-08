@@ -6,7 +6,10 @@ use std::process::ExitCode;
 use anyhow::Context;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
-use eink_home_display_rust::adapters::admin::{AdminClient, CallError, describe, describe_window};
+use eink_home_display_rust::adapters::admin::{
+    AdminClient, CallError, approved, describe, describe_entry, describe_list, describe_window,
+    forgotten, rejected, revoked,
+};
 use eink_home_display_rust::bootstrap::load_application_config;
 
 /// Talks to a running server's admin interface. The server offers it when it serves HTTPS
@@ -38,6 +41,49 @@ enum Command {
     Window {
         #[command(subcommand)]
         action: WindowAction,
+    },
+    /// The displays the server knows, and where each stands
+    Displays {
+        #[command(subcommand)]
+        action: DisplaysAction,
+    },
+    /// Approve a display that is waiting, with the code shown on its own panel
+    ///
+    /// Type the code from the display itself, never from anywhere else: the server does not show it, because a code
+    /// copied from the server would say nothing about the display. Any case, dashes optional; I and L read as 1,
+    /// O as 0.
+    Approve {
+        /// The display's name, as `displays list` shows it
+        name: String,
+        /// The code on the display's own panel, like B0AJ-QTW6-Y8SA
+        code: String,
+    },
+    /// Turn a waiting display down, until it is forgotten. For a member with another key waiting to take its
+    /// name, turn that key down and leave the member as it was.
+    Reject {
+        /// The display's name
+        name: String,
+    },
+    /// End a member's membership: it is turned away from its very next request
+    Revoke {
+        /// The display's name
+        name: String,
+    },
+    /// Forget a display, whatever its state, so it can ask again as if for the first time
+    Forget {
+        /// The display's name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DisplaysAction {
+    /// Every display, with where it stands
+    List,
+    /// One display
+    Show {
+        /// The display's name
+        name: String,
     },
 }
 
@@ -96,6 +142,43 @@ async fn run(args: Args) -> Result<(), String> {
             }
             .map_err(failed)?;
             println!("{}", describe_window(&state, Utc::now(), &Local));
+            Ok(())
+        }
+        Command::Displays { action } => {
+            match action {
+                DisplaysAction::List => {
+                    let list = client.displays().await.map_err(failed)?;
+                    println!("{}", describe_list(&list, Utc::now(), &Local));
+                }
+                DisplaysAction::Show { name } => {
+                    let entry = client.display(&name).await.map_err(failed)?;
+                    println!(
+                        "{}: {}",
+                        entry.name,
+                        describe_entry(&entry, Utc::now(), &Local)
+                    );
+                }
+            }
+            Ok(())
+        }
+        Command::Approve { name, code } => {
+            let entry = client.approve(&name, &code).await.map_err(failed)?;
+            println!("{}", approved(&entry));
+            Ok(())
+        }
+        Command::Reject { name } => {
+            let entry = client.reject(&name).await.map_err(failed)?;
+            println!("{}", rejected(&entry));
+            Ok(())
+        }
+        Command::Revoke { name } => {
+            let entry = client.revoke(&name).await.map_err(failed)?;
+            println!("{}", revoked(&entry));
+            Ok(())
+        }
+        Command::Forget { name } => {
+            let entry = client.forget(&name).await.map_err(failed)?;
+            println!("{}", forgotten(&entry));
             Ok(())
         }
     }

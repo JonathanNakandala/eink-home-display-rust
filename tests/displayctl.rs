@@ -12,14 +12,20 @@ use eink_home_display_rust::adapters::admin;
 use eink_home_display_rust::adapters::certificate_authority::{self, Create};
 use eink_home_display_rust::adapters::clock::SystemClock;
 use eink_home_display_rust::adapters::pairing_store::{FilePairingStore, Missing};
+use eink_home_display_rust::application::enrollment::Outcome;
 use eink_home_display_rust::application::enrollment::{Enrollment, EnrollmentPolicy};
 use eink_home_display_rust::config::application::ApplicationConfig;
+use eink_home_display_rust::domain::models::device_id::DeviceId;
+use eink_home_display_rust::domain::models::pairing::{PairingCode, PublicKey};
+use eink_home_display_rust::domain::services::certificate_authority::CertificateAuthority;
+use rcgen::PublicKeyData;
 use std::os::unix::fs::PermissionsExt;
 
 struct Server {
     directory: tempfile::TempDir,
     socket: PathBuf,
     enrollment: Arc<Enrollment>,
+    authority: Arc<certificate_authority::PrivateAuthority>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -40,7 +46,7 @@ async fn start() -> Server {
         .await
         .unwrap();
     let enrollment = Arc::new(Enrollment::new(
-        authority,
+        authority.clone(),
         Arc::new(store),
         Arc::new(SystemClock::new(Tz::UTC)),
         EnrollmentPolicy {
@@ -59,6 +65,7 @@ async fn start() -> Server {
         directory,
         socket,
         enrollment,
+        authority,
         task,
     }
 }
@@ -174,4 +181,130 @@ async fn it_needs_to_be_told_where_the_server_is() {
         "{}",
         err(&output)
     );
+}
+
+/// `displayctl --socket SOCKET ARGUMENTS`.
+async fn ctl(socket: &str, arguments: &[&str]) -> Output {
+    let mut all = vec!["--socket", socket];
+    all.extend_from_slice(arguments);
+    displayctl(&all).await
+}
+
+/// What a display holds, and does.
+struct Display {
+    name: &'static str,
+    key: rcgen::KeyPair,
+}
+
+impl Display {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            key: rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap(),
+        }
+    }
+
+    async fn asks(&self, server: &Server) -> Outcome {
+        let mut params = rcgen::CertificateParams::default();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, self.name);
+        let request = params.serialize_request(&self.key).unwrap();
+        server.enrollment.enroll(request.der(), None).await.unwrap()
+    }
+
+    /// What its own panel shows.
+    fn code(&self, server: &Server) -> String {
+        PairingCode::derive(
+            &server.authority.fingerprint(),
+            &DeviceId::parse(self.name).unwrap(),
+            &PublicKey::from_der(self.key.subject_public_key_info()),
+        )
+        .to_string()
+    }
+}
+
+#[tokio::test]
+async fn a_display_is_paired_from_start_to_finish_with_the_real_command() {
+    let server = start().await;
+    let socket = path(&server.socket);
+    let kitchen = Display::new("kitchen");
+
+    // Nothing is known yet, and the empty list says how to get a display in.
+    let empty = ctl(socket, &["displays", "list"]).await;
+    assert!(
+        out(&empty).contains("No display has asked"),
+        "{}",
+        out(&empty)
+    );
+
+    // The window is opened, and the display asks.
+    assert!(ctl(socket, &["window", "open"]).await.status.success());
+    assert!(matches!(
+        kitchen.asks(&server).await,
+        Outcome::Pending { .. }
+    ));
+    let listed = ctl(socket, &["displays", "list"]).await;
+    assert!(listed.status.success(), "{}", err(&listed));
+    let table = out(&listed);
+    assert!(
+        table.contains("kitchen") && table.contains("waiting") && table.contains("own panel"),
+        "{table}"
+    );
+    let code = kitchen.code(&server);
+    assert!(
+        !table.contains(&code) && !table.contains(&code.replace('-', "")),
+        "the list shows the code: {table}"
+    );
+
+    // A wrong code does nothing, and says so.
+    let wrong = ctl(socket, &["approve", "kitchen", "0000-0000-0000"]).await;
+    assert!(!wrong.status.success());
+    assert!(err(&wrong).contains("not the code"), "{}", err(&wrong));
+    assert!(out(&ctl(socket, &["displays", "show", "kitchen"]).await).contains("asked"));
+
+    // The code as a person types it from the panel: lower case, no dashes.
+    let typed = code.to_lowercase().replace('-', "");
+    let approved = ctl(socket, &["approve", "kitchen", &typed]).await;
+    assert!(approved.status.success(), "{}", err(&approved));
+    assert!(
+        out(&approved).contains("Approved kitchen"),
+        "{}",
+        out(&approved)
+    );
+
+    // The display's next ask is granted a certificate, and it is a member.
+    assert!(matches!(kitchen.asks(&server).await, Outcome::Issued(_)));
+    let shown = out(&ctl(socket, &["displays", "show", "kitchen"]).await);
+    assert!(
+        shown.contains("kitchen") && shown.contains("certificate until"),
+        "{shown}"
+    );
+
+    // Revoked, and then forgotten.
+    let revoked = ctl(socket, &["revoke", "kitchen"]).await;
+    assert!(revoked.status.success(), "{}", err(&revoked));
+    assert!(out(&ctl(socket, &["displays", "list"]).await).contains("revoked"));
+    let forgotten = ctl(socket, &["forget", "kitchen"]).await;
+    assert!(forgotten.status.success(), "{}", err(&forgotten));
+    assert!(out(&ctl(socket, &["displays", "list"]).await).contains("No display has asked"));
+}
+
+#[tokio::test]
+async fn naming_a_display_that_is_not_known_or_cannot_be_one_fails_with_a_reason() {
+    let server = start().await;
+    let socket = path(&server.socket);
+    let unknown = displayctl(&["--socket", socket, "approve", "ghost", "B0AJ-QTW6-Y8SA"]).await;
+    assert!(!unknown.status.success());
+    assert!(err(&unknown).contains("ghost"), "{}", err(&unknown));
+    let silly = displayctl(&["--socket", socket, "revoke", "has space"]).await;
+    assert!(!silly.status.success());
+    assert!(
+        err(&silly).contains("not a display name"),
+        "{}",
+        err(&silly)
+    );
+    let notcode = displayctl(&["--socket", socket, "approve", "ghost", "abc"]).await;
+    assert!(!notcode.status.success());
 }

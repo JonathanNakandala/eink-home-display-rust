@@ -153,14 +153,36 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
 
 ### Letting a display join: `displayctl`
 
-A display that has not joined is turned away until you open the pairing window. That is done from the machine the server
-runs on, with `displayctl`, which talks to the running server over a local socket (never the network):
+A display that has not joined is turned away until you open the pairing window. It is done from the machine the server
+runs on, with `displayctl`, which talks to the running server over a local socket (never the network). Pairing a new
+display goes like this:
 
-```sh
-displayctl --config-file config.toml window open        # 15 minutes; give a number for longer (1 to 240)
-displayctl --config-file config.toml window show        # is it open, and until when
-displayctl --config-file config.toml window close
-```
+1. **Open the window:** `displayctl -c config.toml window open` (15 minutes; give a number up to 240 for longer).
+2. **Start the display.** It asks to join and shows a pairing code on its own panel. The server logs
+   `<name> asked to join`.
+3. **See who is waiting:** `displayctl -c config.toml displays list`.
+4. **Approve it with the code from its panel:**
+   `displayctl -c config.toml approve <name> <code>`. Type the code from the panel, in any case, with or without the
+   dashes; `I` and `L` are read as `1`, `O` as `0`. **The server never shows the code**, and nothing here will print
+   it: a code copied from the server would say nothing about the display. If the code you type is wrong the command
+   says so and nothing changes; if you are sure it is right on the panel, something may be between the display and the
+   server.
+5. The display becomes a member the next time it asks, within a few minutes. `displays list` then shows it as a
+   `member` with when its certificate ends. You can close the window now: a display already waiting can still be approved.
+
+Other commands:
+
+| Command | What it does |
+|---|---|
+| `displays list` / `displays show <name>` | every display, or one, and where each stands |
+| `reject <name>` | turn a waiting display down until it is forgotten. For a member with another key waiting to take its name, turns that key down and leaves the member as it was |
+| `revoke <name>` | end a member's membership: it is turned away from its very next request, whatever its certificate says |
+| `forget <name>` | remove a display in any state, so it can ask again as if for the first time |
+
+**A request nobody answers lapses after 24 hours.** A display's request to join is forgotten as if it had never asked, and
+another key's request for a member's name is dropped with the member left as it was. This stops strays from filling the
+(eight) places for good. A display that is still asking after that asks again, with the window open, and has a fresh day.
+Members and displays you have approved never lapse.
 
 The socket is `admin.sock` in `[server.tls] directory`, and it is private to the user the server runs as. Two things
 keep other users out, and both are checked at start-up: the socket is created with mode 0600 (macOS ignores a mode on a

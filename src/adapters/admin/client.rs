@@ -11,8 +11,9 @@ use hyper_util::rt::TokioIo;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::api::{ApiError, OpenWindow, WindowState};
+use super::api::{ApiError, ApproveRequest, DisplayEntry, DisplayList, OpenWindow, WindowState};
 use super::transport;
+use crate::domain::models::device_id::DeviceId;
 
 /// Why a call failed: the server could not be reached, or it answered that the request was no good.
 #[derive(Debug)]
@@ -23,6 +24,8 @@ pub enum CallError {
     Refused { status: StatusCode, error: ApiError },
     /// The server answered with something this client does not understand.
     Unexpected(anyhow::Error),
+    /// The request was not sent, because what it was given can't be right (a name that can't be a display's).
+    Invalid(String),
 }
 
 impl std::fmt::Display for CallError {
@@ -31,6 +34,7 @@ impl std::fmt::Display for CallError {
             Self::Unreachable(e) => write!(f, "could not reach the server: {e:#}"),
             Self::Refused { error, .. } => write!(f, "{}", error.error.message),
             Self::Unexpected(e) => write!(f, "unexpected answer: {e:#}"),
+            Self::Invalid(message) => write!(f, "{message}"),
         }
     }
 }
@@ -118,28 +122,57 @@ impl AdminClient {
     pub async fn close_window(&self) -> Result<WindowState, CallError> {
         self.call(Method::DELETE, "/v1/window", None::<&()>).await
     }
-}
 
-/// The state of the window in a sentence for a person, with times in `zone`.
-pub fn describe_window<Z: chrono::TimeZone>(
-    state: &WindowState,
-    now: chrono::DateTime<chrono::Utc>,
-    zone: &Z,
-) -> String
-where
-    Z::Offset: std::fmt::Display,
-{
-    match state.closes_at {
-        Some(closes) if state.open => {
-            let left = (closes - now).num_seconds().max(0);
-            let (minutes, seconds) = (left / 60, left % 60);
-            format!(
-                "The pairing window is open until {} ({minutes} min {seconds:02} s from now). A display that has not joined can ask now.",
-                closes.with_timezone(zone).format("%H:%M:%S")
-            )
-        }
-        _ => "The pairing window is closed. Open it with `displayctl window open` to let a display ask to join."
-            .to_owned(),
+    /// The path of a display, after checking `name` can be one (so a typo is caught here, with a clear message).
+    fn display_path(name: &str, tail: &str) -> Result<String, CallError> {
+        let device = DeviceId::parse(name)
+            .map_err(|e| CallError::Invalid(format!("{name:?} is not a display name: {e}")))?;
+        Ok(format!("/v1/displays/{device}{tail}"))
+    }
+
+    pub async fn displays(&self) -> Result<DisplayList, CallError> {
+        self.call(Method::GET, "/v1/displays", None::<&()>).await
+    }
+
+    pub async fn display(&self, name: &str) -> Result<DisplayEntry, CallError> {
+        self.call(Method::GET, &Self::display_path(name, "")?, None::<&()>)
+            .await
+    }
+
+    /// Approves `name` with the code the owner read off its own panel.
+    pub async fn approve(&self, name: &str, code: &str) -> Result<DisplayEntry, CallError> {
+        let body = ApproveRequest {
+            code: code.to_owned(),
+        };
+        self.call(
+            Method::POST,
+            &Self::display_path(name, "/approve")?,
+            Some(&body),
+        )
+        .await
+    }
+
+    pub async fn reject(&self, name: &str) -> Result<DisplayEntry, CallError> {
+        self.call(
+            Method::POST,
+            &Self::display_path(name, "/reject")?,
+            None::<&()>,
+        )
+        .await
+    }
+
+    pub async fn revoke(&self, name: &str) -> Result<DisplayEntry, CallError> {
+        self.call(
+            Method::POST,
+            &Self::display_path(name, "/revoke")?,
+            None::<&()>,
+        )
+        .await
+    }
+
+    pub async fn forget(&self, name: &str) -> Result<DisplayEntry, CallError> {
+        self.call(Method::DELETE, &Self::display_path(name, "")?, None::<&()>)
+            .await
     }
 }
 
