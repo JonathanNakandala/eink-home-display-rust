@@ -48,6 +48,9 @@ esphome:
     - eink_format.h
     - eink_report.h
     - eink_service.h
+    - eink_sha256.h
+    - eink_trust.h
+    - eink_pairing.h
     - eink_state.h
     - eink_telemetry.h
   on_boot:
