@@ -15,7 +15,7 @@ use arc_swap::ArcSwap;
 use chrono::{DateTime, Duration, Utc};
 use rustls::client::danger::HandshakeSignatureValid;
 use rustls::crypto::aws_lc_rs as provider;
-use rustls::pki_types::{CertificateDer, UnixTime};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::{ClientHello, ResolvesServerCert, WebPkiClientVerifier};
 use rustls::sign::CertifiedKey;
@@ -123,8 +123,11 @@ fn issue(
         intermediate,
         key,
     } = authority.issue_server(names, now, not_after)?;
-    let key = provider::sign::any_ecdsa_type(&key)
-        .context("The server's new key is not one rustls can sign with")?;
+    // Borrowed, so the bytes stay in the one buffer that is wiped when `key` is dropped at the end of this function.
+    let key = provider::sign::any_ecdsa_type(&PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+        key.as_slice(),
+    )))
+    .context("The server's new key is not one rustls can sign with")?;
     Ok(Current {
         key: Arc::new(CertifiedKey::new(vec![certificate, intermediate], key)),
         issued_at: now,

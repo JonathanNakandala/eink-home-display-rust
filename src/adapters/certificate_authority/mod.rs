@@ -28,9 +28,10 @@ use rcgen::{
     SignatureAlgorithm,
 };
 use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls_pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use time::OffsetDateTime;
 use x509_parser::prelude::FromDer;
+use zeroize::{Zeroize, Zeroizing};
 
 pub use self::storage::{Create, open, rotate_intermediate};
 use crate::domain::models::pairing::Fingerprint;
@@ -59,7 +60,9 @@ pub struct ServerIdentity {
     /// The intermediate that signed it, sent after it so a display can build the path to the root it
     /// pins without having kept the intermediate.
     pub intermediate: CertificateDer<'static>,
-    pub key: PrivateKeyDer<'static>,
+    /// The key as PKCS #8 DER, wiped from memory when dropped. The server hands it to its TLS library and then
+    /// lets this go.
+    pub key: Zeroizing<Vec<u8>>,
 }
 
 /// What a new authority is kept as (see `storage`).
@@ -67,14 +70,14 @@ pub struct AuthorityFiles {
     /// The root certificate. Public: it is what displays are given to trust the server by.
     pub root_certificate: String,
     /// The root's key. Used only to make intermediates; keep it somewhere safe, off the server if you can.
-    pub root_key: String,
+    pub root_key: Zeroizing<String>,
     /// The intermediate's certificate and then its key, in one file so they are always replaced together.
-    pub intermediate: String,
+    pub intermediate: Zeroizing<String>,
 }
 
 /// The authority as it is used to serve. It holds the intermediate's key, not the root's.
 pub struct PrivateAuthority {
-    issuer: Issuer<'static, KeyPair>,
+    issuer: Issuer<'static, HeldKey>,
     root: Vec<u8>,
     intermediate: Vec<u8>,
     /// Earlier intermediates that have not ended yet: certificates they signed are still good.
@@ -82,6 +85,32 @@ pub struct PrivateAuthority {
     fingerprint: Fingerprint,
     root_not_after: DateTime<Utc>,
     intermediate_not_after: DateTime<Utc>,
+}
+
+/// The intermediate's key for as long as the server runs, wiped from memory when it is dropped (`KeyPair` is not).
+/// The wipe covers the copy `rcgen` keeps of the key's encoding; the signing library clears its own on release.
+struct HeldKey(KeyPair);
+
+impl Drop for HeldKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl PublicKeyData for HeldKey {
+    fn der_bytes(&self) -> &[u8] {
+        self.0.der_bytes()
+    }
+
+    fn algorithm(&self) -> &'static SignatureAlgorithm {
+        self.0.algorithm()
+    }
+}
+
+impl rcgen::SigningKey for HeldKey {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
+        rcgen::SigningKey::sign(&self.0, msg)
+    }
 }
 
 /// A display's public key, in the form `rcgen` signs.
@@ -121,6 +150,8 @@ fn authority_params(
 fn key_from_pem(pem: &str, what: &str) -> anyhow::Result<KeyPair> {
     let der = PrivatePkcs8KeyDer::from_pem_slice(pem.as_bytes())
         .map_err(|e| anyhow!("The {what} key is not a valid PEM private key: {e}"))?;
+    // The caller wraps the key so that it is wiped when dropped. The decoded `der` above is a plain buffer in a type
+    // from another library that does not wipe itself; that copy is the one thing here that is not covered.
     KeyPair::from_pkcs8_der_and_sign_algo(&der, &PKCS_ECDSA_P256_SHA256)
         .with_context(|| format!("The {what} key is not a P-256 key"))
 }
@@ -141,9 +172,9 @@ pub fn new_intermediate(
     root_certificate_pem: &str,
     root_key_pem: &str,
     now: DateTime<Utc>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Zeroizing<String>> {
     let root_certificate = certificate_from_pem(root_certificate_pem, "root")?;
-    let root_key = key_from_pem(root_key_pem, "root")?;
+    let root_key = Zeroizing::new(key_from_pem(root_key_pem, "root")?);
     let (_, root) = x509_parser::parse_x509_certificate(&root_certificate)
         .map_err(|e| anyhow!("The root certificate can't be read: {e}"))?;
     if root.public_key().raw != root_key.subject_public_key_info().as_slice() {
@@ -152,31 +183,37 @@ pub fn new_intermediate(
         ));
     }
     let root_end = end_of(&root)?;
-    let root_issuer = Issuer::from_ca_cert_der(&root_certificate, root_key)
+    let root_issuer = Issuer::from_ca_cert_der(&root_certificate, &*root_key)
         .context("Failed to use the root certificate to sign with")?;
 
-    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-        .context("Failed to generate the intermediate's key")?;
+    let key = Zeroizing::new(
+        KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+            .context("Failed to generate the intermediate's key")?,
+    );
     let mut params = authority_params(INTERMEDIATE_NAME, now, INTERMEDIATE_YEARS, 0)?;
     // Never outlive the root: nothing below an ended authority is trusted.
     let end = (now + Duration::days(365 * INTERMEDIATE_YEARS)).min(root_end);
     params.not_after = to_time(end)?;
     let certificate = params
-        .signed_by(&key, &root_issuer)
+        .signed_by(&*key, &root_issuer)
         .context("Failed to sign the intermediate's certificate")?;
-    Ok(format!("{}{}", certificate.pem(), key.serialize_pem()))
+    let mut file = Zeroizing::new(certificate.pem());
+    file.push_str(&key.serialize_pem());
+    Ok(file)
 }
 
 impl PrivateAuthority {
     /// A new root and intermediate, and the three files' contents to keep them by.
     pub fn generate(now: DateTime<Utc>) -> anyhow::Result<(Self, AuthorityFiles)> {
-        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .context("Failed to generate the root's key")?;
+        let key = Zeroizing::new(
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+                .context("Failed to generate the root's key")?,
+        );
         let params = authority_params(ROOT_NAME, now, ROOT_YEARS, 1)?;
         let certificate = params
-            .self_signed(&key)
+            .self_signed(&*key)
             .context("Failed to sign the root's certificate")?;
-        let (root_certificate, root_key) = (certificate.pem(), key.serialize_pem());
+        let (root_certificate, root_key) = (certificate.pem(), Zeroizing::new(key.serialize_pem()));
         let intermediate = new_intermediate(&root_certificate, &root_key, now)?;
         let authority = Self::from_pem(&root_certificate, &intermediate, &[], now)?;
         Ok((
@@ -228,6 +265,8 @@ impl PrivateAuthority {
                 earlier.push(der.to_vec());
             }
         }
+        // The issuer keeps the key for as long as the server runs, and wipes it when dropped.
+        let key = HeldKey(key);
         let issuer = Issuer::from_ca_cert_der(&intermediate, key)
             .context("Failed to use the intermediate certificate to sign with")?;
         Ok(Self {
@@ -254,8 +293,10 @@ impl PrivateAuthority {
             return Err(anyhow!("A server certificate needs at least one name"));
         }
         let not_after = self.limit_to_intermediate(now, not_after)?;
-        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .context("Failed to generate the server's key")?;
+        let key = Zeroizing::new(
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+                .context("Failed to generate the server's key")?,
+        );
         let mut params = CertificateParams::default();
         params.distinguished_name = DistinguishedName::new();
         params
@@ -281,13 +322,13 @@ impl PrivateAuthority {
         params.serial_number = Some(serial()?);
         params.use_authority_key_identifier_extension = true;
         let certificate = params
-            .signed_by(&key, &self.issuer)
+            .signed_by(&*key, &self.issuer)
             .context("Failed to sign the server's certificate")?;
         Ok(ServerIdentity {
             certificate: certificate.der().clone(),
             not_after,
             intermediate: CertificateDer::from(self.intermediate.clone()),
-            key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+            key: Zeroizing::new(key.serialize_der()),
         })
     }
 
