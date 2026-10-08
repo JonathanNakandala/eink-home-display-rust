@@ -3,8 +3,9 @@
 //! - `http`: the plain listener, as it has always been. No authority, no TLS, nothing written to disk.
 //! - `prefer-https`: the plain listener, and an HTTPS one beside it serving the same display routes
 //!   and the way in (EST). Over HTTPS a display with a certificate is known by it; one without is
-//!   served as over HTTP. The HTTPS port is announced over mDNS.
+//!   served as over HTTP. The HTTPS port is announced over mDNS, beside the `_http._tcp` service.
 //! - `https`: only HTTPS. The display routes need a certificate of the authority; only the way in is open.
+//!   Announced as `_https._tcp` on the HTTPS port, never as `_http._tcp`.
 //!
 //! The listeners are opened first and run afterwards, so a port that is taken, or an authority that
 //! can't be read, stops the program at start-up and not later, and so the addresses are known.

@@ -156,9 +156,19 @@ only offer, and only a display set to HTTPS-only is certain not to fall back.
 | `prefer-https` | HTTPS if the server announces `tlsport` and the display has joined; otherwise HTTP | **falls back to HTTP on any failure**, and says so in the notice so the owner can see it. Someone who can break the TLS can also strip `tlsport` or block the port, so refusing to fall back would add no protection, only a display that stops working. This mode is for moving over, not for protection |
 | `https` | HTTPS only, never HTTP, whatever is announced | the wake fails like any other failure; the picture stays |
 
-**Finding it.** The `_http._tcp` service has two more TXT keys when HTTPS is on offer: `tlsport` (the HTTPS
-port, on the same address) and `secure` (`optional` or `required`). With `required` the service port is the HTTPS
-port.
+**Finding it.** What the server announces depends on its `transport`:
+
+| server `transport` | service type | port | extra TXT keys |
+|---|---|---|---|
+| `http` | `_http._tcp` | HTTP | none |
+| `prefer-https` | `_http._tcp` | HTTP | `tlsport` (the HTTPS port, same address), `secure=optional` |
+| `https` | **`_https._tcp`** | HTTPS | `tlsport` (the same port), `secure=required` |
+
+A display in `http` or `prefer-https` mode browses `_http._tcp`, as now, and reads `tlsport` if it wants HTTPS. A
+display in `https` mode browses **`_https._tcp`** only: that is the only place a TLS-only server appears, and it
+must not look under `_http._tcp`, where nothing of this server's is listed in that mode. Both use the same
+`_eink-display` subtype, `txtvers=1` and `path` as before, and the same instance name, so `server_name` works the
+same way.
 
 **TLS.** TLS 1.3 only. The display connects to the address mDNS gave it and verifies the certificate against
 the fixed name **`eink-home-display.internal`**, which the server's certificate always has and no configuration can
