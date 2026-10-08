@@ -33,8 +33,8 @@ TEST(backoff_doubles_up_to_the_cap) {
 
 TEST(backoff_stops_doubling_after_six_when_the_cap_allows_more) {
   const uint32_t base = 1000, cap = 1000000;
-  CHECK_EQ(backoff_ms(7, base, cap), 64000u);   // base << 6
-  CHECK_EQ(backoff_ms(8, base, cap), 64000u);   // and no further
+  CHECK_EQ(backoff_ms(7, base, cap), 64000u);  // base << 6
+  CHECK_EQ(backoff_ms(8, base, cap), 64000u);  // and no further
   CHECK_EQ(backoff_ms(255, base, cap), 64000u);
   // Landing exactly on the cap is the cap, not one under it.
   CHECK_EQ(backoff_ms(4, base, 8000), 8000u);
@@ -60,17 +60,15 @@ TEST(a_plan_sleep_is_shortened_by_what_the_wake_used) {
   CHECK_EQ(sleep_after(600000, 5000, 5000), 600000u);
 }
 
-TEST(a_sleep_that_is_not_the_plan_is_used_as_it_is) {
-  CHECK_EQ(sleep_after(1200000, 0, 99999), 1200000u);
-}
+TEST(a_sleep_that_is_not_the_plan_is_used_as_it_is) { CHECK_EQ(sleep_after(1200000, 0, 99999), 1200000u); }
 
 TEST(a_wake_that_used_more_than_the_plan_still_sleeps_a_minute) {
-  CHECK_EQ(sleep_after(600000, 1000, 1000 + 600000), 60000u);       // used all of it
-  CHECK_EQ(sleep_after(600000, 1000, 1000 + 700000), 60000u);       // used more: no unsigned wrap to a huge sleep
-  CHECK_EQ(sleep_after(600000, 1000, 1000 + 540000), 60000u);       // exactly a minute left
-  CHECK_EQ(sleep_after(600000, 1000, 1000 + 540001), 60000u);       // just under: held at a minute
-  CHECK_EQ(sleep_after(600000, 1000, 1000 + 539999), 60001u);       // just over
-  CHECK_EQ(sleep_after(30000, 1000, 1500), 60000u);                 // a plan already under a minute
+  CHECK_EQ(sleep_after(600000, 1000, 1000 + 600000), 60000u);  // used all of it
+  CHECK_EQ(sleep_after(600000, 1000, 1000 + 700000), 60000u);  // used more: no unsigned wrap to a huge sleep
+  CHECK_EQ(sleep_after(600000, 1000, 1000 + 540000), 60000u);  // exactly a minute left
+  CHECK_EQ(sleep_after(600000, 1000, 1000 + 540001), 60000u);  // just under: held at a minute
+  CHECK_EQ(sleep_after(600000, 1000, 1000 + 539999), 60001u);  // just over
+  CHECK_EQ(sleep_after(30000, 1000, 1500), 60000u);            // a plan already under a minute
 }
 
 TEST(the_clock_wrapping_does_not_upset_the_sum) {
@@ -82,7 +80,8 @@ TEST(the_clock_wrapping_does_not_upset_the_sum) {
 TEST(sleep_after_agrees_with_a_wide_reference_everywhere) {
   // The same sum in 64 bits, with no wrapping to go wrong, over a spread of values.
   for (uint64_t asked : {0ull, 59999ull, 60000ull, 600000ull, 86400000ull})
-    for (uint64_t used : {0ull, 1ull, 59999ull, 60000ull, 540000ull, 540001ull, 600000ull, 86400000ull, 4000000000ull}) {
+    for (uint64_t used :
+         {0ull, 1ull, 59999ull, 60000ull, 540000ull, 540001ull, 600000ull, 86400000ull, 4000000000ull}) {
       const uint32_t received = 123456u;
       const uint32_t now = (uint32_t) (received + used);  // wraps for the big ones
       const uint64_t expected = asked > used + 60000 ? asked - used : 60000;

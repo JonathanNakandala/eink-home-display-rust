@@ -22,8 +22,6 @@ inline bool plausible(int64_t now) { return now >= EARLIEST_PLAUSIBLE; }
 // Whether the clock can be used. `newest_render` is the newest image version the display has been told of (the
 // server's `version`, which is when it rendered, in seconds since 1970; 0 if none). A clock earlier than a time
 // that has already happened is wrong even if it is past 2026, for example one a server of the wrong date set.
-inline bool usable(int64_t now, uint32_t newest_render) {
-  return plausible(now) && now >= (int64_t) newest_render;
-}
+inline bool usable(int64_t now, uint32_t newest_render) { return plausible(now) && now >= (int64_t) newest_render; }
 
 }  // namespace eink_clock

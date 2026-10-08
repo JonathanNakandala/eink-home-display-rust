@@ -30,11 +30,11 @@ static const int64_t NOON_ISH = 1791376496;
 
 TEST(the_time_of_day_is_utc_plus_the_offset) {
   CHECK_EQ(clock_text(NOON_ISH, 0), "12:34");
-  CHECK_EQ(clock_text(NOON_ISH, 3600), "13:34");                  // UK in summer
-  CHECK_EQ(clock_text(NOON_ISH, -5 * 3600), "07:34");             // New York in winter
-  CHECK_EQ(clock_text(NOON_ISH, 5 * 3600 + 1800), "18:04");       // Colombo, a half hour
-  CHECK_EQ(clock_text(NOON_ISH, 10 * 3600 + 1800), "23:04");      // Lord Howe in winter
-  CHECK_EQ(clock_text(NOON_ISH, 12 * 3600 + 45 * 60), "01:19");   // Chatham, 45 minutes, into the next day
+  CHECK_EQ(clock_text(NOON_ISH, 3600), "13:34");                 // UK in summer
+  CHECK_EQ(clock_text(NOON_ISH, -5 * 3600), "07:34");            // New York in winter
+  CHECK_EQ(clock_text(NOON_ISH, 5 * 3600 + 1800), "18:04");      // Colombo, a half hour
+  CHECK_EQ(clock_text(NOON_ISH, 10 * 3600 + 1800), "23:04");     // Lord Howe in winter
+  CHECK_EQ(clock_text(NOON_ISH, 12 * 3600 + 45 * 60), "01:19");  // Chatham, 45 minutes, into the next day
 }
 
 TEST(the_time_of_day_wraps_the_day_both_ways) {

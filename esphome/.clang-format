@@ -1,0 +1,18 @@
+# The style the headers and tests are already written in (ESPHome's own: Google-based, 2 spaces, 120 columns,
+# `const char *name`). Checked by `make -C esphome lint`; `make -C esphome format` applies it.
+BasedOnStyle: Google
+ColumnLimit: 120
+IndentWidth: 2
+AccessModifierOffset: -1
+DerivePointerAlignment: false
+PointerAlignment: Right
+AllowShortFunctionsOnASingleLine: All
+SpaceAfterCStyleCast: true
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+SortIncludes: false
+AllowShortCaseLabelsOnASingleLine: true
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+BreakTemplateDeclarations: No

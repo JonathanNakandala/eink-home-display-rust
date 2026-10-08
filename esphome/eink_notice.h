@@ -19,7 +19,7 @@ namespace eink_notice {
 
 using Display = esphome::it8951::IT8951Display;
 
-template<typename Tag, typename Tag::type Member> struct Reach {
+template <typename Tag, typename Tag::type Member> struct Reach {
   friend typename Tag::type reach(Tag) { return Member; }
 };
 struct ResetDirtyRegion {

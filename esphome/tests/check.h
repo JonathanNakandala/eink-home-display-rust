@@ -51,26 +51,26 @@ inline int run_all() {
 
 }  // namespace check
 
-#define TEST(name)                                                       \
-  static void test_##name();                                             \
-  static check::Register register_##name(#name, test_##name);            \
+#define TEST(name)                                            \
+  static void test_##name();                                  \
+  static check::Register register_##name(#name, test_##name); \
   static void test_##name()
 
-#define CHECK(condition)                                                              \
-  do {                                                                                \
-    if (!(condition)) {                                                               \
-      std::printf("  %s:%d: CHECK(%s) failed\n", __FILE__, __LINE__, #condition);    \
-      check::failures()++;                                                            \
-    }                                                                                 \
+#define CHECK(condition)                                                          \
+  do {                                                                            \
+    if (!(condition)) {                                                           \
+      std::printf("  %s:%d: CHECK(%s) failed\n", __FILE__, __LINE__, #condition); \
+      check::failures()++;                                                        \
+    }                                                                             \
   } while (0)
 
-#define CHECK_EQ(actual, expected)                                                                              \
-  do {                                                                                                          \
-    const auto a_ = (actual);                                                                                   \
-    const auto e_ = (expected);                                                                                 \
-    if (!(a_ == e_)) {                                                                                          \
-      std::printf("  %s:%d: %s\n    got      %s\n    expected %s\n", __FILE__, __LINE__, #actual,               \
-                  check::show(a_).c_str(), check::show(e_).c_str());                                            \
-      check::failures()++;                                                                                      \
-    }                                                                                                           \
+#define CHECK_EQ(actual, expected)                                                                \
+  do {                                                                                            \
+    const auto a_ = (actual);                                                                     \
+    const auto e_ = (expected);                                                                   \
+    if (!(a_ == e_)) {                                                                            \
+      std::printf("  %s:%d: %s\n    got      %s\n    expected %s\n", __FILE__, __LINE__, #actual, \
+                  check::show(a_).c_str(), check::show(e_).c_str());                              \
+      check::failures()++;                                                                        \
+    }                                                                                             \
   } while (0)
