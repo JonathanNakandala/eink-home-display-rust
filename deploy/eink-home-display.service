@@ -56,5 +56,40 @@ MemoryHigh=1000M
 MemoryMax=1300M
 OOMPolicy=continue
 
+# Sandboxing. The service holds the authority's keys and answers strangers on a port, so it is given only what it
+# uses. Everything the program writes is under the working directory (the configuration's `cache`, `file_store`,
+# `server.directory` and `server.tls.directory` are all relative to it by default). If you point any of them
+# elsewhere, add that path to ReadWritePaths or the service will fail to start with "Read-only file system".
+#
+# What is left out on purpose, because Chrome (which renders the page) needs it: MemoryDenyWriteExecute (its
+# JavaScript engine compiles code), SystemCallFilter, RestrictNamespaces (its sandbox is made of namespaces) and
+# ProcSubset. PrivateDevices is left out for the sake of the SPI and GPIO a locally attached panel uses; add it back
+# if the panel is not attached to this machine.
+#
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/eink-home-display
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+# The server listens on ports above 1024 and needs no capability. (Chrome's sandbox uses unprivileged user namespaces,
+# which need none either.) If you set `[server] bind` to a port below 1024, give it CAP_NET_BIND_SERVICE instead.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Unix sockets (the admin socket, Chrome), IPv4 and IPv6, and netlink to list the machine's addresses.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Files made by the service are private to its user: the authority's keys are made 0600 regardless, and the rest
+# (displays, cache) is nobody else's business.
+UMask=0077
+
 [Install]
 WantedBy=multi-user.target
