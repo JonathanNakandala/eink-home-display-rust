@@ -1,0 +1,27 @@
+# This is NOT a Python project. The program is Rust (Cargo.toml); the display firmware is ESPHome YAML and C++
+# headers in esphome/. This file only pins the tools that build and check that firmware, so everyone gets the
+# same ESPHome version. Nothing here is packaged or published, and no Python source lives in this repository.
+#
+#   poetry install                                     # creates .venv and installs the tools
+#   poetry run esphome config esphome/reterminal-e1003.yaml
+#
+# `make -C esphome check` does the same through Poetry.
+[project]
+name = "eink-home-display-firmware-tooling"
+version = "0.0.0"
+description = "Pinned build tools for the ESPHome firmware in esphome/. Not a Python package."
+authors = [{ name = "Jonathan Nakandala" }]
+# The interpreter the tools run on, not anything this repository is written in. ESPHome and PlatformIO lag
+# behind the newest Python, so keep this to what they support.
+requires-python = ">=3.12,<3.15"
+
+[tool.poetry]
+package-mode = false
+
+# The firmware build: `esphome config` checks the YAML, `esphome compile` builds it (ESPHome fetches PlatformIO and
+# the ESP-IDF toolchain itself on first use, into esphome/.esphome and ~/.platformio). The YAML needs 2026.7.0 or
+# later for the it8951 display platform.
+[dependency-groups]
+firmware = ["esphome>=2026.7.0"]
+# Checks on the files, not part of the build.
+lint = ["pyyaml>=6.0", "yamllint>=1.35"]

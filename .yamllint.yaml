@@ -1,0 +1,10 @@
+# For the ESPHome YAML in esphome/. Looser than the default where that file's style is deliberate.
+extends: default
+rules:
+  line-length: disable        # long comments and lambdas
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "yes", "no", "on", "off"]
