@@ -25,6 +25,22 @@ pub(super) async fn image_written_at(
 }
 
 /// How the service is doing: the render history, the sources' state, and the image's age.
+#[utoipa::path(
+    get,
+    path = "/status",
+    tag = "monitoring",
+    responses(
+        (
+            status = 200,
+            description = "The render history, the state of each data source, the displays that have checked in, \
+                and where each display stands in the certificate authority (empty over plain HTTP).",
+            body = Status,
+            content_type = "application/json",
+            headers(("cache-control" = String, description = "Always `no-store`."))
+        ),
+        (status = 500, description = "The server could not work its state out.")
+    )
+)]
 pub(super) async fn status(State(published): State<Arc<Published>>) -> Response {
     match current_status(&published).await {
         Ok(status) => ([(header::CACHE_CONTROL, "no-store")], Json(status)).into_response(),
@@ -33,6 +49,29 @@ pub(super) async fn status(State(published): State<Arc<Published>>) -> Response 
 }
 
 /// A pass or fail for monitors: 200 unless the image is stale, then 503, with a line saying why.
+#[utoipa::path(
+    get,
+    path = "/healthz",
+    tag = "monitoring",
+    responses(
+        (
+            status = 200,
+            description = "The service is working. Includes `degraded` (a source is down and an earlier \
+                result stands in) and `failing` (renders are failing but the image is not yet stale).",
+            body = String,
+            content_type = "text/plain",
+            example = "ok"
+        ),
+        (
+            status = 503,
+            description = "The image is stale, or none has been rendered. The body says which.",
+            body = String,
+            content_type = "text/plain",
+            example = "stale: the image is 3 h 0 min old"
+        ),
+        (status = 500, description = "The server could not work its state out.")
+    )
+)]
 pub(super) async fn healthz(State(published): State<Arc<Published>>) -> Response {
     match current_status(&published).await {
         Ok(status) => {
@@ -73,6 +112,23 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
 }
 
 /// The same facts as `/status`, in the Prometheus text format, for a scraper.
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    tag = "monitoring",
+    responses(
+        (
+            status = 200,
+            description = "The service's and the displays' state as Prometheus gauges (text exposition format 0.0.4), \
+                for a scraper. Everything in it is derived from the same data as `/status`, so the two agree.",
+            body = String,
+            content_type = "text/plain; version=0.0.4; charset=utf-8",
+            headers(("cache-control" = String, description = "Always `no-store`.")),
+            example = json!("# HELP eink_info The running version. Always 1.\n# TYPE eink_info gauge\neink_info{version=\"0.1.0\"} 1\n")
+        ),
+        (status = 500, description = "The server could not work its state out.")
+    )
+)]
 pub(super) async fn metrics(State(published): State<Arc<Published>>) -> Response {
     match current_status(&published).await {
         Ok(status) => (

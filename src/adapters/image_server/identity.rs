@@ -16,6 +16,7 @@ use std::convert::Infallible;
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use serde::Deserialize;
+use utoipa::IntoParams;
 
 use crate::adapters::authenticated::AuthenticatedDevice;
 use crate::domain::models::device_id::DeviceId;
@@ -24,8 +25,14 @@ use crate::domain::models::device_id::DeviceId;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Caller(pub Option<DeviceId>);
 
-#[derive(Deserialize)]
-struct Named {
+/// The name a display gives itself. Optional, and never a reason to refuse a request.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(super) struct Named {
+    /// The display's name, so the server can tell displays apart (battery, last seen, which image it was sent).
+    /// A name that is not usable is ignored and the request is served all the same. Over HTTPS the display is
+    /// named by its certificate and this is ignored.
+    #[param(value_type = Option<String>, max_length = 32, pattern = "^[A-Za-z0-9._-]+$", example = "reterminal-e1003-a1b2c3")]
     device: Option<String>,
 }
 

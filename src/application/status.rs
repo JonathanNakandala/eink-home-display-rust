@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use chrono::DateTime;
 use chrono_tz::Tz;
 use serde::Serialize;
+use utoipa::ToSchema;
 
+use super::api_schema::SourceReportSchema;
 use super::devices::DeviceStatus;
 use super::plan::{PlanTiming, is_stale, version_of};
 use crate::domain::models::freshness::format_age;
@@ -23,7 +25,7 @@ use crate::domain::services::render_observer::RenderObserver;
 /// Long enough for a render error to be recognisable, short enough for a one-line log or a page.
 const MAX_ERROR_CHARS: usize = 300;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Health {
     /// No image yet, and the service has only just started.
@@ -37,7 +39,9 @@ pub enum Health {
     Stale,
 }
 
-#[derive(Debug, Serialize)]
+/// How the service is doing: the render history, the state of the data sources, the displays that have
+/// checked in, and where each stands in the certificate authority.
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Status {
     pub state: Health,
     pub rendering: bool,
@@ -46,6 +50,7 @@ pub struct Status {
     pub last_failure: Option<FailureStatus>,
     pub consecutive_failures: u32,
     /// How each source was on the last successful render.
+    #[schema(value_type = Vec<SourceReportSchema>)]
     pub sources: Vec<SourceReport>,
     /// The displays that have checked in, with their battery and whether any has gone quiet.
     pub devices: Vec<DeviceStatus>,
@@ -58,7 +63,7 @@ pub struct Status {
     pub version: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ImageStatus {
     pub rendered_at: DateTime<Tz>,
     pub age_seconds: u64,
@@ -68,10 +73,11 @@ pub struct ImageStatus {
 
 /// A display and where it stands in the certificate authority, for the owner to see trouble weeks before it
 /// is one: a display that stopped renewing shows as a certificate running out.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MemberStatus {
     pub name: String,
     /// `pending`, `approved`, `member`, `rejected` or `revoked`.
+    #[schema(examples("member"))]
     pub state: &'static str,
     /// For a member, when the latest certificate it was given ends.
     pub certificate_not_after: Option<DateTime<Tz>>,
@@ -105,13 +111,13 @@ impl MemberStatus {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Moment {
     pub at: DateTime<Tz>,
     pub age_seconds: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FailureStatus {
     pub at: DateTime<Tz>,
     pub age_seconds: u64,

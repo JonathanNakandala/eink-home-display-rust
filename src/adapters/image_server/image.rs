@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-use super::identity::Caller;
+use super::identity::{Caller, Named};
 use super::{Published, negotiate, transfer};
 use crate::domain::models::display::ImageFormat;
 
@@ -16,6 +16,45 @@ use crate::domain::models::display::ImageFormat;
 /// A format whose file can't be inspected or read is skipped, so one bad file doesn't take the
 /// others down with it. It is a 500 only when that leaves the client nothing it accepts, and never
 /// a 404 or 406: those would say the image isn't there or isn't wanted, when the server failed.
+#[utoipa::path(
+    get,
+    path = "/image",
+    tag = "displays",
+    params(Named),
+    responses(
+        (
+            status = 200,
+            description = "The image, in the best format the client accepts: BMP, PNG or QOI. The reply's \
+                `Content-Type` says which, and that is all a client needs to decode it.",
+            // A raw file: OpenAPI 3.1 describes one by leaving the schema out.
+            content(("image/bmp"), ("image/png"), ("image/qoi")),
+            headers(
+                ("content-length" = String, description = "The size of the file, which is how a dropped download is noticed."),
+                ("cache-control" = String, description = "Always `no-store`: the picture changes every refresh."),
+                ("vary" = String, description = "Always `Accept`, because the format depends on it.")
+            )
+        ),
+        (
+            status = 404,
+            description = "Nothing has been rendered yet.",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 406,
+            description = "The client accepts none of the formats there are. The body lists the ones available.",
+            body = String,
+            content_type = "text/plain",
+            headers(("vary" = String, description = "Always `Accept`."))
+        ),
+        (
+            status = 500,
+            description = "An image exists but could not be read, which is a failure of the server and not of the request.",
+            body = String,
+            content_type = "text/plain"
+        )
+    )
+)]
 pub(super) async fn image(
     State(published): State<Arc<Published>>,
     Caller(caller): Caller,

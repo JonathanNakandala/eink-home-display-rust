@@ -1,3 +1,4 @@
+pub mod api_schema;
 pub mod devices;
 pub mod enrollment;
 pub mod launch;
