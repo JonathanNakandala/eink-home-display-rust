@@ -83,7 +83,7 @@ bind = "[::]:8443"
 directory = "pki"
 names = []
 server_certificate_days = 90
-device_certificate_days = 365
+device_certificate_days = 90
 pairing_retry_minutes = 5
 require_channel_binding = false
 

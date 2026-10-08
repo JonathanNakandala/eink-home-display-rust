@@ -10,7 +10,7 @@ use chrono::DateTime;
 use chrono_tz::Tz;
 
 use super::{Published, metrics, server_error};
-use crate::application::status::Status;
+use crate::application::status::{MemberStatus, Status};
 
 /// When the served image was written; None before the first render.
 pub(super) async fn image_written_at(
@@ -61,6 +61,14 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
             .status
             .status(now, rendered_at, &published.schedule, published.timing)?;
     status.devices = published.handles.devices.snapshot(now);
+    if let Some(enrollment) = &published.handles.members {
+        status.members = enrollment
+            .pairings()
+            .await?
+            .iter()
+            .map(|pairing| MemberStatus::of(pairing, now))
+            .collect();
+    }
     Ok(status)
 }
 
@@ -81,7 +89,11 @@ pub(super) async fn metrics(State(published): State<Arc<Published>>) -> Response
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{publish, set_age, start, start_with_status};
+    use std::sync::Arc;
+
+    use super::super::testing::{publish, set_age, start, start_full, start_with_status};
+    use crate::adapters::clock::SystemClock;
+    use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
     use crate::domain::services::render_observer::RenderObserver;
     use chrono_tz::Europe::London;
@@ -254,5 +266,112 @@ mod tests {
             text.contains("eink_device_last_failure{device=\"kitchen\",reason=\"download\"} 1"),
             "{text}"
         );
+    }
+
+    #[tokio::test]
+    async fn status_lists_where_each_display_stands_in_the_authority() {
+        use crate::adapters::certificate_authority::{self, Create};
+        use crate::adapters::pairing_store::{FilePairingStore, Missing};
+        use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
+        use crate::domain::models::device_id::DeviceId;
+        use crate::domain::models::pairing::{
+            Fingerprint, Pairing, PairingCode, PairingState, PublicKey,
+        };
+        use crate::domain::services::pairing_store::PairingStore;
+
+        let pki = tempfile::tempdir().unwrap();
+        let authority =
+            Arc::new(certificate_authority::open(pki.path(), Create::IfMissing).unwrap());
+        let store = Arc::new(
+            FilePairingStore::open(pki.path(), Missing::StartEmpty)
+                .await
+                .unwrap(),
+        );
+        let now = chrono::Utc::now();
+        for (name, state) in [
+            (
+                "kitchen",
+                PairingState::Enrolled {
+                    serial: "01".to_owned(),
+                    not_after: now + chrono::Duration::days(20),
+                },
+            ),
+            ("hall", PairingState::Pending),
+        ] {
+            let device = DeviceId::parse(name).unwrap();
+            let key = PublicKey::from_der(name.as_bytes().repeat(8));
+            let code = PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key);
+            store
+                .put(&Pairing::new(device, key, code, state, now))
+                .await
+                .unwrap();
+        }
+        let enrollment = Arc::new(Enrollment::new(
+            authority,
+            store,
+            Arc::new(SystemClock::new(London)),
+            EnrollmentPolicy {
+                certificate_lifetime: chrono::Duration::days(90),
+                retry_after: chrono::Duration::minutes(5),
+                require_channel_binding: false,
+            },
+        ));
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, _) = start_full(
+            Arc::new(DirectoryImages::new(tmp.path().to_path_buf())),
+            ImageFormat::Bmp,
+            Arc::new(SystemClock::new(London)),
+            Some(enrollment),
+        )
+        .await;
+
+        let body: serde_json::Value = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let members = body["members"].as_array().unwrap();
+        assert_eq!(members.len(), 2);
+        let hall = members.iter().find(|m| m["name"] == "hall").unwrap();
+        assert_eq!(hall["state"], "pending");
+        assert!(hall["certificate_not_after"].is_null());
+        let kitchen = members.iter().find(|m| m["name"] == "kitchen").unwrap();
+        assert_eq!(kitchen["state"], "member");
+        assert_eq!(kitchen["certificate_expired"], false);
+        let left = kitchen["certificate_expires_in_seconds"].as_i64().unwrap();
+        assert!((19 * 86_400..=20 * 86_400).contains(&left), "{left}");
+
+        let metrics = reqwest::get(format!("{base}/metrics"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(metrics.contains("eink_member_state{device=\"kitchen\",state=\"member\"} 1"));
+        assert!(
+            metrics
+                .contains("eink_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"}")
+        );
+    }
+
+    #[tokio::test]
+    async fn over_plain_http_status_has_no_members() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
+        let body: serde_json::Value = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["members"], serde_json::json!([]));
+        let metrics = reqwest::get(format!("{base}/metrics"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(!metrics.contains("eink_member"));
     }
 }

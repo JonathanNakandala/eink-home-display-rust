@@ -142,6 +142,9 @@ async fn main() -> Result<()> {
     // The display downloads its image, so serve it for as long as the refresh loop runs.
     let settings = ServerSettings::from(&config.server);
     let format = config.display.image_format.into();
+    // The certificate authority and the list of displays are opened first, so that a missing or unreadable
+    // one stops the program here, and so `/status` can report on them.
+    let security = bootstrap::open_security(&config.server, clock.clone(), args.init_pki).await?;
     let display_routes = router(
         images,
         format,
@@ -151,13 +154,13 @@ async fn main() -> Result<()> {
             refresh: refresh.clone(),
             status: status.clone(),
             devices: devices.clone(),
+            members: security.as_ref().map(|s| s.enrollment.clone()),
         },
         clock.clone(),
     );
-    // Opened before anything runs, so a port that is taken or an authority that can't be read stops the
-    // program here.
+    // Opened before anything runs, so a port that is taken stops the program here too.
     let listening =
-        bootstrap::start_serving(&config.server, display_routes, format, clock.clone()).await?;
+        bootstrap::start_serving(&config.server, display_routes, format, security).await?;
     tokio::select! {
         result = periodic => result,
         result = listening.run() => result,

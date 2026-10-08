@@ -36,6 +36,13 @@ pub struct Args {
     #[arg(long)]
     pub no_initial_run: bool,
 
+    /// Make what is missing of the certificate authority and the list of displays (`[server.tls] directory`).
+    /// With `transport = "https"` nothing is made without this, since a missing directory is usually a
+    /// volume that was not mounted, and a new authority would lock out every display. Give it for the
+    /// first start only.
+    #[arg(long)]
+    pub init_pki: bool,
+
     /// After a restart, wait until this long has passed since the last render was attempted before
     /// the first one, so a crash loop can't hammer the APIs. e.g. 2m
     #[arg(long, default_value = "2m", value_parser = humantime::parse_duration)]

@@ -14,7 +14,7 @@ const DEFAULT_DEVICE_OVERDUE_GRACE_SECONDS: u32 = 900;
 const DEFAULT_TLS_BIND: &str = "[::]:8443";
 const DEFAULT_PKI_DIRECTORY: &str = "pki";
 const DEFAULT_SERVER_CERTIFICATE_DAYS: u32 = 90;
-const DEFAULT_DEVICE_CERTIFICATE_DAYS: u32 = 365;
+const DEFAULT_DEVICE_CERTIFICATE_DAYS: u32 = 90;
 const DEFAULT_PAIRING_RETRY_MINUTES: u32 = 5;
 
 /// How displays reach the server.
@@ -72,16 +72,20 @@ pub struct TlsConfig {
     /// pairing every display again. Relative paths are resolved against the working directory.
     #[serde(default = "default_pki_directory")]
     pub directory: PathBuf,
-    /// The host names and IP addresses the server's certificate is for: what a display connects to, and
-    /// checks the certificate against. Left empty, it is `<instance_name>.local` (the name announced over
-    /// mDNS, with the characters a host name can't have replaced) and `localhost`.
+    /// More host names and IP addresses for the server's certificate, for a browser or `curl` to connect
+    /// by. Left empty, it is `<instance_name>.local` (the name announced over mDNS, with the characters a
+    /// host name can't have replaced) and `localhost`. The certificate also always has the fixed name
+    /// `eink-home-display.internal`, which is what a display checks, so changing this never affects them.
     #[serde(default)]
     pub names: Vec<String>,
     /// How long the server's own certificate lasts. It is replaced when a third of that is left.
     #[serde(default = "default_server_certificate_days")]
     pub server_certificate_days: u32,
-    /// How long a display's certificate lasts. A display renews it by itself while it is valid; one
-    /// that is off for longer has to be paired again.
+    /// How long a display's certificate lasts. Short on purpose: a display renews it with a third of its life
+    /// left, so renewal happens all the time and not once in years when no one remembers how it works, and a
+    /// display that has stopped renewing shows in `/status` within weeks. It is not what keeps a revoked
+    /// display out (that takes effect on its next request). A display that is off for longer than this gets
+    /// a new certificate by itself, with no one at the server, when it is next switched on.
     #[serde(default = "default_device_certificate_days")]
     pub device_certificate_days: u32,
     /// How long a display that is waiting for approval is told to wait before asking again.

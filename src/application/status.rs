@@ -15,6 +15,7 @@ use serde::Serialize;
 use super::devices::DeviceStatus;
 use super::plan::{PlanTiming, is_stale, version_of};
 use crate::domain::models::freshness::format_age;
+use crate::domain::models::pairing::{Pairing, PairingState};
 use crate::domain::models::render_report::{RenderReport, SourceReport};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::render_observer::RenderObserver;
@@ -48,6 +49,8 @@ pub struct Status {
     pub sources: Vec<SourceReport>,
     /// The displays that have checked in, with their battery and whether any has gone quiet.
     pub devices: Vec<DeviceStatus>,
+    /// Where each display stands in the certificate authority. Empty over plain HTTP.
+    pub members: Vec<MemberStatus>,
     pub next_render: Option<DateTime<Tz>>,
     /// The refresh schedule in words, one line per cron expression.
     pub schedule: Vec<String>,
@@ -61,6 +64,45 @@ pub struct ImageStatus {
     pub age_seconds: u64,
     /// The same number `/plan` reports.
     pub version: u32,
+}
+
+/// A display and where it stands in the certificate authority, for the owner to see trouble weeks before it
+/// is one: a display that stopped renewing shows as a certificate running out.
+#[derive(Debug, Serialize)]
+pub struct MemberStatus {
+    pub name: String,
+    /// `pending`, `approved`, `member`, `rejected` or `revoked`.
+    pub state: &'static str,
+    /// For a member, when the latest certificate it was given ends.
+    pub certificate_not_after: Option<DateTime<Tz>>,
+    /// Seconds until then; negative once it has passed.
+    pub certificate_expires_in_seconds: Option<i64>,
+    /// A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one
+    /// at the server, the next time it is switched on.
+    pub certificate_expired: bool,
+    /// It has been given a certificate for a new key and has not used it yet.
+    pub changing_keys: bool,
+    /// A different key is waiting for the owner to approve it taking this display's name.
+    pub replacement_waiting: bool,
+}
+
+impl MemberStatus {
+    pub fn of(pairing: &Pairing, now: DateTime<Tz>) -> Self {
+        let (state, ends) = match &pairing.state {
+            PairingState::Enrolled { not_after, .. } => ("member", Some(*not_after)),
+            other => (other.name(), None),
+        };
+        let seconds = ends.map(|end| (end - now.to_utc()).num_seconds());
+        Self {
+            name: pairing.device.to_string(),
+            state,
+            certificate_not_after: ends.map(|end| end.with_timezone(&now.timezone())),
+            certificate_expires_in_seconds: seconds,
+            certificate_expired: seconds.is_some_and(|s| s <= 0),
+            changing_keys: pairing.rollover.is_some(),
+            replacement_waiting: pairing.replacement.is_some(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -194,6 +236,7 @@ impl StatusBoard {
                 .map(|s| s.report.sources.clone())
                 .unwrap_or_default(),
             devices: Vec::new(),
+            members: Vec::new(),
             next_render: schedule.next_after(now).ok(),
             schedule: schedule.describe(),
             uptime_seconds: uptime.num_seconds().unsigned_abs(),
@@ -408,5 +451,82 @@ mod tests {
                 .unwrap()
                 .is_healthy()
         );
+    }
+
+    fn pairing(state: PairingState) -> Pairing {
+        use crate::domain::models::device_id::DeviceId;
+        use crate::domain::models::pairing::{Fingerprint, PairingCode, PublicKey};
+        let device = DeviceId::parse("kitchen").unwrap();
+        let key = PublicKey::from_der(vec![1; 91]);
+        let code = PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key);
+        Pairing::new(device, key, code, state, at(8, 0, 0).to_utc())
+    }
+
+    #[test]
+    fn a_member_shows_when_its_certificate_ends() {
+        let ends = at(12, 0, 0).to_utc() + chrono::Duration::days(3);
+        let member = MemberStatus::of(
+            &pairing(PairingState::Enrolled {
+                serial: "01".to_owned(),
+                not_after: ends,
+            }),
+            at(12, 0, 0),
+        );
+        assert_eq!(member.name, "kitchen");
+        assert_eq!(member.state, "member");
+        assert_eq!(member.certificate_expires_in_seconds, Some(3 * 86_400));
+        assert_eq!(member.certificate_not_after.unwrap().to_utc(), ends);
+        assert!(!member.certificate_expired);
+    }
+
+    #[test]
+    fn a_certificate_that_has_run_out_is_shown_as_expired_with_a_negative_time_left() {
+        let ended = at(12, 0, 0).to_utc() - chrono::Duration::days(2);
+        let member = MemberStatus::of(
+            &pairing(PairingState::Enrolled {
+                serial: "01".to_owned(),
+                not_after: ended,
+            }),
+            at(12, 0, 0),
+        );
+        assert_eq!(member.certificate_expires_in_seconds, Some(-2 * 86_400));
+        assert!(member.certificate_expired);
+        // Still a member: expiry is not being unpaired.
+        assert_eq!(member.state, "member");
+    }
+
+    #[test]
+    fn a_display_that_is_not_a_member_has_no_certificate_end() {
+        for (state, name) in [
+            (PairingState::Pending, "pending"),
+            (PairingState::Approved, "approved"),
+            (PairingState::Rejected, "rejected"),
+            (PairingState::Revoked, "revoked"),
+        ] {
+            let status = MemberStatus::of(&pairing(state), at(12, 0, 0));
+            assert_eq!(status.state, name);
+            assert_eq!(status.certificate_not_after, None);
+            assert_eq!(status.certificate_expires_in_seconds, None);
+            assert!(!status.certificate_expired, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_key_change_and_a_replacement_waiting_are_shown() {
+        use crate::domain::models::pairing::{PairingCode, PublicKey, Replacement, Rollover};
+        let mut changing = pairing(PairingState::Pending);
+        assert!(!MemberStatus::of(&changing, at(12, 0, 0)).changing_keys);
+        changing.rollover = Some(Rollover {
+            key: PublicKey::from_der(vec![2; 91]),
+            since: at(9, 0, 0).to_utc(),
+        });
+        changing.replacement = Some(Replacement {
+            key: PublicKey::from_der(vec![3; 91]),
+            code: PairingCode::parse("0000-0000-0001").unwrap(),
+            approved: false,
+            requested_at: at(10, 0, 0).to_utc(),
+        });
+        let status = MemberStatus::of(&changing, at(12, 0, 0));
+        assert!(status.changing_keys && status.replacement_waiting);
     }
 }

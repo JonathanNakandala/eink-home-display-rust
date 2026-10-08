@@ -19,6 +19,6 @@ pub use self::load::{
     load_application_config, load_quiet_times_config, load_valid_application_config,
 };
 pub use self::logging::init_logging;
-pub use self::serving::{Listening, start as start_serving};
+pub use self::serving::{Listening, Security, open_security, start as start_serving};
 pub use self::weather::setup_weather_service;
 pub use self::zone::{configured_zone, resolve_zone};

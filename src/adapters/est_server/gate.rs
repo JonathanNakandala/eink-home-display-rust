@@ -68,7 +68,11 @@ async fn check(
             Access::Members => refuse("A certificate from the authority is needed"),
         };
     };
-    match gate.enrollment.is_member(&client.device, &client.key).await {
+    match gate
+        .enrollment
+        .authenticate(&client.device, &client.key)
+        .await
+    {
         Ok(true) => {
             request
                 .extensions_mut()

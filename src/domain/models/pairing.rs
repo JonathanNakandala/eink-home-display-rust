@@ -173,6 +173,30 @@ impl PairingState {
     }
 }
 
+/// A key a member is changing to. The certificate for it has been issued; the old key stays a member
+/// beside it until the new one is first used, which shows the display got the certificate.
+///
+/// There is no time limit. The key was put forward by the member itself, over a connection that showed its
+/// own certificate, so it is no less the display's than the old one, and a display that is off for
+/// months between being given the certificate and using it must still find the way open. It ends when
+/// the new key is used, or another change replaces it, or the owner revokes or forgets the display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rollover {
+    pub key: PublicKey,
+    /// When the change was made, for whoever is looking at why a display has two keys.
+    pub since: DateTime<Utc>,
+}
+
+/// A different key asking to take over a member's name, as when the display was reflashed and lost its
+/// key. The member carries on with its own key until the owner approves this one by its code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replacement {
+    pub key: PublicKey,
+    pub code: PairingCode,
+    pub approved: bool,
+    pub requested_at: DateTime<Utc>,
+}
+
 /// One display and where it has got to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pairing {
@@ -183,6 +207,31 @@ pub struct Pairing {
     pub state: PairingState,
     pub requested_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// A key being changed to, while both are members.
+    pub rollover: Option<Rollover>,
+    /// A key waiting for the owner to approve taking over the name.
+    pub replacement: Option<Replacement>,
+}
+
+impl Pairing {
+    pub fn new(
+        device: DeviceId,
+        key: PublicKey,
+        code: PairingCode,
+        state: PairingState,
+        now: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            device,
+            key,
+            code,
+            state,
+            requested_at: now,
+            updated_at: now,
+            rollover: None,
+            replacement: None,
+        }
+    }
 }
 
 #[cfg(test)]

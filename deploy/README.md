@@ -78,23 +78,76 @@ transport = "prefer-https"      # "http" (default), "prefer-https" or "https"
 [server.tls]
 bind = "[::]:8443"
 directory = "pki"               # the authority and the list of displays; back it up
-names = ["eink.local"]          # what displays connect to; left out: <instance_name>.local and localhost
 ```
 
-- **The authority.** The first start in either HTTPS mode makes a private certificate authority in
-  `[server.tls] directory`: `authority.pem` (public: what displays are given to trust the server by) and
-  `authority.key` (the secret, readable by its owner only). It lasts 20 years. **Back up the directory.**
-  Without `authority.key` every display has to be paired again; the server will not quietly make a new one if
-  only one of the two files is there. The server logs the authority's fingerprint at every start.
-- **Which displays are members** is kept in `pairings.json` in the same directory. A file that can't be read
-  stops the server from starting, instead of starting empty: forgetting the members would lock every display
-  out, or let back in one that had been revoked.
-- **Names.** A display checks the server's certificate against a name, so it must connect by a name in
-  `names` (the `.local` name announced over mDNS is there by default). The certificate is made fresh in memory,
-  lasts 90 days (`server_certificate_days`), and is replaced when a third of that is left, with no restart.
-- **A display's certificate** lasts a year (`device_certificate_days`) and the display renews it itself while it
-  is valid. Revoking a display takes effect on its next request, not when its certificate runs out; so does
-  forgetting one and pairing another under the same name.
+### Starting for the first time
+
+`prefer-https` makes the authority itself on the first start; displays carry on over plain HTTP meanwhile.
+**`https` makes nothing unless asked**: run it once with `--init-pki`, then without. A directory with no authority
+in it is most often a volume that was not mounted, and a new authority would lock out every display that holds a
+certificate from the real one, so it is an error and not a fresh start. The same goes for the list of displays
+(`pairings.json`): with an authority already there, a missing list is a lost file and an error, not an empty list.
+
+### What is kept, and what to back up
+
+- **The authority**: `authority.pem` (public) and `authority.key` (the secret, readable by its owner only). It
+  lasts 20 years, and the server warns at every start from two years before its end. **Back up the directory.**
+  Without `authority.key` every display has to be paired again. The server logs the authority's fingerprint
+  at every start, so a changed one is visible.
+- **Which displays are members**: `pairings.json`, written whole through a temporary file and a rename, with the
+  version before the last change kept as `pairings.json.bak`. A file that can't be read stops the server from
+  starting instead of starting empty, and says where the `.bak` is. If the file is deleted and the `.bak` is
+  there, copy the `.bak` back: that loses only the last change, and a display whose record was lost
+  with it asks again with the key it holds and is a member again, with no one at the server.
+- **Certificates are not kept** except the display's own. The server's certificate is made fresh in memory.
+
+### Names
+
+The server's certificate always has the name `eink-home-display.internal`, and that is the one the display
+checks. Nothing in the configuration can change it, so renaming the instance or editing `names` never makes a
+display stop trusting the server. `[server.tls] names` adds more (a browser or `curl` connecting by the `.local`
+name, or by an address); left empty it is `<instance_name>.local` and `localhost`.
+
+### How long things last, and what a display that is off does
+
+- **A display's certificate lasts 90 days** (`device_certificate_days`) and the display renews it with a third
+  of its life left. Short on purpose: renewal then happens all the time, so a display that has stopped renewing
+  shows up within weeks and not after years of nobody remembering how it works. It is not what keeps a revoked
+  display out; that takes effect on its next request.
+- **A display that is off for longer than that**, or whose battery went flat, needs no one when it is next
+  switched on. It sets its clock, sees its certificate has run out, and asks for a new one with the key it
+  already holds. The server hands one out because it is the same key; the owner is involved only for a key
+  the server hasn't seen. Nothing on the server ever removes a display for not being seen.
+- **Changing a display's key** is possible and safe to do while it is off or asleep: the server keeps both the old
+  and the new key as members until the new one is first used, however long that takes. It is not needed for
+  renewal, and the firmware should leave it alone unless it has a reason.
+- **A display that lost its key** (erased, or reflashed from scratch) asks to join under its old name. The
+  member it was keeps working meanwhile, if it still can, and the new key waits for the owner to approve the
+  code on its panel. Only then does it take the name over.
+- **The server's own certificate** lasts 90 days (`server_certificate_days`) and is replaced when a third of
+  that is left, with no restart. Displays trust the authority, not this certificate.
+- **The server's clock.** It refuses to issue certificates while its clock reads before 2026, which means it was
+  never set. Make sure the time service has set the clock before the server starts (the unit waits for
+  `time-sync.target`).
+
+### Seeing trouble before it is one
+
+`/status` lists every display's standing under `members`: its state (`pending`, `approved`, `member`, `rejected`,
+`revoked`), when its latest certificate ends and how long is left, whether that has run out (`certificate_expired`,
+which fixes itself when the display is next on), and whether a key change or a replacement is waiting. `/metrics`
+has the same as `eink_member_*`. A useful alert is a member that has stopped renewing, which shows as a certificate
+close to its end:
+
+```yaml
+- alert: DisplayNotRenewing
+  expr: eink_member_certificate_expiry_timestamp_seconds - time() < 14 * 86400
+  for: 1h
+  annotations:
+    summary: "{{ $labels.device }} has not renewed its certificate (ends in under 14 days)"
+```
+
+A display that is simply off will trigger this, which is also the right thing to know.
+
 - **TLS 1.3 only.** Older versions are refused.
 - **Announced over mDNS** beside the service, for a display to find: `tlsport` (where HTTPS is) and `secure`
   (`optional` when plain HTTP is served too, `required` when it is not). With `https` the service itself points at

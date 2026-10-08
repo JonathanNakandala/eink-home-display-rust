@@ -18,19 +18,19 @@ use anyhow::Context;
 use axum::Router;
 use chrono::Duration;
 
-use crate::adapters::certificate_authority::{self, PrivateAuthority};
+use crate::adapters::certificate_authority::{self, Create, PrivateAuthority};
 use crate::adapters::est_server::{Access, EstServer, EstSettings, guarded};
 use crate::adapters::image_server::{self, SecureOffer, ServerSettings};
-use crate::adapters::pairing_store::FilePairingStore;
+use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
-use crate::config::server::ServerConfig;
+use crate::config::server::{ServerConfig, Transport};
 use crate::domain::models::display::ImageFormat;
 use crate::domain::services::certificate_authority::CertificateAuthority;
 use crate::domain::services::clock::Clock;
 
-/// The authority's certificate ending within this long is worth saying so at start-up: a display
-/// that is not paired again by then stops being served.
-const AUTHORITY_WARNING: Duration = Duration::days(365);
+/// The authority's certificate ending within this long is worth a warning at start-up: nothing yet
+/// carries displays across a change of authority, so every one would have to be paired again.
+const AUTHORITY_WARNING: Duration = Duration::days(2 * 365);
 
 /// Listeners that are open and not yet serving.
 pub struct Listening {
@@ -54,12 +54,41 @@ impl Listening {
     }
 }
 
-/// Opens what `config.transport` calls for, with `app` as the display routes.
+/// The certificate authority and the rules for joining it, when the transport uses them.
+#[derive(Clone)]
+pub struct Security {
+    pub authority: Arc<PrivateAuthority>,
+    pub enrollment: Arc<Enrollment>,
+}
+
+/// Opens the authority and the list of displays if `config.transport` uses them, so they can be given to
+/// whatever reports on them before the listeners start.
+///
+/// `init_pki` is the owner saying that this is the time to make what is missing: the certificate
+/// authority, and an empty list of displays. Without it, `https` makes nothing and says so (see
+/// `open_authority`).
+pub async fn open_security(
+    config: &ServerConfig,
+    clock: Arc<dyn Clock>,
+    init_pki: bool,
+) -> anyhow::Result<Option<Security>> {
+    if !config.transport.serves_https() {
+        return Ok(None);
+    }
+    let (authority, enrollment) = open_authority(config, clock, init_pki).await?;
+    Ok(Some(Security {
+        authority,
+        enrollment,
+    }))
+}
+
+/// Opens what `config.transport` calls for, with `app` as the display routes. `security` is what
+/// `open_security` returned, which must be something when the transport serves HTTPS.
 pub async fn start(
     config: &ServerConfig,
     app: Router,
     format: ImageFormat,
-    clock: Arc<dyn Clock>,
+    security: Option<Security>,
 ) -> anyhow::Result<Listening> {
     let settings = ServerSettings::from(config);
     log::info!("Displays reach this server by: {}", config.transport.name());
@@ -76,7 +105,10 @@ pub async fn start(
         });
     }
 
-    let (authority, enrollment) = open_authority(config, clock).await?;
+    let Security {
+        authority,
+        enrollment,
+    } = security.context("HTTPS is served but the authority was not opened")?;
     let est_settings = EstSettings {
         bind: config.tls.bind,
         names: config.certificate_names(),
@@ -145,15 +177,33 @@ pub async fn start(
 }
 
 /// Opens the authority and the list of displays, and the rules for joining, from `config`.
+///
+/// What is missing is made only where that does no harm. A new authority, and a new list, lock out every
+/// display that holds a certificate from the old ones, and a missing directory is as often a volume
+/// that was not mounted as a first start. So:
+/// - the authority is made on a first start with `prefer-https` (displays carry on over plain HTTP
+///   meanwhile), and with `https` only when asked with `init_pki`;
+/// - a list of displays is started empty only beside a new authority, or when asked. With an authority
+///   already there it is a lost file, and an error.
 async fn open_authority(
     config: &ServerConfig,
     clock: Arc<dyn Clock>,
+    init_pki: bool,
 ) -> anyhow::Result<(Arc<PrivateAuthority>, Arc<Enrollment>)> {
     let tls = &config.tls;
+    let authority_there = tls.directory.join("authority.pem").exists()
+        || tls.directory.join("authority.key").exists();
+    let create = if init_pki || config.transport == Transport::PreferHttps {
+        Create::IfMissing
+    } else {
+        Create::Never
+    };
     let authority = Arc::new(
-        certificate_authority::open(&tls.directory).with_context(|| {
+        certificate_authority::open(&tls.directory, create).with_context(|| {
             format!(
-                "Failed to open the certificate authority in {}",
+                "Failed to open the certificate authority in {}. With transport = \"https\" one is not made \
+                 automatically: a missing directory is usually a volume that was not mounted, and a new \
+                 authority would lock out every display. If this is the first start, run once with --init-pki",
                 tls.directory.display()
             )
         })?,
@@ -170,11 +220,18 @@ async fn open_authority(
             authority.not_after().format("%Y-%m-%d")
         );
     }
-    let store = FilePairingStore::open(&tls.directory)
+    let missing = if init_pki || !authority_there {
+        Missing::StartEmpty
+    } else {
+        Missing::Refuse
+    };
+    let store = FilePairingStore::open(&tls.directory, missing)
         .await
         .with_context(|| {
             format!(
-                "Failed to open the list of displays in {}",
+                "Failed to open the list of displays in {}. The authority is there, so the list is a file \
+                 that was lost: restore it from a backup. To start with no displays instead, run once \
+                 with --init-pki",
                 tls.directory.display()
             )
         })?;
@@ -203,7 +260,7 @@ mod tests {
     use super::*;
     use crate::adapters::clock::SystemClock;
     use crate::adapters::est_server::tests::{
-        Harness, Identity, Trust, client_config, connect_with, join, new_key, send,
+        Harness, Identity, Trust, client_config, connect_with, enroll, join, new_key, send,
         stand_in_display,
     };
     use crate::config::server::{TlsConfig, Transport};
@@ -223,9 +280,20 @@ mod tests {
         }
     }
 
+    /// A start with `--init-pki`, as a first start is.
     async fn listening(config: &ServerConfig) -> anyhow::Result<Listening> {
+        started(config, true).await
+    }
+
+    /// A start without it, as every later one is.
+    async fn restarted(config: &ServerConfig) -> anyhow::Result<Listening> {
+        started(config, false).await
+    }
+
+    async fn started(config: &ServerConfig, init_pki: bool) -> anyhow::Result<Listening> {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
-        start(config, stand_in_display(), ImageFormat::Bmp, clock).await
+        let security = open_security(config, clock, init_pki).await?;
+        start(config, stand_in_display(), ImageFormat::Bmp, security).await
     }
 
     /// What plain HTTP answers to a GET of `path`: the status and the body.
@@ -411,7 +479,7 @@ mod tests {
 
         // The same directory, a new process's worth of state: same authority, same members.
         let second = harness_for(
-            listening(&config(Transport::Https, pki.path()))
+            restarted(&config(Transport::Https, pki.path()))
                 .await
                 .unwrap(),
             tempfile::tempdir().unwrap(),
@@ -460,5 +528,127 @@ mod tests {
             std::fs::read_to_string(pki.path().join("authority.key")).unwrap(),
             "not a key"
         );
+    }
+
+    #[tokio::test]
+    async fn https_only_makes_nothing_in_an_empty_directory_unless_asked() {
+        // Most often an empty directory is a volume that was not mounted, and a new authority would lock
+        // out every display that holds a certificate from the real one.
+        let parent = tempfile::tempdir().unwrap();
+        let pki = parent.path().join("pki");
+        let error = format!(
+            "{:#}",
+            restarted(&config(Transport::Https, &pki))
+                .await
+                .err()
+                .expect("should refuse")
+        );
+        assert!(
+            error.contains("--init-pki") && error.contains("volume"),
+            "{error}"
+        );
+        assert!(!pki.exists(), "nothing was made");
+
+        // Asked to, it makes both the authority and an empty list.
+        listening(&config(Transport::Https, &pki)).await.unwrap();
+        assert!(pki.join("authority.pem").exists() && pki.join("pairings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn prefer_https_makes_the_authority_on_a_first_start_without_being_asked() {
+        // Displays carry on over plain HTTP meanwhile, so there is nothing to lock out.
+        let pki = tempfile::tempdir().unwrap();
+        restarted(&config(Transport::PreferHttps, pki.path()))
+            .await
+            .unwrap();
+        assert!(pki.path().join("authority.pem").exists());
+        assert!(pki.path().join("pairings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn an_authority_without_its_list_is_an_error_unless_asked() {
+        let pki = tempfile::tempdir().unwrap();
+        listening(&config(Transport::Https, pki.path()))
+            .await
+            .unwrap();
+        std::fs::remove_file(pki.path().join("pairings.json")).unwrap();
+
+        for transport in [Transport::PreferHttps, Transport::Https] {
+            let error = format!(
+                "{:#}",
+                restarted(&config(transport, pki.path()))
+                    .await
+                    .err()
+                    .expect("should refuse")
+            );
+            assert!(
+                error.contains("list of displays") && error.contains("lost"),
+                "{error}"
+            );
+            assert!(
+                !pki.path().join("pairings.json").exists(),
+                "nothing was made"
+            );
+        }
+        // Asking for it starts an empty list, knowing that is what it does.
+        listening(&config(Transport::Https, pki.path()))
+            .await
+            .unwrap();
+        assert!(pki.path().join("pairings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn a_lost_list_is_restored_from_its_backup_and_the_display_finds_its_own_way_back() {
+        let pki = tempfile::tempdir().unwrap();
+        let first = harness_for(
+            listening(&config(Transport::Https, pki.path()))
+                .await
+                .unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        let kitchen = join(&first, "kitchen", new_key()).await;
+        assert_eq!(secure_get(&first, "/image", Some(&kitchen)).await.0, 200);
+        drop(first);
+
+        // The list is deleted, and the server will not start with none.
+        std::fs::remove_file(pki.path().join("pairings.json")).unwrap();
+        let error = format!(
+            "{:#}",
+            restarted(&config(Transport::Https, pki.path()))
+                .await
+                .err()
+                .expect("should refuse")
+        );
+        assert!(error.contains(".bak"), "{error}");
+
+        // Copying the backup back is all it takes. It is the version before the last change, so the
+        // display is not yet a member again, but it asks with the key it holds and is one, with no one
+        // at the server.
+        std::fs::copy(
+            pki.path().join("pairings.json.bak"),
+            pki.path().join("pairings.json"),
+        )
+        .unwrap();
+        std::fs::remove_file(pki.path().join("pairings.json.bak")).unwrap();
+        let second = harness_for(
+            restarted(&config(Transport::Https, pki.path()))
+                .await
+                .unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        assert_eq!(secure_get(&second, "/image", Some(&kitchen)).await.0, 403);
+        let authority = second.authority.certificate().to_vec();
+        let again = enroll(
+            &second,
+            Trust::Authority(&authority),
+            "kitchen",
+            &kitchen.key,
+        )
+        .await;
+        let renewed = Identity {
+            certificate: again.certificates().remove(0),
+            key: kitchen.key,
+        };
+        assert_eq!(secure_get(&second, "/image", Some(&renewed)).await.0, 200);
     }
 }

@@ -63,6 +63,9 @@ pub struct Handles {
     pub status: Arc<StatusBoard>,
     /// What the displays report about themselves, for `/status` and `/metrics`.
     pub devices: Arc<DeviceBoard>,
+    /// Where each display stands in the certificate authority, for `/status` and `/metrics`, when HTTPS
+    /// is served.
+    pub members: Option<Arc<crate::application::enrollment::Enrollment>>,
 }
 
 pub fn router(

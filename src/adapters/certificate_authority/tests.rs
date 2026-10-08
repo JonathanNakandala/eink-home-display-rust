@@ -476,10 +476,25 @@ mod saved {
     use super::*;
 
     #[test]
+    fn never_means_an_empty_directory_is_an_error_and_is_left_empty() {
+        let parent = tempfile::tempdir().unwrap();
+        let directory = parent.path().join("pki");
+        let error = open(&directory, Create::Never)
+            .err()
+            .expect("should refuse")
+            .to_string();
+        assert!(error.contains("no certificate authority"), "{error}");
+        assert!(!directory.exists(), "nothing was made");
+        // An authority that is there is opened all the same.
+        open(&directory, Create::IfMissing).unwrap();
+        open(&directory, Create::Never).unwrap();
+    }
+
+    #[test]
     fn a_new_authority_is_made_once_and_found_again() {
         let directory = tempfile::tempdir().unwrap();
-        let first = open(directory.path()).unwrap();
-        let again = open(directory.path()).unwrap();
+        let first = open(directory.path(), Create::IfMissing).unwrap();
+        let again = open(directory.path(), Create::IfMissing).unwrap();
         assert_eq!(first.fingerprint(), again.fingerprint());
         assert_eq!(first.certificate(), again.certificate());
         // The reopened one signs for the same authority.
@@ -496,7 +511,7 @@ mod saved {
     fn the_key_can_be_read_only_by_its_owner() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
-        open(directory.path()).unwrap();
+        open(directory.path(), Create::IfMissing).unwrap();
         let mode = |name: &str| {
             std::fs::metadata(directory.path().join(name))
                 .unwrap()
@@ -511,9 +526,9 @@ mod saved {
     fn a_missing_half_is_an_error_not_a_fresh_start() {
         for missing in ["authority.key", "authority.pem"] {
             let directory = tempfile::tempdir().unwrap();
-            let original = open(directory.path()).unwrap();
+            let original = open(directory.path(), Create::IfMissing).unwrap();
             std::fs::remove_file(directory.path().join(missing)).unwrap();
-            let error = open(directory.path())
+            let error = open(directory.path(), Create::IfMissing)
                 .err()
                 .expect("should refuse")
                 .to_string();
@@ -571,7 +586,12 @@ mod saved {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("authority.pem"), "nonsense").unwrap();
         std::fs::write(directory.path().join("authority.key"), "nonsense").unwrap();
-        let error = format!("{:#}", open(directory.path()).err().expect("should refuse"));
+        let error = format!(
+            "{:#}",
+            open(directory.path(), Create::IfMissing)
+                .err()
+                .expect("should refuse")
+        );
         assert!(error.contains("not usable"), "{error}");
     }
 }
