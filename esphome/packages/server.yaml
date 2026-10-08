@@ -98,7 +98,7 @@ script:
                   return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
                          eink_telemetry::query(App.get_name().str(), id(failed_wakes),
                                                {id(battery_known), id(battery_mv), id(battery_pct),
-                                                eink_battery::state_name(id(battery_state))});
+                                                eink_battery::state_name(eink_state::battery_state)});
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -113,7 +113,7 @@ script:
                   return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
                          eink_telemetry::query(App.get_name().str(), id(failed_wakes),
                                                {id(battery_known), id(battery_mv), id(battery_pct),
-                                                eink_battery::state_name(id(battery_state))});
+                                                eink_battery::state_name(eink_state::battery_state)});
                 capture_response: true
                 max_response_buffer_size: 1024
                 on_response:
@@ -191,13 +191,13 @@ script:
             - component.update: dashboard
           else:
             # Not the server's fault, so don't go looking for it.
-            - lambda: 'id(fail_reason) = "memory";'
+            - lambda: 'eink_state::fail_reason = eink_report::Failure::MEMORY;'
             - script.execute: give_up
 
   # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
   - id: server_failed
     then:
-      - lambda: 'id(fail_reason) = "server";'
+      - lambda: 'eink_state::fail_reason = eink_report::Failure::SERVER;'
       - if:
           condition:
             lambda: 'return !id(searched);'

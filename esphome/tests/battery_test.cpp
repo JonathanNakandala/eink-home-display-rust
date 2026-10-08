@@ -40,32 +40,32 @@ TEST(percent_is_held_at_the_ends_and_never_goes_backwards) {
 }
 
 TEST(state_names) {
-  CHECK_EQ(std::string(state_name(0)), "ok");
-  CHECK_EQ(std::string(state_name(1)), "low");
-  CHECK_EQ(std::string(state_name(2)), "empty");
+  CHECK_EQ(std::string(state_name(State::OK)), "ok");
+  CHECK_EQ(std::string(state_name(State::LOW)), "low");
+  CHECK_EQ(std::string(state_name(State::EMPTY)), "empty");
 }
 
 TEST(a_healthy_battery_carries_on) {
   Verdict v = judge_(3.9f, false, false);
   CHECK(!v.halted && !v.low);
-  CHECK_EQ(v.state, 0);
-  CHECK_EQ(v.action, 0);
+  CHECK_EQ(v.state, State::OK);
+  CHECK_EQ(v.action, Action::CARRY_ON);
 }
 
 TEST(going_low_warns_but_does_not_stop) {
   Verdict v = judge_(3.35f, false, false);
   CHECK(!v.halted && v.low);
-  CHECK_EQ(v.state, 1);
-  CHECK_EQ(v.action, 0);
+  CHECK_EQ(v.state, State::LOW);
+  CHECK_EQ(v.action, Action::CARRY_ON);
 }
 
 TEST(going_empty_halts_once_and_says_so_first) {
   Verdict first = judge_(3.2f, false, true);
   CHECK(first.halted && first.low);
-  CHECK_EQ(first.state, 2);
-  CHECK_EQ(first.action, 2);  // halting now: show the notice
+  CHECK_EQ(first.state, State::EMPTY);
+  CHECK_EQ(first.action, Action::HALT_NOW);  // halting now: show the notice
   Verdict again = judge_(3.2f, first.halted, first.low);
-  CHECK_EQ(again.action, 1);  // already halted: just sleep
+  CHECK_EQ(again.action, Action::STILL_HALTED);  // already halted: just sleep
 }
 
 TEST(the_latches_clear_only_above_the_resume_voltage_and_together) {
@@ -75,8 +75,8 @@ TEST(the_latches_clear_only_above_the_resume_voltage_and_together) {
   CHECK(judge_(3.59f, true, true).low);
   Verdict up = judge_(3.6f, true, true);
   CHECK(!up.halted && !up.low);
-  CHECK_EQ(up.state, 0);
-  CHECK_EQ(up.action, 0);
+  CHECK_EQ(up.state, State::OK);
+  CHECK_EQ(up.action, Action::CARRY_ON);
 }
 
 TEST(low_stays_until_resume_even_when_the_voltage_rises_past_the_low_threshold) {
@@ -101,8 +101,8 @@ TEST(an_unusable_reading_is_not_known_and_changes_nothing) {
   for (float volts : {0.0f, 2.4f, 5.1f}) {
     Assessment a = assess(volts, true, true, LOW, EMPTY, RESUME);
     CHECK(!a.known);
-    CHECK_EQ(a.verdict.action, 0);             // never a reason to stop
-    CHECK(a.verdict.halted && a.verdict.low);  // the latches stay as they were
+    CHECK_EQ(a.verdict.action, Action::CARRY_ON);  // never a reason to stop
+    CHECK(a.verdict.halted && a.verdict.low);      // the latches stay as they were
     Assessment b = assess(volts, false, false, LOW, EMPTY, RESUME);
     CHECK(!b.known && !b.verdict.halted && !b.verdict.low);
   }
@@ -114,7 +114,7 @@ TEST(a_usable_reading_gives_the_charge_the_telemetry_and_the_verdict) {
   CHECK_EQ(a.mv, 3350u);
   CHECK_EQ(a.pct, percent(3.35f));
   CHECK(a.verdict.low && !a.verdict.halted);
-  CHECK_EQ(a.verdict.state, 1);
+  CHECK_EQ(a.verdict.state, State::LOW);
   // The same verdict `judge` gives.
   Verdict v = judge_(3.35f, false, false);
   CHECK_EQ(a.verdict.action, v.action);

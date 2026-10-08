@@ -47,6 +47,7 @@ esphome:
     - eink_plan.h
     - eink_format.h
     - eink_report.h
+    - eink_state.h
     - eink_telemetry.h
   on_boot:
     priority: -100

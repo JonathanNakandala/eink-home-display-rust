@@ -11,44 +11,48 @@
 namespace eink_report {
 
 // Why the last failed wake failed. The names are what `last_failure` is sent as.
-enum Failure : uint8_t { NONE = 0, WIFI = 1, SERVER = 2, DOWNLOAD = 3, MEMORY = 4, TIMEOUT = 5 };
+enum class Failure : uint8_t { NONE = 0, WIFI = 1, SERVER = 2, DOWNLOAD = 3, MEMORY = 4, TIMEOUT = 5 };
 
 // The longest wake that is reported; the server drops anything above its own limit of the same size.
 constexpr uint32_t MAX_WAKE_SECONDS = 600;
 
-inline const char *failure_name(uint8_t failure) {
+// The word the server is told (`last_failure`), or nullptr for none (and for a value that is not a Failure).
+inline const char *failure_name(Failure failure) {
   switch (failure) {
-    case WIFI: return "wifi";
-    case SERVER: return "server";
-    case DOWNLOAD: return "download";
-    case MEMORY: return "memory";
-    case TIMEOUT: return "timeout";
+    case Failure::WIFI: return "wifi";
+    case Failure::SERVER: return "server";
+    case Failure::DOWNLOAD: return "download";
+    case Failure::MEMORY: return "memory";
+    case Failure::TIMEOUT: return "timeout";
     default: return nullptr;
   }
+}
+
+// The same for the log, which always has something to print.
+inline const char *failure_label(Failure failure) {
+  const char *name = failure_name(failure);
+  return name == nullptr ? "none" : name;
 }
 
 // What is remembered about the last wake and told to the server by the next one.
 struct Last {
   uint32_t magic;
-  uint8_t failure;
+  Failure failure;
   uint16_t wake_seconds;
   bool wake_known;
 };
 
 constexpr uint32_t MAGIC = 0xE1B70001;
-constexpr Last EMPTY = {MAGIC, NONE, 0, false};
+constexpr Last EMPTY = {MAGIC, Failure::NONE, 0, false};
 
 // Memory that survives a software reset (an update over the air) may hold a layout from another firmware, so
 // it is checked before it is believed.
-inline bool valid(const Last &last) { return last.magic == MAGIC && last.failure <= TIMEOUT; }
-
-// A failed wake, by the reason the YAML names it (wifi, server, download, memory or timeout). Anything else
-// leaves what was there.
-inline void set_failure(Last &last, const std::string &reason) {
-  for (uint8_t failure = WIFI; failure <= TIMEOUT; failure++)
-    if (reason == failure_name(failure))
-      last.failure = failure;
+inline bool valid(const Last &last) {
+  return last.magic == MAGIC && static_cast<uint8_t>(last.failure) <= static_cast<uint8_t>(Failure::TIMEOUT);
 }
+
+// A failed wake, and why.
+inline void set_failure(Last &last, Failure reason) { last.failure = reason; }
 
 // A wake that was awake for `awake_ms`: rounded to seconds, and no more than the server will believe.
 inline void set_wake(Last &last, uint32_t awake_ms) {

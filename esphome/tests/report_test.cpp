@@ -14,7 +14,7 @@ TEST(a_first_report_has_only_what_is_known) {
 // (`the_exact_report_the_firmware_builds_is_understood`). Change one and the other test fails.
 TEST(a_full_report_has_every_field_in_a_fixed_order) {
   Last last = EMPTY;
-  set_failure(last, "download");
+  set_failure(last, Failure::DOWNLOAD);
   set_wake(last, 24400);
   CHECK_EQ(query("reterminal-e1003-a1b2c3", 2, GOOD, -67, last),
            "&device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47&battery_state=ok"
@@ -31,32 +31,31 @@ TEST(a_battery_that_could_not_be_read_is_left_out) {
   CHECK_EQ(query("a", 1, NONE_KNOWN, 0, EMPTY).find("battery"), std::string::npos);
 }
 
-TEST(every_failure_name_is_set_and_reported_and_none_is_absent) {
-  for (const char *name : {"wifi", "server", "download", "memory", "timeout"}) {
+TEST(every_failure_is_set_and_reported_and_none_is_absent) {
+  for (Failure failure : {Failure::WIFI, Failure::SERVER, Failure::DOWNLOAD, Failure::MEMORY, Failure::TIMEOUT}) {
     Last last = EMPTY;
-    set_failure(last, name);
-    CHECK(query("a", 1, NONE_KNOWN, 0, last).find(std::string("&last_failure=") + name) != std::string::npos);
+    set_failure(last, failure);
+    CHECK(query("a", 1, NONE_KNOWN, 0, last).find(std::string("&last_failure=") + failure_name(failure)) !=
+          std::string::npos);
   }
   CHECK_EQ(query("a", 0, NONE_KNOWN, 0, EMPTY).find("last_failure"), std::string::npos);
 }
 
-TEST(an_unknown_reason_leaves_what_was_there) {
-  Last last = EMPTY;
-  set_failure(last, "server");
-  set_failure(last, "gremlins");
-  set_failure(last, "");
-  CHECK_EQ(std::string(failure_name(last.failure)), "server");
+TEST(a_failure_the_log_can_always_name) {
+  CHECK_EQ(std::string(failure_label(Failure::NONE)), "none");
+  CHECK_EQ(std::string(failure_label(Failure::TIMEOUT)), "timeout");
+  CHECK_EQ(std::string(failure_label(static_cast<Failure>(200))), "none");
 }
 
 TEST(the_failure_names_match_what_the_server_understands) {
   // src/application/devices.rs, FailureReason::as_str.
-  CHECK_EQ(std::string(failure_name(WIFI)), "wifi");
-  CHECK_EQ(std::string(failure_name(SERVER)), "server");
-  CHECK_EQ(std::string(failure_name(DOWNLOAD)), "download");
-  CHECK_EQ(std::string(failure_name(MEMORY)), "memory");
-  CHECK_EQ(std::string(failure_name(TIMEOUT)), "timeout");
-  CHECK(failure_name(NONE) == nullptr);
-  CHECK(failure_name(200) == nullptr);
+  CHECK_EQ(std::string(failure_name(Failure::WIFI)), "wifi");
+  CHECK_EQ(std::string(failure_name(Failure::SERVER)), "server");
+  CHECK_EQ(std::string(failure_name(Failure::DOWNLOAD)), "download");
+  CHECK_EQ(std::string(failure_name(Failure::MEMORY)), "memory");
+  CHECK_EQ(std::string(failure_name(Failure::TIMEOUT)), "timeout");
+  CHECK(failure_name(Failure::NONE) == nullptr);
+  CHECK(failure_name(static_cast<Failure>(200)) == nullptr);
 }
 
 TEST(a_wake_time_is_rounded_and_capped_at_what_the_server_believes) {
@@ -80,6 +79,6 @@ TEST(memory_left_by_another_firmware_is_not_believed) {
   stale.magic = 0;
   CHECK(!valid(stale));
   Last odd = EMPTY;
-  odd.failure = 99;
+  odd.failure = static_cast<Failure>(99);
   CHECK(!valid(odd));
 }

@@ -26,9 +26,9 @@ inline eink_report::Last &get() {
   return last;
 }
 
-inline void set_failure(const std::string &reason) { eink_report::set_failure(get(), reason); }
+inline void set_failure(eink_report::Failure reason) { eink_report::set_failure(get(), reason); }
 
-inline void clear_failure() { get().failure = eink_report::NONE; }
+inline void clear_failure() { get().failure = eink_report::Failure::NONE; }
 
 // Called just before sleeping, with the time since boot, which is how long this wake was awake.
 inline void record_wake(uint32_t awake_ms) { eink_report::set_wake(get(), awake_ms); }

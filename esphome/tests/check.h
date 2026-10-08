@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <functional>
 #include <sstream>
+#include <type_traits>
 #include <string>
 #include <vector>
 
@@ -29,10 +30,14 @@ struct Register {
   Register(const char *name, std::function<void()> body) { cases().push_back({name, std::move(body)}); }
 };
 
-template <typename T> std::string show(const T &value) {
+template <typename T> std::enable_if_t<!std::is_enum_v<T>, std::string> show(const T &value) {
   std::ostringstream out;
   out << value;
   return out.str();
+}
+// An enum class has no <<; its number is what a failing check can say.
+template <typename T> std::enable_if_t<std::is_enum_v<T>, std::string> show(const T &value) {
+  return std::to_string((long long) value);
 }
 inline std::string show(const char *value) { return value == nullptr ? "(null)" : std::string("\"") + value + "\""; }
 inline std::string show(const std::string &value) { return "\"" + value + "\""; }

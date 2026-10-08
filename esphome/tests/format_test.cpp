@@ -2,6 +2,7 @@
 #include "../eink_format.h"
 
 using namespace eink_format;
+using eink_report::Failure;
 
 TEST(the_ip_is_read_first_octet_in_the_lowest_byte) {
   // 192.168.1.20, as lwIP stores it.
@@ -68,15 +69,15 @@ TEST(the_server_is_where_mdns_found_it_or_the_fallback) {
 
 TEST(a_failure_notice_names_the_cause_and_the_time_only_when_it_is_known) {
   const int64_t now = 1791376496;  // 12:34:56 UTC; an hour ahead in the server's zone
-  CHECK_EQ(failure_notice("server", true, now, true, 3600), "Last update failed @ 13:34");
-  CHECK_EQ(failure_notice("wifi", true, now, true, 3600), "No Wi-Fi @ 13:34");
-  CHECK_EQ(failure_notice("memory", true, now, true, 0), "Out of memory @ 12:34");
+  CHECK_EQ(failure_notice(Failure::SERVER, true, now, true, 3600), "Last update failed @ 13:34");
+  CHECK_EQ(failure_notice(Failure::WIFI, true, now, true, 3600), "No Wi-Fi @ 13:34");
+  CHECK_EQ(failure_notice(Failure::MEMORY, true, now, true, 0), "Out of memory @ 12:34");
   // No time is better than a wrong one.
-  CHECK_EQ(failure_notice("server", false, now, true, 3600), "Last update failed");  // clock not set
-  CHECK_EQ(failure_notice("server", true, now, false, 0), "Last update failed");     // no plan ever answered
-  CHECK_EQ(failure_notice("wifi", false, 0, false, 0), "No Wi-Fi");
-  CHECK_EQ(failure_notice("", true, now, true, 0), "Last update failed @ 12:34");
-  CHECK_EQ(failure_notice("download", true, now, true, 0), "Last update failed @ 12:34");
+  CHECK_EQ(failure_notice(Failure::SERVER, false, now, true, 3600), "Last update failed");  // clock not set
+  CHECK_EQ(failure_notice(Failure::SERVER, true, now, false, 0), "Last update failed");     // no plan ever answered
+  CHECK_EQ(failure_notice(Failure::WIFI, false, 0, false, 0), "No Wi-Fi");
+  CHECK_EQ(failure_notice(Failure::NONE, true, now, true, 0), "Last update failed @ 12:34");
+  CHECK_EQ(failure_notice(Failure::DOWNLOAD, true, now, true, 0), "Last update failed @ 12:34");
 }
 
 TEST(the_stale_notice_says_how_old_the_image_is) {

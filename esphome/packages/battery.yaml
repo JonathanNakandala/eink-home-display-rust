@@ -86,16 +86,8 @@ globals:
     restore_value: no
     initial_value: '0'
 
-  # 0 ok, 1 low, 2 empty.
-  - id: battery_state
-    type: int
-    restore_value: no
-    initial_value: '0'
-
-  - id: battery_action
-    type: int
-    restore_value: no
-    initial_value: '0'
+  # Its state and what to do about it are `eink_state::battery_state` and `battery_action` (eink_state.h): typed,
+  # which a global can't be.
 
 script:
   # First thing every wake, before the radio or the panel are used: read the battery and, if it is too
@@ -109,7 +101,7 @@ script:
           auto battery = eink_battery::assess(v, id(battery_halted), id(battery_low), ${battery_low_v},
                                               ${battery_empty_v}, ${battery_resume_v});
           id(battery_known) = battery.known;
-          id(battery_action) = battery.verdict.action;
+          eink_state::battery_action = battery.verdict.action;
           if (!battery.known) {
             // No battery, or a bad reading: never a reason to stop.
             ESP_LOGW("battery", "Unusable reading (%.2f V); carrying on", v);
@@ -119,11 +111,11 @@ script:
           id(battery_pct) = battery.pct;
           id(battery_halted) = battery.verdict.halted;
           id(battery_low) = battery.verdict.low;
-          id(battery_state) = battery.verdict.state;
-          ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(id(battery_state)));
+          eink_state::battery_state = battery.verdict.state;
+          ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(eink_state::battery_state));
       - if:
           condition:
-            lambda: 'return id(battery_action) == 2;'
+            lambda: 'return eink_state::battery_action == eink_battery::Action::HALT_NOW;'
           then:
             - logger.log: "Battery empty: showing the notice and stopping"
             - lambda: |-
@@ -136,7 +128,7 @@ script:
           else:
             - if:
                 condition:
-                  lambda: 'return id(battery_action) == 1;'
+                  lambda: 'return eink_state::battery_action == eink_battery::Action::STILL_HALTED;'
                 then:
                   - logger.log: "Battery still empty: sleeping"
                   - script.execute: battery_sleep

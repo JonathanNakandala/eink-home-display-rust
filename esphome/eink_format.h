@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <string>
 
+#include "eink_report.h"
+
 namespace eink_format {
 
 // `ip` is IPv4 in the byte order lwIP stores it (first octet in the lowest byte).
@@ -50,12 +52,12 @@ inline std::string clock_text(int64_t unix_seconds, int32_t utc_offset_s) {
 // The notice for a wake that failed, as a few words and, when it can be said truthfully, the time. `reason` is why
 // (wifi, memory, or anything else). The time is the server's zone's: the clock's UTC plus the offset its last plan
 // gave. Left off when the clock isn't set yet or no plan has ever answered, rather than shown wrong.
-inline std::string failure_notice(const std::string &reason, bool clock_set, int64_t unix_seconds, bool offset_known,
+inline std::string failure_notice(eink_report::Failure reason, bool clock_set, int64_t unix_seconds, bool offset_known,
                                   int32_t utc_offset_s) {
   std::string what = "Last update failed";
-  if (reason == "wifi")
+  if (reason == eink_report::Failure::WIFI)
     what = "No Wi-Fi";
-  else if (reason == "memory")
+  else if (reason == eink_report::Failure::MEMORY)
     what = "Out of memory";
   return (clock_set && offset_known) ? what + " @ " + clock_text(unix_seconds, utc_offset_s) : what;
 }
