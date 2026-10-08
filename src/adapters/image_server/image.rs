@@ -282,6 +282,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_answer_carries_the_security_headers() {
+        use crate::adapters::response_headers::HEADERS;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
+        let client = reqwest::Client::new();
+        // A missing image, an unknown path, a wrong method, the API description, then a real image.
+        let mut answers = vec![
+            client.get(format!("{base}/image")).send().await.unwrap(),
+            client.get(format!("{base}/nope")).send().await.unwrap(),
+            client.post(format!("{base}/image")).send().await.unwrap(),
+            client
+                .get(format!("{base}/openapi.json"))
+                .send()
+                .await
+                .unwrap(),
+            client.get(format!("{base}/status")).send().await.unwrap(),
+        ];
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
+        answers.push(client.get(format!("{base}/image")).send().await.unwrap());
+        for answer in answers {
+            for (name, value) in HEADERS {
+                assert_eq!(
+                    answer.headers().get(name).map(|v| v.to_str().unwrap()),
+                    Some(value),
+                    "{name} on {} {}",
+                    answer.url(),
+                    answer.status()
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn a_client_that_has_the_image_is_told_so_and_sent_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;

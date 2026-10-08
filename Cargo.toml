@@ -25,7 +25,7 @@ serde_valid = { version = "3", features = ["toml"] }
 tempfile = "3.10.1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["timeout", "trace"] }
+tower-http = { version = "0.6", features = ["timeout", "trace", "set-header"] }
 url = "2"
 futures-util = "0.3"
 trait-variant = "0.1.2"

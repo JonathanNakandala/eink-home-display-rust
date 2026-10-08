@@ -14,6 +14,7 @@ pub mod image_server;
 pub mod listen;
 pub mod pairing_store;
 pub mod published_images;
+pub mod response_headers;
 pub mod stop_points;
 pub mod train_schedule;
 pub mod weather;
