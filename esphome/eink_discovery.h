@@ -1,7 +1,8 @@
 // Finds the eink-home-display-rust image server on the LAN with an mDNS / DNS-SD query.
-// The server announces itself as `_http._tcp` with the TXT keys txtvers, path, format (served now)
-// and formats (all it can serve)
-// (see src/adapters/image_server/advertise.rs in the Rust app).
+// The server announces itself as `_http._tcp` (or `_https._tcp` when it serves only HTTPS) with the TXT keys txtvers,
+// path, format (served now), formats (all it can serve) and, when it offers HTTPS, tlsport and secure (see
+// src/adapters/image_server/advertise.rs in the Rust app). What to make of an answer is eink_service.h, which is
+// tested on a computer; this is only the query.
 #pragma once
 
 #include <cstdint>
@@ -12,15 +13,11 @@
 #include "esphome/core/log.h"
 #include "mdns.h"
 
+#include "eink_service.h"
+
 namespace eink_discovery {
 
 static const char *const TAG = "eink_discovery";
-
-struct Server {
-  uint32_t ip = 0;  // IPv4, in the byte order lwIP stores it (first octet in the lowest byte)
-  uint16_t port = 0;
-  std::string format;  // "bmp" or "png", as announced; for the log only, the image is decoded by Content-Type
-};
 
 inline std::string txt_value(const mdns_result_t *result, const char *key) {
   for (size_t i = 0; i < result->txt_count; i++) {
@@ -44,11 +41,28 @@ inline bool first_ipv4(const mdns_result_t *result, uint32_t &ip) {
   return false;
 }
 
-// Blocks for up to `timeout_ms`. `instance_name`, when not empty, picks one server by
-// the name shown in a scan (the Rust app's server.instance_name), for networks with several.
-inline bool find(Server &server, const std::string &instance_name, uint32_t timeout_ms = 2500) {
+// One answer of the scan as the text eink_service.h judges.
+inline eink_service::Announcement announcement(const mdns_result_t *result) {
+  eink_service::Announcement a;
+  if (result->instance_name != nullptr)
+    a.instance = result->instance_name;
+  a.port = result->port;
+  first_ipv4(result, a.ip);
+  a.txtvers = txt_value(result, "txtvers");
+  a.path = txt_value(result, "path");
+  a.format = txt_value(result, "format");
+  a.tlsport = txt_value(result, "tlsport");
+  a.secure = txt_value(result, "secure");
+  return a;
+}
+
+// Blocks for up to `timeout_ms`. `instance_name`, when not empty, picks one server by the name shown in a scan (the
+// Rust app's server.instance_name), for networks with several. `transport` is how this display is set to reach the
+// server, which decides where to look (`_https._tcp` only for HTTPS, else `_http._tcp`) and what the port means.
+inline bool find(eink_service::Server &server, const std::string &instance_name, eink_service::Transport transport,
+                 uint32_t timeout_ms = 2500) {
   mdns_result_t *results = nullptr;
-  esp_err_t err = mdns_query_ptr("_http", "_tcp", timeout_ms, 20, &results);
+  esp_err_t err = mdns_query_ptr(eink_service::service_type(transport), "_tcp", timeout_ms, 20, &results);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "mDNS query failed: %s", esp_err_to_name(err));
     return false;
@@ -57,19 +71,10 @@ inline bool find(Server &server, const std::string &instance_name, uint32_t time
   bool found = false;
   for (const mdns_result_t *r = results; r != nullptr && !found; r = r->next) {
     // Plenty of things on a LAN are _http._tcp; ours says so in its TXT record.
-    if (txt_value(r, "txtvers") != "1" || txt_value(r, "path").empty())
-      continue;
-    if (!instance_name.empty() && (r->instance_name == nullptr || instance_name != r->instance_name))
-      continue;
-    uint32_t ip;
-    if (r->port == 0 || !first_ipv4(r, ip))
-      continue;
-    server.ip = ip;
-    server.port = r->port;
-    server.format = txt_value(r, "format");
-    found = true;
-    ESP_LOGI(TAG, "Found '%s' at %s:%u (format %s)", r->instance_name ? r->instance_name : "?",
-             r->hostname ? r->hostname : "?", r->port, server.format.c_str());
+    found = eink_service::accept(announcement(r), instance_name, transport, server);
+    if (found)
+      ESP_LOGI(TAG, "Found '%s' at %s (http %u, https %u, format %s)", r->instance_name ? r->instance_name : "?",
+               r->hostname ? r->hostname : "?", server.port, server.tls_port, server.format.c_str());
   }
   mdns_query_results_free(results);
   if (!found)

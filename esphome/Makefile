@@ -6,7 +6,7 @@
 CXX ?= c++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/main.cpp $(wildcard tests/*_test.cpp)
-HEADERS := eink_plan.h eink_clock.h eink_wake.h eink_battery.h eink_format.h eink_report.h tests/check.h
+HEADERS := eink_service.h eink_plan.h eink_clock.h eink_wake.h eink_battery.h eink_format.h eink_report.h tests/check.h
 
 .PHONY: test
 test: build/tests
