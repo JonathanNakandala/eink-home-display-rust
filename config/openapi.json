@@ -48,7 +48,7 @@
           "displays"
         ],
         "summary": "Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can\ndecode, the server's preferred one if it has no preference. 406 if it can decode none of them.",
-        "description": "A format whose file can't be inspected or read is skipped, so one bad file doesn't take the\nothers down with it. It is a 500 only when that leaves the client nothing it accepts, and never\na 404 or 406: those would say the image isn't there or isn't wanted, when the server failed.",
+        "description": "The reply carries an `ETag` (a hash of the file), and a client that sends it back as `If-None-Match` is\nanswered 304 with no body when it already has that image.\n\nA format whose file can't be inspected or read is skipped, so one bad file doesn't take the\nothers down with it. It is a 500 only when that leaves the client nothing it accepts, and never\na 404 or 406: those would say the image isn't there or isn't wanted, when the server failed.",
         "operationId": "image",
         "parameters": [
           {
@@ -80,6 +80,12 @@
                 },
                 "description": "The size of the file, which is how a dropped download is noticed."
               },
+              "etag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Identifies this file's bytes, so a client that keeps the picture can ask with `If-None-Match` whether it has changed."
+              },
               "vary": {
                 "schema": {
                   "type": "string"
@@ -91,6 +97,29 @@
               "image/bmp": {},
               "image/png": {},
               "image/qoi": {}
+            }
+          },
+          "304": {
+            "description": "The client's `If-None-Match` names the image it would be sent, so it already has it. No body.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              },
+              "etag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same value the client sent."
+              },
+              "vary": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `Accept`."
+              }
             }
           },
           "404": {
