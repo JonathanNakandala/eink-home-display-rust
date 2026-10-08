@@ -498,10 +498,8 @@ fn the_servers_certificate_comes_with_its_intermediate_and_the_path_to_the_root_
         .verify_signature(Some(root.public_key()))
         .unwrap();
 
-    let rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) = &identity.key else {
-        panic!("expected a PKCS #8 key");
-    };
-    let key = KeyPair::from_pkcs8_der_and_sign_algo(pkcs8, &PKCS_ECDSA_P256_SHA256).unwrap();
+    let pkcs8 = rustls_pki_types::PrivatePkcs8KeyDer::from(identity.key.as_slice());
+    let key = KeyPair::from_pkcs8_der_and_sign_algo(&pkcs8, &PKCS_ECDSA_P256_SHA256).unwrap();
     assert_eq!(
         cert.public_key().raw,
         key.subject_public_key_info().as_slice()
@@ -641,6 +639,24 @@ mod saved {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn a_key_file_is_read_whole_and_one_that_is_not_text_is_refused_by_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("root.key");
+        std::fs::write(&path, "-----BEGIN PRIVATE KEY-----\nabc\n").unwrap();
+        assert_eq!(
+            storage::read_text(&path).unwrap().as_str(),
+            "-----BEGIN PRIVATE KEY-----\nabc\n"
+        );
+        std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+        let error = storage::read_text(&path).unwrap_err().to_string();
+        assert!(error.contains("root.key is not text"), "{error}");
+        let error = storage::read_text(&directory.path().join("nope"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Failed to read"), "{error}");
     }
 
     fn unset() -> DateTime<Utc> {

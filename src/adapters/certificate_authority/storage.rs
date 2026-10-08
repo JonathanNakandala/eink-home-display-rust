@@ -21,6 +21,7 @@ use std::path::Path;
 
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::{PrivateAuthority, ROTATE_WITHIN, new_intermediate};
 use crate::domain::services::clock::{earliest_plausible, implausible};
@@ -105,11 +106,21 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
     }
 }
 
+/// A file's text, wiped from memory when dropped: some of the files hold a key. Read at its exact size in one go,
+/// so no earlier, smaller buffer holding part of it is left behind (as growing a string as it is read would).
+pub(super) fn read_text(path: &Path) -> anyhow::Result<Zeroizing<String>> {
+    let bytes = fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(Zeroizing::new(text)),
+        Err(e) => {
+            e.into_bytes().zeroize();
+            Err(anyhow!("{} is not text", path.display()))
+        }
+    }
+}
+
 fn load(directory: &Path) -> anyhow::Result<PrivateAuthority> {
-    let read = |name: &str| {
-        let path = directory.join(name);
-        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))
-    };
+    let read = |name: &str| read_text(&directory.join(name));
     let retired = match read(RETIRED) {
         Ok(text) => split_certificates(&text),
         Err(_) if !directory.join(RETIRED).exists() => Vec::new(),
@@ -184,9 +195,7 @@ pub(super) fn rotate_intermediate_at(
     let key_path = root_key
         .map(Path::to_path_buf)
         .unwrap_or_else(|| directory.join(ROOT_KEY));
-    let read = |path: &Path| {
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))
-    };
+    let read = |path: &Path| read_text(path);
     let root_certificate = read(&directory.join(ROOT_CERTIFICATE))?;
     let new = new_intermediate(&root_certificate, &read(&key_path)?, now)?;
 
@@ -199,7 +208,7 @@ pub(super) fn rotate_intermediate_at(
             .context("The intermediate being replaced has no certificate in it")?;
         let retired_path = directory.join(RETIRED);
         let mut retired = if retired_path.exists() {
-            read(&retired_path)?
+            read(&retired_path)?.as_str().to_owned()
         } else {
             String::new()
         };

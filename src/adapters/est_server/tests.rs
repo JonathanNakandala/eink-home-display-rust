@@ -990,12 +990,10 @@ async fn the_servers_own_certificate_is_not_accepted_as_a_display() {
             chrono::Utc::now() + ChronoDuration::days(1),
         )
         .unwrap();
-    let PrivateKeyDer::Pkcs8(pkcs8) = &server.key else {
-        panic!("expected a PKCS #8 key");
-    };
+    let pkcs8 = PrivatePkcs8KeyDer::from(server.key.as_slice());
     let impostor = Identity {
         certificate: server.certificate.to_vec(),
-        key: KeyPair::from_pkcs8_der_and_sign_algo(pkcs8, &PKCS_ECDSA_P256_SHA256).unwrap(),
+        key: KeyPair::from_pkcs8_der_and_sign_algo(&pkcs8, &PKCS_ECDSA_P256_SHA256).unwrap(),
     };
     let config = client_config(
         Trust::Authority(harness.authority.certificate()),
