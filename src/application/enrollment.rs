@@ -25,7 +25,7 @@ use crate::domain::models::pairing::{
 use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,
 };
-use crate::domain::services::clock::Clock;
+use crate::domain::services::clock::{Clock, earliest_plausible, implausible};
 use crate::domain::services::pairing_store::PairingStore;
 
 /// More than a household has waiting at once. Anyone on the network can ask while the window is open,
@@ -285,6 +285,12 @@ impl Enrollment {
             pairing.rollover = None;
             pairing.replacement = None;
             return self.collect(pairing, request, now).await;
+        }
+        // The owner has approved a key for this name and it has not collected yet. Another key asking meanwhile
+        // gets nothing, as one asking in the place of an approved new display gets nothing: otherwise anyone
+        // on the network could wipe the owner's approval by asking while the window is open.
+        if pairing.replacement.as_ref().is_some_and(|r| r.approved) {
+            return Err(Refusal::KeyMismatch.into());
         }
         // Some other key wants the name. Only while the owner is letting displays ask, and only to wait.
         if self.window_closes_at().is_none() {
@@ -620,13 +626,19 @@ impl Enrollment {
         now: DateTime<Utc>,
     ) -> Result<IssuedCertificate, EnrollError> {
         if now < earliest_plausible() {
-            return Err(EnrollError::Failed(anyhow::anyhow!(
-                "the system clock reads {now}, which can't be right; not issuing certificates until it is set"
-            )));
+            return Err(EnrollError::Failed(anyhow::anyhow!(implausible(now))));
         }
-        Ok(self
-            .authority
-            .issue(request, now, now + self.policy.certificate_lifetime)?)
+        // Not `now + lifetime`, which panics for a lifetime too long to add to a date: an out-of-range setting
+        // is an error here, and `ServerConfig::check` refuses one at start-up.
+        let not_after = now
+            .checked_add_signed(self.policy.certificate_lifetime)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "a certificate lifetime of {} days is too long to add to {now}",
+                    self.policy.certificate_lifetime.num_days()
+                )
+            })?;
+        Ok(self.authority.issue(request, now, not_after)?)
     }
 
     fn record(&self, pairing: &mut Pairing, certificate: &IssuedCertificate, now: DateTime<Utc>) {
@@ -654,15 +666,6 @@ impl Enrollment {
             pairing.key = rollover.key;
         }
     }
-}
-
-/// A date before which this program had not been written. A clock reading earlier than this has not
-/// been set.
-fn earliest_plausible() -> DateTime<Utc> {
-    use chrono::TimeZone;
-    Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
-        .single()
-        .expect("a valid date")
 }
 
 #[cfg(test)]
@@ -2393,5 +2396,127 @@ mod tests {
         let all = f.enrollment.pairings().await.unwrap();
         let states: Vec<&str> = all.iter().map(|p| p.state.name()).collect();
         assert_eq!(states, ["approved", "enrolled"], "{all:?}");
+    }
+
+    // --- an approved replacement, and a lifetime too long to date ---------------------------------------
+
+    #[tokio::test]
+    async fn an_approved_replacement_cannot_be_displaced_by_another_key_before_it_collects() {
+        let f = Fixture::new();
+        member(&f, "kitchen", "k1").await;
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("kitchen", "k9"), None)
+            .await
+            .unwrap();
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k9"))
+            .await
+            .unwrap();
+
+        // A stranger's key asks for the name while the window is open: it gets nothing, as it would for a new
+        // display that was approved, and the owner's approval stands.
+        let stranger = f.enrollment.enroll(&csr("kitchen", "k7"), None).await;
+        assert_eq!(refused(stranger), Refusal::KeyMismatch);
+        let kitchen = f
+            .enrollment
+            .pairing(&device("kitchen"))
+            .await
+            .unwrap()
+            .unwrap();
+        let replacement = kitchen.replacement.expect("still there");
+        assert_eq!(replacement.key, held_key("k9"));
+        assert!(replacement.approved);
+
+        // The display the owner approved collects, and takes the name.
+        let collected = f
+            .enrollment
+            .enroll(&csr("kitchen", "k9"), None)
+            .await
+            .unwrap();
+        assert!(matches!(collected, Outcome::Issued(_)), "{collected:?}");
+        assert!(
+            f.enrollment
+                .authenticate(&device("kitchen"), &held_key("k9"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !f.enrollment
+                .authenticate(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unapproved_replacement_still_gives_way_to_a_later_one_and_an_approved_one_is_cleared_by_rejecting()
+     {
+        let f = Fixture::new();
+        member(&f, "kitchen", "k1").await;
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("kitchen", "k8"), None)
+            .await
+            .unwrap();
+        // Not approved yet, so a later key takes its place (the earlier behaviour, unchanged).
+        f.enrollment
+            .enroll(&csr("kitchen", "k9"), None)
+            .await
+            .unwrap();
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k9"))
+            .await
+            .unwrap();
+        // The owner can still clear an approved one by turning it down; then another key may ask.
+        f.enrollment.reject(&device("kitchen")).await.unwrap();
+        let again = f
+            .enrollment
+            .enroll(&csr("kitchen", "k7"), None)
+            .await
+            .unwrap();
+        assert!(matches!(again, Outcome::Pending { .. }), "{again:?}");
+    }
+
+    #[tokio::test]
+    async fn a_certificate_lifetime_too_long_to_add_to_a_date_is_an_error_not_a_panic() {
+        for days in [4_000_000_000i64, i64::from(i32::MAX)] {
+            let clock = Arc::new(TestClock(Mutex::new(
+                Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap(),
+            )));
+            let enrollment = Enrollment::new(
+                Arc::new(FakeAuthority::new()),
+                Arc::new(MemoryStore::default()),
+                clock,
+                EnrollmentPolicy {
+                    certificate_lifetime: Duration::days(days),
+                    retry_after: Duration::minutes(5),
+                    require_channel_binding: false,
+                },
+            );
+            enrollment.open_window(Duration::minutes(10));
+            enrollment
+                .enroll(&csr("kitchen", "k1"), None)
+                .await
+                .unwrap();
+            enrollment
+                .approve(
+                    &device("kitchen"),
+                    &PairingCode::derive(
+                        &Fingerprint::of(b"authority"),
+                        &device("kitchen"),
+                        &held_key("k1"),
+                    ),
+                )
+                .await
+                .unwrap();
+            let result = enrollment.enroll(&csr("kitchen", "k1"), None).await;
+            match result {
+                Err(EnrollError::Failed(e)) => {
+                    assert!(e.to_string().contains("too long"), "{days}: {e}")
+                }
+                other => panic!("{days}: {other:?}"),
+            }
+        }
     }
 }

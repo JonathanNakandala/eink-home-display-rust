@@ -561,7 +561,7 @@
           "default": "[::]:8443"
         },
         "device_certificate_days": {
-          "description": "How long a display's certificate lasts. Short on purpose: a display renews it with a third of its life\nleft, so renewal happens all the time and not once in years when no one remembers how it works, and a\ndisplay that has stopped renewing shows in `/status` within weeks. It is not what keeps a revoked\ndisplay out (that takes effect on its next request). A display that is off for longer than this gets\na new certificate by itself, with no one at the server, when it is next switched on.",
+          "description": "How long a display's certificate lasts, from 1 to 3650 days. Short on purpose: a display renews it with a third of its life\nleft, so renewal happens all the time and not once in years when no one remembers how it works, and a\ndisplay that has stopped renewing shows in `/status` within weeks. It is not what keeps a revoked\ndisplay out (that takes effect on its next request). A display that is off for longer than this gets\na new certificate by itself, with no one at the server, when it is next switched on.",
           "type": "integer",
           "format": "uint32",
           "default": 90,
@@ -581,7 +581,7 @@
           }
         },
         "pairing_retry_minutes": {
-          "description": "How long a display that is waiting for approval is told to wait before asking again.",
+          "description": "How long a display that is waiting for approval is told to wait before asking again, from 1 to 1440 minutes.",
           "type": "integer",
           "format": "uint32",
           "default": 5,
@@ -593,7 +593,7 @@
           "default": false
         },
         "server_certificate_days": {
-          "description": "How long the server's own certificate lasts. It is replaced when a third of that is left.",
+          "description": "How long the server's own certificate lasts, from 1 to 3650 days. It is replaced when a third of that is left.",
           "type": "integer",
           "format": "uint32",
           "default": 90,

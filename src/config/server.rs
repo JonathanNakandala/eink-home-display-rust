@@ -16,6 +16,11 @@ const DEFAULT_PKI_DIRECTORY: &str = "pki";
 const DEFAULT_SERVER_CERTIFICATE_DAYS: u32 = 90;
 const DEFAULT_DEVICE_CERTIFICATE_DAYS: u32 = 90;
 const DEFAULT_PAIRING_RETRY_MINUTES: u32 = 5;
+/// The longest a certificate may be set to last: ten years. Far beyond sensible, but a limit all the same, because
+/// a certificate cannot be dated past the year 9999 and a figure large enough overflows a date outright.
+pub const MAX_CERTIFICATE_DAYS: u32 = 3650;
+/// The longest a waiting display may be told to wait: a day, which is also the longest it is ever told to sleep.
+pub const MAX_PAIRING_RETRY_MINUTES: u32 = 24 * 60;
 
 /// How displays reach the server.
 ///
@@ -107,17 +112,17 @@ pub struct TlsConfig {
     /// `eink-home-display.internal`, which is what a display checks, so changing this never affects them.
     #[serde(default)]
     pub names: Vec<String>,
-    /// How long the server's own certificate lasts. It is replaced when a third of that is left.
+    /// How long the server's own certificate lasts, from 1 to 3650 days. It is replaced when a third of that is left.
     #[serde(default = "default_server_certificate_days")]
     pub server_certificate_days: u32,
-    /// How long a display's certificate lasts. Short on purpose: a display renews it with a third of its life
+    /// How long a display's certificate lasts, from 1 to 3650 days. Short on purpose: a display renews it with a third of its life
     /// left, so renewal happens all the time and not once in years when no one remembers how it works, and a
     /// display that has stopped renewing shows in `/status` within weeks. It is not what keeps a revoked
     /// display out (that takes effect on its next request). A display that is off for longer than this gets
     /// a new certificate by itself, with no one at the server, when it is next switched on.
     #[serde(default = "default_device_certificate_days")]
     pub device_certificate_days: u32,
-    /// How long a display that is waiting for approval is told to wait before asking again.
+    /// How long a display that is waiting for approval is told to wait before asking again, from 1 to 1440 minutes.
     #[serde(default = "default_pairing_retry_minutes")]
     pub pairing_retry_minutes: u32,
     /// Require a request for a certificate to prove it was made on the connection it arrived on
@@ -281,13 +286,27 @@ impl ServerConfig {
                 self.transport.name()
             ));
         }
-        for (name, days) in [
-            ("server_certificate_days", tls.server_certificate_days),
-            ("device_certificate_days", tls.device_certificate_days),
-            ("pairing_retry_minutes", tls.pairing_retry_minutes),
+        for (name, value, most) in [
+            (
+                "server_certificate_days",
+                tls.server_certificate_days,
+                MAX_CERTIFICATE_DAYS,
+            ),
+            (
+                "device_certificate_days",
+                tls.device_certificate_days,
+                MAX_CERTIFICATE_DAYS,
+            ),
+            (
+                "pairing_retry_minutes",
+                tls.pairing_retry_minutes,
+                MAX_PAIRING_RETRY_MINUTES,
+            ),
         ] {
-            if days == 0 {
-                return Err(format!("[server.tls] {name} must be at least 1"));
+            if !(1..=most).contains(&value) {
+                return Err(format!(
+                    "[server.tls] {name} is {value}; it must be from 1 to {most}"
+                ));
             }
         }
         Ok(())
@@ -461,6 +480,37 @@ mod tests {
         assert_eq!(
             named.certificate_names(),
             ["eink.example.net", "192.168.1.5"]
+        );
+    }
+
+    #[test]
+    fn lifetimes_and_waits_must_be_from_one_to_their_most() {
+        for (key, most) in [
+            ("server_certificate_days", MAX_CERTIFICATE_DAYS),
+            ("device_certificate_days", MAX_CERTIFICATE_DAYS),
+            ("pairing_retry_minutes", MAX_PAIRING_RETRY_MINUTES),
+        ] {
+            // The most is allowed; one more is not; nor is a figure large enough to overflow a date.
+            let at_most = parse(&format!("transport = \"https\"\n[tls]\n{key} = {most}")).unwrap();
+            assert!(at_most.check().is_ok(), "{key}");
+            for bad in [most + 1, u32::MAX] {
+                let config =
+                    parse(&format!("transport = \"https\"\n[tls]\n{key} = {bad}")).unwrap();
+                let error = config.check().unwrap_err();
+                assert!(
+                    error.contains(key)
+                        && error.contains(&bad.to_string())
+                        && error.contains(&most.to_string()),
+                    "{key} = {bad}: {error}"
+                );
+            }
+        }
+        // Unused settings are still not judged.
+        assert!(
+            parse("[tls]\ndevice_certificate_days = 4000000000")
+                .unwrap()
+                .check()
+                .is_ok()
         );
     }
 }

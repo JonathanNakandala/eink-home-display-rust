@@ -536,6 +536,77 @@ fn a_server_certificate_needs_usable_names() {
     }
 }
 
+/// An authority whose intermediate has `left` to run, made by an intermediate dated to end then.
+fn authority_ending_in(left: Duration) -> PrivateAuthority {
+    let (_, files) = PrivateAuthority::generate(Utc::now()).unwrap();
+    let intermediate = new_intermediate(
+        &files.root_certificate,
+        &files.root_key,
+        Utc::now() - Duration::days(365 * INTERMEDIATE_YEARS) + left,
+    )
+    .unwrap();
+    PrivateAuthority::from_pem(&files.root_certificate, &intermediate, &[], Utc::now()).unwrap()
+}
+
+#[test]
+fn a_certificate_never_lasts_longer_than_the_intermediate_that_signed_it() {
+    let authority = authority_ending_in(Duration::days(10));
+    let ends = authority.intermediate_not_after();
+    let (_, request) = display("kitchen");
+    let request = authority.inspect(&request).unwrap();
+    let now = Utc::now();
+    let issued = authority
+        .issue(&request, now, now + Duration::days(90))
+        .unwrap();
+    // What it says it lasts until, and what is in the certificate, are both the intermediate's end.
+    assert_eq!(issued.not_after, ends);
+    assert_eq!(
+        parse(&issued).validity().not_after.timestamp(),
+        ends.timestamp()
+    );
+
+    // The same for the server's own, which reports its real end.
+    let server = authority
+        .issue_server(&names(), now, now + Duration::days(90))
+        .unwrap();
+    assert_eq!(server.not_after, ends);
+    let (_, cert) = X509Certificate::from_der(&server.certificate).unwrap();
+    assert_eq!(cert.validity().not_after.timestamp(), ends.timestamp());
+}
+
+#[test]
+fn a_certificate_that_ends_before_the_intermediate_is_left_as_asked() {
+    let authority = authority_ending_in(Duration::days(400));
+    let (_, request) = display("kitchen");
+    let request = authority.inspect(&request).unwrap();
+    let now = Utc::now();
+    let asked = now + Duration::days(90);
+    let issued = authority.issue(&request, now, asked).unwrap();
+    assert_eq!(issued.not_after.timestamp(), asked.timestamp());
+}
+
+#[test]
+fn nothing_is_signed_under_an_intermediate_that_has_ended() {
+    let authority = authority_ending_in(-Duration::days(1));
+    let (_, request) = display("kitchen");
+    let request = authority.inspect(&request).unwrap();
+    let now = Utc::now();
+    let error = authority
+        .issue(&request, now, now + Duration::days(1))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("intermediate certificate ended") && error.contains("replace"),
+        "{error}"
+    );
+    let error = authority
+        .issue_server(&names(), now, now + Duration::days(1))
+        .err()
+        .expect("should refuse")
+        .to_string();
+    assert!(error.contains("ended"), "{error}");
+}
+
 mod saved {
     use super::*;
 
