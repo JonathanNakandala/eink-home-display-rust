@@ -14,7 +14,7 @@ use anyhow::Context;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Duration, Utc};
 use rustls::client::danger::HandshakeSignatureValid;
-use rustls::crypto::ring as provider;
+use rustls::crypto::aws_lc_rs as provider;
 use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::{ClientHello, ResolvesServerCert, WebPkiClientVerifier};
