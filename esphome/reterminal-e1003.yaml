@@ -80,6 +80,7 @@ esphome:
     - eink_battery.h
     - eink_wake.h
     - eink_clock.h
+    - eink_plan.h
     - eink_format.h
     - eink_report.h
     - eink_telemetry.h
@@ -322,22 +323,21 @@ script:
       - lambda: |-
           // sample() is the voltage at the pin, before the sensor's filters, so undo the divider here.
           float v = id(battery_voltage).sample() * ${battery_divider}f;
-          id(battery_known) = eink_battery::plausible(v);
-          id(battery_action) = 0;
-          if (!id(battery_known)) {
+          // What the reading means, and the latches and what to do about them, are worked out in eink_battery.h.
+          auto battery = eink_battery::assess(v, id(battery_halted), id(battery_low), ${battery_low_v},
+                                              ${battery_empty_v}, ${battery_resume_v});
+          id(battery_known) = battery.known;
+          id(battery_action) = battery.verdict.action;
+          if (!battery.known) {
             // No battery, or a bad reading: never a reason to stop.
             ESP_LOGW("battery", "Unusable reading (%.2f V); carrying on", v);
             return;
           }
-          id(battery_mv) = eink_battery::millivolts(v);
-          id(battery_pct) = eink_battery::percent(v);
-          // The latches and what to do about them are worked out in eink_battery.h.
-          auto verdict = eink_battery::judge(v, id(battery_halted), id(battery_low), ${battery_low_v},
-                                             ${battery_empty_v}, ${battery_resume_v});
-          id(battery_halted) = verdict.halted;
-          id(battery_low) = verdict.low;
-          id(battery_state) = verdict.state;
-          id(battery_action) = verdict.action;
+          id(battery_mv) = battery.mv;
+          id(battery_pct) = battery.pct;
+          id(battery_halted) = battery.verdict.halted;
+          id(battery_low) = battery.verdict.low;
+          id(battery_state) = battery.verdict.state;
           ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(id(battery_state)));
       - if:
           condition:
@@ -406,9 +406,7 @@ script:
           then:
             - http_request.post:
                 url: !lambda |-
-                  std::string base = (id(server_ip) == 0 || id(server_port) == 0)
-                                         ? std::string("${fallback_base}")
-                                         : eink_format::url(id(server_ip), id(server_port), "");
+                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
                   return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
                          eink_telemetry::query(App.get_name().str(), id(failed_wakes),
                                                {id(battery_known), id(battery_mv), id(battery_pct),
@@ -423,9 +421,7 @@ script:
           else:
             - http_request.get:
                 url: !lambda |-
-                  std::string base = (id(server_ip) == 0 || id(server_port) == 0)
-                                         ? std::string("${fallback_base}")
-                                         : eink_format::url(id(server_ip), id(server_port), "");
+                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
                   return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
                          eink_telemetry::query(App.get_name().str(), id(failed_wakes),
                                                {id(battery_known), id(battery_mv), id(battery_pct),
@@ -453,8 +449,8 @@ script:
             id(plan_stale) = root["stale"] | false;
             id(plan_age_seconds) = root["age_seconds"] | 0;
             // The server's zone, as how far it is ahead of UTC now. Kept only if it is a real offset.
-            if (root["utc_offset_seconds"].is<int32_t>() &&
-                eink_format::valid_utc_offset(root["utc_offset_seconds"].as<int32_t>())) {
+            if (eink_plan::keeps_offset(root["utc_offset_seconds"].is<int32_t>(),
+                                        root["utc_offset_seconds"].as<int32_t>())) {
               id(utc_offset_s) = root["utc_offset_seconds"].as<int32_t>();
               id(utc_offset_known) = true;
             }
@@ -468,13 +464,9 @@ script:
             // Not `failed_wakes = 0` here: the plan answering isn't the wake succeeding. The image can still
             // fail to download, and resetting now would keep that failure at the first backoff step forever.
             id(plan_received_ms) = millis();
-            // A notice is covering the picture and the server is fine again: redraw it, even if the
-            // image is the one we think we show. Not while stale, or it would redraw every wake.
-            if (id(notice_on_panel) && !id(plan_stale))
-              id(plan_changed) = true;
-            // The battery label is part of the picture: draw it when it should appear or go.
-            if (id(low_label_on_panel) != id(battery_low))
-              id(plan_changed) = true;
+            // The picture is also redrawn to clear a notice or to add or remove the battery label (eink_plan.h).
+            id(plan_changed) = eink_plan::needs_draw(id(plan_changed), id(plan_stale),
+                                                     {id(notice_on_panel), id(low_label_on_panel), id(battery_low)});
           }
       - if:
           condition:
@@ -506,10 +498,8 @@ script:
                 update: false
                 # Says who is asking, so the server knows which display it sent this image to.
                 url: !lambda |-
-                  std::string url = (id(server_ip) == 0 || id(server_port) == 0)
-                                        ? std::string("${fallback_base}${image_path}")
-                                        : eink_format::url(id(server_ip), id(server_port), "${image_path}");
-                  return url + "?device=" + App.get_name().str();
+                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
+                  return base + "${image_path}?device=" + App.get_name().str();
             - component.update: dashboard
           else:
             # Not the server's fault, so don't go looking for it.
@@ -530,7 +520,7 @@ script:
             lambda: 'return id(plan_stale) && !id(notice_on_panel);'
           then:
             - lambda: |-
-                id(notice_text) = "Out of date: rendered " + eink_format::age(id(plan_age_seconds)) + " ago";
+                id(notice_text) = eink_format::stale_notice(id(plan_age_seconds));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
             - component.update: epaper_display
@@ -669,18 +659,10 @@ script:
                         time.has_time:
                       timeout: 8s
             - lambda: |-
-                // What went wrong, in a few words; the log has the detail.
-                std::string what = "Last update failed";
-                if (id(fail_reason) == "wifi")
-                  what = "No Wi-Fi";
-                else if (id(fail_reason) == "memory")
-                  what = "Out of memory";
-                // The time in the server's zone: the clock's UTC plus the offset its last plan gave. Left off
-                // when the clock isn't set yet or no plan has ever answered, rather than shown wrong.
+                // What went wrong, in a few words (the log has the detail), and when, if the time can be told.
                 auto now = id(sntp_time).now();
-                id(notice_text) = (now.is_valid() && id(utc_offset_known))
-                                      ? what + " @ " + eink_format::clock_text(now.timestamp, id(utc_offset_s))
-                                      : what;
+                id(notice_text) = eink_format::failure_notice(id(fail_reason), now.is_valid(), now.timestamp,
+                                                              id(utc_offset_known), id(utc_offset_s));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
             - component.update: epaper_display

@@ -56,3 +56,30 @@ TEST(only_a_real_zone_offset_is_accepted) {
   CHECK(!valid_utc_offset(INT32_MAX));
   CHECK(!valid_utc_offset(INT64_MIN));
 }
+
+TEST(the_server_is_where_mdns_found_it_or_the_fallback) {
+  const uint32_t ip = 192u | (168u << 8) | (1u << 16) | (20u << 24);
+  const std::string fallback = "http://e-ink-home-display.local:8080";
+  CHECK_EQ(server_base(ip, 8080, fallback), "http://192.168.1.20:8080");
+  CHECK_EQ(server_base(0, 8080, fallback), fallback);  // no address
+  CHECK_EQ(server_base(ip, 0, fallback), fallback);    // no port
+  CHECK_EQ(server_base(0, 0, fallback), fallback);
+}
+
+TEST(a_failure_notice_names_the_cause_and_the_time_only_when_it_is_known) {
+  const int64_t now = 1791376496;  // 12:34:56 UTC; an hour ahead in the server's zone
+  CHECK_EQ(failure_notice("server", true, now, true, 3600), "Last update failed @ 13:34");
+  CHECK_EQ(failure_notice("wifi", true, now, true, 3600), "No Wi-Fi @ 13:34");
+  CHECK_EQ(failure_notice("memory", true, now, true, 0), "Out of memory @ 12:34");
+  // No time is better than a wrong one.
+  CHECK_EQ(failure_notice("server", false, now, true, 3600), "Last update failed");  // clock not set
+  CHECK_EQ(failure_notice("server", true, now, false, 0), "Last update failed");     // no plan ever answered
+  CHECK_EQ(failure_notice("wifi", false, 0, false, 0), "No Wi-Fi");
+  CHECK_EQ(failure_notice("", true, now, true, 0), "Last update failed @ 12:34");
+  CHECK_EQ(failure_notice("download", true, now, true, 0), "Last update failed @ 12:34");
+}
+
+TEST(the_stale_notice_says_how_old_the_image_is) {
+  CHECK_EQ(stale_notice(0), "Out of date: rendered under 1 min ago");
+  CHECK_EQ(stale_notice(3 * 3600 + 20 * 60), "Out of date: rendered 3 h 20 min ago");
+}
