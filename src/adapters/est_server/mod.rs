@@ -20,7 +20,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use chrono::Utc;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
@@ -82,11 +81,18 @@ impl Default for EstSettings {
     }
 }
 
+/// How often the server's own certificate is looked at. Only a comparison of two dates, so it is cheap, and it
+/// is short so that a clock set to the right time is noticed within a minute, not an hour (see `is_due`).
+const RENEWAL_CHECK: Duration = Duration::from_secs(60);
+
 pub struct EstServer {
     listener: TcpListener,
     families: Families,
     settings: EstSettings,
     authority: Arc<PrivateAuthority>,
+    /// The time the server goes by, which is the enrolment's clock, so the server's own certificate and the
+    /// displays' are dated by the same one.
+    enrollment: Arc<Enrollment>,
     certificate: Arc<RenewingCertificate>,
     acceptor: TlsAcceptor,
     app: axum::Router,
@@ -109,15 +115,17 @@ impl EstServer {
         {
             settings.names.insert(0, SERVER_NAME.to_owned());
         }
+        // Fails if the clock has not been set, so the server does not start with a certificate no display would
+        // accept. Under systemd it is started again after a pause, by which time a time service has set it.
         let certificate = Arc::new(RenewingCertificate::new(
             &authority,
             &settings.names,
-            Utc::now(),
+            enrollment.now(),
             settings.certificate_lifetime,
         )?);
         let config = tls::server_config(certificate.clone(), &authority)?;
         let mut app = routes::router(
-            enrollment,
+            enrollment.clone(),
             authority.clone() as Arc<dyn CertificateAuthority>,
             settings.request_timeout,
         );
@@ -134,6 +142,7 @@ impl EstServer {
             families,
             settings,
             authority,
+            enrollment,
             certificate,
             acceptor: TlsAcceptor::from(Arc::new(config)),
             app,
@@ -156,13 +165,16 @@ impl EstServer {
             families: _,
             settings,
             authority,
+            enrollment,
             certificate,
             acceptor,
             app,
         } = self;
         let slots = Arc::new(Semaphore::new(settings.max_connections));
         let mut connections = JoinSet::new();
-        let mut renewal = tokio::time::interval(Duration::from_secs(3600));
+        let mut renewal = tokio::time::interval(RENEWAL_CHECK);
+        // Whether the last attempt to renew failed, so a lasting fault is said once and not every minute.
+        let mut renewal_failing = false;
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -193,12 +205,22 @@ impl EstServer {
                     match certificate.renew_if_due(
                         &authority,
                         &settings.names,
-                        Utc::now(),
+                        enrollment.now(),
                         settings.certificate_lifetime,
                     ) {
-                        Ok(true) => log::info!("Renewed the server certificate"),
-                        Ok(false) => {}
-                        Err(e) => log::error!("Failed to renew the server certificate: {e:#}"),
+                        Ok(true) => {
+                            log::info!("Renewed the server certificate");
+                            renewal_failing = false;
+                        }
+                        Ok(false) => renewal_failing = false,
+                        Err(e) => {
+                            if !renewal_failing {
+                                log::error!(
+                                    "Failed to renew the server certificate; the one in use stays until it can be: {e:#}"
+                                );
+                            }
+                            renewal_failing = true;
+                        }
                     }
                 }
             }

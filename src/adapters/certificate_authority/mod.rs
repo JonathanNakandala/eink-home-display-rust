@@ -20,7 +20,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use chrono::{DateTime, Duration, Utc};
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -54,6 +54,8 @@ const BACKDATE: Duration = Duration::hours(1);
 /// The server's own certificate and key, for it to prove who it is to a display.
 pub struct ServerIdentity {
     pub certificate: CertificateDer<'static>,
+    /// When the certificate ends: the end asked for, or the intermediate's if that comes first.
+    pub not_after: DateTime<Utc>,
     /// The intermediate that signed it, sent after it so a display can build the path to the root it
     /// pins without having kept the intermediate.
     pub intermediate: CertificateDer<'static>,
@@ -251,6 +253,7 @@ impl PrivateAuthority {
         if names.is_empty() {
             return Err(anyhow!("A server certificate needs at least one name"));
         }
+        let not_after = self.limit_to_intermediate(now, not_after)?;
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .context("Failed to generate the server's key")?;
         let mut params = CertificateParams::default();
@@ -282,9 +285,36 @@ impl PrivateAuthority {
             .context("Failed to sign the server's certificate")?;
         Ok(ServerIdentity {
             certificate: certificate.der().clone(),
+            not_after,
             intermediate: CertificateDer::from(self.intermediate.clone()),
             key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
         })
+    }
+
+    /// The end a certificate made at `now` can have: the one asked for, or the intermediate's if that comes
+    /// first. A certificate is only as good as the intermediate that signed it, so one that claimed longer would be
+    /// refused when the intermediate ended, which looks like a fault on every display at once. Once the
+    /// intermediate has ended nothing can be made under it at all, and the way out is to replace it.
+    fn limit_to_intermediate(
+        &self,
+        now: DateTime<Utc>,
+        not_after: DateTime<Utc>,
+    ) -> anyhow::Result<DateTime<Utc>> {
+        if self.intermediate_not_after <= now {
+            bail!(
+                "the intermediate certificate ended on {}; nothing can be signed under it. Put the root's key back \
+                 and restart, or run the rotation, to replace it",
+                self.intermediate_not_after.format("%Y-%m-%d")
+            );
+        }
+        if not_after > self.intermediate_not_after {
+            log::warn!(
+                "A certificate asked to last until {} is cut short to {}, when the intermediate ends",
+                not_after.format("%Y-%m-%d"),
+                self.intermediate_not_after.format("%Y-%m-%d")
+            );
+        }
+        Ok(not_after.min(self.intermediate_not_after))
     }
 
     /// When the root ends, after which nothing is trusted and every display has to be paired again.
@@ -357,6 +387,7 @@ impl CertificateAuthority for PrivateAuthority {
         // Read again from the request itself: what is signed is what it says, not what the caller
         // passed alongside.
         let request = request::read(&request.der).context("Refused to certify the request")?;
+        let not_after = self.limit_to_intermediate(now, not_after)?;
         let (_, spki) = x509_parser::x509::SubjectPublicKeyInfo::from_der(request.key.as_der())
             .map_err(|e| anyhow!("The request's key can't be read: {e}"))?;
 

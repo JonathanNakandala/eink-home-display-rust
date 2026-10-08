@@ -147,9 +147,18 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
   code on its panel. Only then does it take the name over.
 - **The server's own certificate** lasts 90 days (`server_certificate_days`) and is replaced when a third of
   that is left, with no restart. Displays trust the authority, not this certificate.
-- **The server's clock.** It refuses to issue certificates while its clock reads before 2026, which means it was
-  never set. Make sure the time service has set the clock before the server starts (the unit waits for
-  `time-sync.target`).
+- **The server's clock.** No certificate is made while the clock reads before 2026, which means it was never set
+  (a machine with no real-time clock starts at 1970 until a time service sets it). That covers the displays'
+  certificates *and the server's own*: with HTTPS on, the server will not start until the clock is set, and says
+  why. Under the supplied unit it is started again after a pause (the unit also waits for `time-sync.target`). A
+  clock that is corrected after start-up is noticed within a minute: a server certificate dated from the wrong
+  time is replaced then, and until it is, the old one is kept.
+- **A certificate never outlasts the intermediate that signed it.** One that would is cut short to the intermediate's
+  end (and a warning says so), and once the intermediate has ended nothing is signed under it at all, with a message
+  saying to put the root's key back and restart. This is what the warning at start-up about an intermediate near its
+  end is for.
+- **Limits on the settings.** `server_certificate_days` and `device_certificate_days` are from 1 to 3650, and
+  `pairing_retry_minutes` from 1 to 1440. A figure outside that stops the server from starting, naming the setting.
 
 ### Letting a display join: `displayctl`
 
@@ -167,8 +176,10 @@ display goes like this:
    it: a code copied from the server would say nothing about the display. If the code you type is wrong the command
    says so and nothing changes; if you are sure it is right on the panel, something may be between the display and the
    server.
-5. The display becomes a member the next time it asks, within a few minutes. `displays list` then shows it as a
-   `member` with when its certificate ends. You can close the window now: a display already waiting can still be approved.
+5. The display becomes a member the next time it asks, within a few minutes, and `displays list` then shows it as a
+   `member` with when its certificate ends. You can close the window now: a display already waiting can still be
+   approved. (When you have approved a new key for an existing member's name, no other key can displace it before it
+   collects. If you change your mind, `reject` it.)
 
 Other commands:
 

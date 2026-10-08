@@ -1225,3 +1225,86 @@ async fn a_refused_request_is_logged_with_where_it_came_from() {
         "{lines:?}"
     );
 }
+
+/// A clock fixed at one moment.
+struct FixedClock(chrono::DateTime<chrono::Utc>);
+
+impl crate::domain::services::clock::Clock for FixedClock {
+    fn now(&self) -> chrono::DateTime<chrono_tz::Tz> {
+        self.0.with_timezone(&chrono_tz::Tz::UTC)
+    }
+}
+
+#[tokio::test]
+async fn the_server_does_not_start_while_its_clock_has_not_been_set() {
+    use chrono::TimeZone;
+    let directory = tempfile::tempdir().unwrap();
+    let authority = Arc::new(
+        crate::adapters::certificate_authority::open(
+            &directory.path().join("authority"),
+            crate::adapters::certificate_authority::Create::IfMissing,
+        )
+        .unwrap(),
+    );
+    let enrolment_at = |clock: FixedClock, name: &'static str| {
+        let directory = directory.path().to_owned();
+        let authority = authority.clone();
+        async move {
+            let store = FilePairingStore::open(&directory.join(name), Missing::StartEmpty)
+                .await
+                .unwrap();
+            Arc::new(Enrollment::new(
+                authority,
+                Arc::new(store),
+                Arc::new(clock),
+                EnrollmentPolicy {
+                    certificate_lifetime: ChronoDuration::days(90),
+                    retry_after: ChronoDuration::minutes(5),
+                    require_channel_binding: false,
+                },
+            ))
+        }
+    };
+    let settings = || EstSettings {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        names: vec!["localhost".to_owned()],
+        ..EstSettings::default()
+    };
+
+    // A machine with no real-time clock reads 1970 until a time service sets it. The server will not come up
+    // with a certificate dated from that, which no display with the right time would accept.
+    let unset = FixedClock(chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 3, 0).unwrap());
+    let error = EstServer::bind(
+        settings(),
+        authority.clone(),
+        enrolment_at(unset, "unset").await,
+        None,
+    )
+    .err()
+    .expect("should refuse")
+    .to_string();
+    assert!(error.contains("can't be right"), "{error}");
+
+    // The same server, once the clock is right.
+    let set = FixedClock(chrono::Utc::now());
+    assert!(
+        EstServer::bind(
+            settings(),
+            authority.clone(),
+            enrolment_at(set, "set").await,
+            None
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn the_servers_own_certificate_is_looked_at_at_least_once_a_minute() {
+    // A clock corrected after start-up leaves the server presenting a certificate no display accepts until the
+    // next look, so the look must be frequent. It is only a comparison of two dates.
+    assert!(
+        super::RENEWAL_CHECK <= Duration::from_secs(60),
+        "{:?}",
+        super::RENEWAL_CHECK
+    );
+}
