@@ -37,6 +37,18 @@ check: secrets.yaml
 compile: secrets.yaml
 	$(POETRY) run esphome compile $(YAML)
 
+# The C++ is held to .clang-format, which is the style it is already written in. `lint` fails on a difference and
+# `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
+CPP := $(wildcard eink_*.h) $(wildcard tests/*.cpp) tests/check.h
+
+.PHONY: lint
+lint:
+	$(POETRY) run clang-format --dry-run -Werror $(CPP)
+
+.PHONY: format
+format:
+	$(POETRY) run clang-format -i $(CPP)
+
 .PHONY: clean
 clean:
 	rm -rf build
