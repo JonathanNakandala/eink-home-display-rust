@@ -54,6 +54,16 @@ substitutions:
   # Longer than the slowest normal wait for the server (a button refresh waits for it to render), and
   # shorter than the `run_duration` that backs it up.
   wake_timeout: 110s
+  # Where the clock is set from, tried in this order (at most three). The clock is needed before TLS, to check a
+  # certificate's dates. It survives deep sleep, so this matters after a power cut and for drift.
+  # A server that doesn't answer is given up on only after a wait, which is radio time on every wake, so put a
+  # local one first (your router, or a machine running chrony or ntpd) only if it is really there. The others
+  # are public and from different operators, so one being down doesn't leave the display without a time.
+  ntp_server_1: 0.pool.ntp.org
+  ntp_server_2: time.cloudflare.com
+  ntp_server_3: time.google.com
+  # How long to wait for the clock to be set before giving up on this wake (it is tried again on the next).
+  clock_wait: 20s
 
 esphome:
   name: ${device_name}
@@ -69,6 +79,7 @@ esphome:
     - eink_health.h
     - eink_battery.h
     - eink_wake.h
+    - eink_clock.h
     - eink_format.h
     - eink_report.h
     - eink_telemetry.h
@@ -195,6 +206,12 @@ globals:
     type: uint8_t
     restore_value: yes
     initial_value: '0'
+  # The clock reads a time it could only have from SNTP (and not one before a render the server has made), so a
+  # certificate can be checked against it. Set by `ensure_clock`; false until it has run on this wake.
+  - id: clock_ok
+    type: bool
+    restore_value: no
+    initial_value: 'false'
   # A notice is on the panel instead of (part of) the picture, so the next good wake must redraw it.
   - id: notice_on_panel
     type: bool
@@ -520,6 +537,34 @@ script:
             - delay: ${refresh_settle}
       - script.execute: sleep_now
 
+  # Waits (up to `clock_wait`) for SNTP to set the clock, then says in `clock_ok` whether it can be used. A false
+  # answer means "try again next wake": nothing about the pairing is touched, and nothing that depends on the
+  # time (every TLS connection) is tried. Run before the first of those, once Wi-Fi is up.
+  - id: ensure_clock
+    then:
+      - lambda: 'id(clock_ok) = eink_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
+      - if:
+          condition:
+            lambda: 'return !id(clock_ok);'
+          then:
+            - if:
+                condition:
+                  wifi.connected:
+                then:
+                  - wait_until:
+                      condition:
+                        lambda: 'return eink_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
+                      timeout: ${clock_wait}
+            - lambda: 'id(clock_ok) = eink_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
+            - if:
+                condition:
+                  lambda: 'return !id(clock_ok);'
+                then:
+                  - logger.log:
+                      format: "The clock is not set (it reads %lld); not trying anything that needs it"
+                      args: ['(long long) id(sntp_time).now().timestamp']
+                      level: WARN
+
   # Sleeps for as long as the server asked, or sleep_duration if it never answered.
   - id: sleep_now
     then:
@@ -648,6 +693,11 @@ time:
     # Left at UTC: the display's local time is the server's, from its plan (`utc_offset_s`), so the zone is set in one
     # place. Not set at all, ESPHome would use the zone of the computer that builds the firmware.
     timezone: UTC
+    # Up to three, tried in order; lwIP moves to the next when one doesn't answer. See `ntp_server_1`.
+    servers:
+      - ${ntp_server_1}
+      - ${ntp_server_2}
+      - ${ntp_server_3}
 
 font:
   # The dashboard's own font, from the Rust app's templates; only the glyphs the notice needs.

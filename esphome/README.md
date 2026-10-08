@@ -245,6 +245,14 @@ previous one used.
 
 1. The clock is wrong after power was lost. **Set it by SNTP before any TLS**; certificate dates are checked against
    it. If it can't be set, that is "try again next wake", never "unpaired".
+   The `ensure_clock` script does this: it waits up to `clock_wait` for SNTP, then sets `clock_ok`. The clock counts as
+   usable when it reads 2026-01-01 or later (the same date the server refuses to make certificates before) and is
+   not earlier than the newest render the display has been told of, since a clock behind something that already
+   happened is wrong too ([eink_clock.h](eink_clock.h), tested on the host). The servers come from `ntp_server_1` to
+   `ntp_server_3`, tried in that order, by default three public ones from different operators. A local one (your
+   router, or a machine running chrony) can go first, but only if it is really there: a server that does not
+   answer is given up on after a wait, which is radio time on every wake. Until the clock is usable, nothing that
+   needs TLS is tried.
 2. If the certificate's end is earlier than the clock now, it has expired: connect **without** showing it and
    `POST simpleenroll` with the same key. The server gives a new certificate to the key it already holds, with no
    owner and no window. Store it and carry on.
