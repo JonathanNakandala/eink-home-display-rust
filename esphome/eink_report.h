@@ -11,7 +11,29 @@
 namespace eink_report {
 
 // Why the last failed wake failed. The names are what `last_failure` is sent as.
-enum class Failure : uint8_t { NONE = 0, WIFI = 1, SERVER = 2, DOWNLOAD = 3, MEMORY = 4, TIMEOUT = 5 };
+//  - WIFI, SERVER (no usable /plan), DOWNLOAD, MEMORY and TIMEOUT (the wake hung): how a wake fails.
+//  - CLOCK: not set, so no certificate could be checked and nothing that needs one was tried.
+//  - CERTIFICATE: refused, the server's by the display or the display's by the server.
+//  - APPROVAL: asked to join, waiting for the owner. UNRECOGNISED: the server doesn't know this key, so the owner
+//    must approve it again.
+// The last four belong to the secure transport; the server understands them already (FailureReason in
+// src/application/devices.rs). A display that cannot join can still report them over plain HTTP, as the next
+// wake that gets through, if the server also serves it.
+enum class Failure : uint8_t {
+  NONE = 0,
+  WIFI = 1,
+  SERVER = 2,
+  DOWNLOAD = 3,
+  MEMORY = 4,
+  TIMEOUT = 5,
+  CLOCK = 6,
+  CERTIFICATE = 7,
+  APPROVAL = 8,
+  UNRECOGNISED = 9,
+};
+
+// The highest value that is a Failure, which is how memory left by another firmware is told from a valid one.
+constexpr Failure LAST_FAILURE = Failure::UNRECOGNISED;
 
 // The longest wake that is reported; the server drops anything above its own limit of the same size.
 constexpr uint32_t MAX_WAKE_SECONDS = 600;
@@ -24,6 +46,10 @@ inline const char *failure_name(Failure failure) {
     case Failure::DOWNLOAD: return "download";
     case Failure::MEMORY: return "memory";
     case Failure::TIMEOUT: return "timeout";
+    case Failure::CLOCK: return "clock";
+    case Failure::CERTIFICATE: return "certificate";
+    case Failure::APPROVAL: return "approval";
+    case Failure::UNRECOGNISED: return "unrecognised";
     default: return nullptr;
   }
 }
@@ -48,7 +74,7 @@ constexpr Last EMPTY = {MAGIC, Failure::NONE, 0, false};
 // Memory that survives a software reset (an update over the air) may hold a layout from another firmware, so
 // it is checked before it is believed.
 inline bool valid(const Last &last) {
-  return last.magic == MAGIC && static_cast<uint8_t>(last.failure) <= static_cast<uint8_t>(Failure::TIMEOUT);
+  return last.magic == MAGIC && static_cast<uint8_t>(last.failure) <= static_cast<uint8_t>(LAST_FAILURE);
 }
 
 // A failed wake, and why.

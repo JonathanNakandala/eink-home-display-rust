@@ -1,7 +1,15 @@
+#include <array>
+#include <string>
+#include <vector>
+
 #include "check.h"
 #include "../eink_report.h"
 
 using namespace eink_report;
+
+static const std::array<Failure, 9> ALL_FAILURES = {Failure::WIFI,        Failure::SERVER,   Failure::DOWNLOAD,
+                                                    Failure::MEMORY,      Failure::TIMEOUT,  Failure::CLOCK,
+                                                    Failure::CERTIFICATE, Failure::APPROVAL, Failure::UNRECOGNISED};
 
 static const Battery GOOD = {true, 3712, 47, "ok"};
 static const Battery NONE_KNOWN = {false, 0, 0, "ok"};
@@ -32,13 +40,28 @@ TEST(a_battery_that_could_not_be_read_is_left_out) {
 }
 
 TEST(every_failure_is_set_and_reported_and_none_is_absent) {
-  for (Failure failure : {Failure::WIFI, Failure::SERVER, Failure::DOWNLOAD, Failure::MEMORY, Failure::TIMEOUT}) {
+  for (Failure failure : ALL_FAILURES) {
     Last last = EMPTY;
     set_failure(last, failure);
     CHECK(query("a", 1, NONE_KNOWN, 0, last).find(std::string("&last_failure=") + failure_name(failure)) !=
           std::string::npos);
   }
   CHECK_EQ(query("a", 0, NONE_KNOWN, 0, EMPTY).find("last_failure"), std::string::npos);
+}
+
+TEST(every_failure_has_its_own_name_and_nothing_beyond_the_last_does) {
+  std::vector<std::string> seen;
+  for (uint8_t value = 1; value <= static_cast<uint8_t>(LAST_FAILURE); value++) {
+    const char *name = failure_name(static_cast<Failure>(value));
+    CHECK(name != nullptr);
+    if (name == nullptr)
+      continue;
+    for (const std::string &other : seen)
+      CHECK(other != name);
+    seen.push_back(name);
+  }
+  CHECK_EQ(seen.size(), ALL_FAILURES.size());
+  CHECK(failure_name(static_cast<Failure>(static_cast<uint8_t>(LAST_FAILURE) + 1)) == nullptr);
 }
 
 TEST(a_failure_the_log_can_always_name) {
@@ -48,12 +71,16 @@ TEST(a_failure_the_log_can_always_name) {
 }
 
 TEST(the_failure_names_match_what_the_server_understands) {
-  // src/application/devices.rs, FailureReason::as_str.
+  // src/application/devices.rs, FailureReason::as_str: the same nine, pinned there too.
   CHECK_EQ(std::string(failure_name(Failure::WIFI)), "wifi");
   CHECK_EQ(std::string(failure_name(Failure::SERVER)), "server");
   CHECK_EQ(std::string(failure_name(Failure::DOWNLOAD)), "download");
   CHECK_EQ(std::string(failure_name(Failure::MEMORY)), "memory");
   CHECK_EQ(std::string(failure_name(Failure::TIMEOUT)), "timeout");
+  CHECK_EQ(std::string(failure_name(Failure::CLOCK)), "clock");
+  CHECK_EQ(std::string(failure_name(Failure::CERTIFICATE)), "certificate");
+  CHECK_EQ(std::string(failure_name(Failure::APPROVAL)), "approval");
+  CHECK_EQ(std::string(failure_name(Failure::UNRECOGNISED)), "unrecognised");
   CHECK(failure_name(Failure::NONE) == nullptr);
   CHECK(failure_name(static_cast<Failure>(200)) == nullptr);
 }

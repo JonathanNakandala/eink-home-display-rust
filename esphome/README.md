@@ -336,6 +336,21 @@ right path:
 | The download or decode failed after `/plan` answered | `download` | No lookup, since the server just answered. Notice: `Last update failed @ ...` |
 | The wake hadn't finished after `wake_timeout` (110 s) | `timeout` | A hang, such as a server that accepts the connection and goes quiet. No notice, since the panel's state is unknown. It stands down once the image has downloaded, the wake has succeeded or it has given up for another reason. |
 
+Four more reasons are reserved for the secure transport, which does not exist in the firmware yet. The server
+already understands them (`FailureReason` in `src/application/devices.rs`, listed in `/status` and `/metrics`), and both
+sides pin the same nine names in their tests:
+
+| `fail_reason` | Meaning | Notice |
+|---|---|---|
+| `clock` | The clock isn't set, so no certificate can be checked and nothing that needs one is tried | `Clock not set` |
+| `certificate` | A certificate was refused: the server's by the display, or the display's by the server | `Certificate refused @ ...` |
+| `approval` | Asked to join; waiting for the owner to type the code in at the server | `Waiting for approval @ ...` |
+| `unrecognised` | The server does not know this display's key (erased, or replaced): the owner must approve it again | `Not recognised - ask the owner to approve` |
+
+A display that cannot join over HTTPS can still report these over plain HTTP, as the next wake that gets through,
+when the server also serves plain HTTP (`prefer-https`); an HTTPS-only server shows the same thing as the display's
+standing in the certificate authority.
+
 The memory check compares the largest free PSRAM block with the decoded image (1872 x 1404 bytes) plus
 96 KB, and the log says what was needed and what was free. Each failure counts towards the backoff below,
 and the log line `Failure N in a row (reason)` names the stage.

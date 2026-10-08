@@ -73,15 +73,27 @@ pub enum FailureReason {
     Memory,
     /// The wake hung and was cut off.
     Timeout,
+    /// The clock wasn't set, so no certificate could be checked and nothing that needs one was tried.
+    Clock,
+    /// A certificate was refused: the server's wasn't trusted, or the display's wasn't accepted.
+    Certificate,
+    /// The display asked to join and is waiting for the owner to approve it.
+    Approval,
+    /// The server doesn't know the display's key (it was erased, or replaced): the owner has to approve it again.
+    Unrecognised,
 }
 
 impl FailureReason {
-    pub const ALL: [FailureReason; 5] = [
+    pub const ALL: [FailureReason; 9] = [
         Self::Wifi,
         Self::Server,
         Self::Download,
         Self::Memory,
         Self::Timeout,
+        Self::Clock,
+        Self::Certificate,
+        Self::Approval,
+        Self::Unrecognised,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -91,6 +103,10 @@ impl FailureReason {
             Self::Download => "download",
             Self::Memory => "memory",
             Self::Timeout => "timeout",
+            Self::Clock => "clock",
+            Self::Certificate => "certificate",
+            Self::Approval => "approval",
+            Self::Unrecognised => "unrecognised",
         }
     }
 
@@ -500,6 +516,30 @@ mod tests {
         assert_eq!(parsed.battery_percent, None);
         assert_eq!(parsed.battery_state, None);
         assert_eq!(parsed.failed_wakes, None);
+    }
+
+    #[test]
+    fn the_failure_names_are_the_ones_the_firmware_sends() {
+        // esphome/tests/report_test.cpp pins the same list on the other side, so a name changed on one fails a test
+        // on the other.
+        let names: Vec<_> = FailureReason::ALL
+            .iter()
+            .map(|reason| reason.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "wifi",
+                "server",
+                "download",
+                "memory",
+                "timeout",
+                "clock",
+                "certificate",
+                "approval",
+                "unrecognised"
+            ]
+        );
     }
 
     #[test]

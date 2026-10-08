@@ -78,9 +78,32 @@ TEST(a_failure_notice_names_the_cause_and_the_time_only_when_it_is_known) {
   CHECK_EQ(failure_notice(Failure::WIFI, false, 0, false, 0), "No Wi-Fi");
   CHECK_EQ(failure_notice(Failure::NONE, true, now, true, 0), "Last update failed @ 12:34");
   CHECK_EQ(failure_notice(Failure::DOWNLOAD, true, now, true, 0), "Last update failed @ 12:34");
+  CHECK_EQ(failure_notice(Failure::TIMEOUT, true, now, true, 0), "Last update failed @ 12:34");
+  // What the secure transport reports, each in its own words.
+  CHECK_EQ(failure_notice(Failure::CLOCK, false, 0, false, 0), "Clock not set");
+  CHECK_EQ(failure_notice(Failure::CERTIFICATE, true, now, true, 0), "Certificate refused @ 12:34");
+  CHECK_EQ(failure_notice(Failure::APPROVAL, true, now, true, 3600), "Waiting for approval @ 13:34");
+  CHECK_EQ(failure_notice(Failure::UNRECOGNISED, false, 0, false, 0), "Not recognised - ask the owner to approve");
 }
 
 TEST(the_stale_notice_says_how_old_the_image_is) {
   CHECK_EQ(stale_notice(0), "Out of date: rendered under 1 min ago");
   CHECK_EQ(stale_notice(3 * 3600 + 20 * 60), "Out of date: rendered 3 h 20 min ago");
+}
+
+// The font on the panel has only these glyphs (packages/display.yaml, `glyphs:`); a character outside them would be
+// drawn as nothing, so a notice must be made only of them.
+static const std::string NOTICE_GLYPHS = " :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+TEST(every_notice_is_made_only_of_glyphs_the_font_has) {
+  using eink_report::LAST_FAILURE;
+  const int64_t now = 1791376496;
+  for (uint8_t value = 0; value <= static_cast<uint8_t>(LAST_FAILURE); value++) {
+    for (bool known : {true, false}) {
+      const std::string text = failure_notice(static_cast<Failure>(value), known, now, known, 3600);
+      CHECK(text.find_first_not_of(NOTICE_GLYPHS) == std::string::npos);
+    }
+  }
+  CHECK(stale_notice(3 * 3600 + 20 * 60).find_first_not_of(NOTICE_GLYPHS) == std::string::npos);
+  CHECK(std::string("Battery empty - charge to resume").find_first_not_of(NOTICE_GLYPHS) == std::string::npos);
 }
