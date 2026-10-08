@@ -1405,3 +1405,155 @@ async fn a_head_with_a_sensible_number_of_headers_of_a_sensible_size_is_still_se
         200
     );
 }
+
+#[tokio::test]
+async fn one_source_can_not_hold_all_the_connections() {
+    let harness = start_with(false, |s| s.max_connections_per_source = 2).await;
+    // Everything here comes from one address. Two idle connections are all it may have, though the server has room.
+    let a = connect(&harness, Trust::Anything, None).await;
+    let b = connect(&harness, Trust::Anything, None).await;
+    let tcp = TcpStream::connect(harness.address).await.unwrap();
+    let third = TlsConnector::from(Arc::new(client_config(
+        Trust::Anything,
+        None,
+        &[&rustls::version::TLS13],
+    )))
+    .connect(ServerName::try_from("localhost").unwrap(), tcp)
+    .await;
+    assert!(third.is_err(), "a third from the same source is dropped");
+    // A place given back is a place the source may use again.
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut again = connect(&harness, Trust::Anything, None).await;
+    assert_eq!(
+        send(&mut again, "GET", CSRATTRS, None, b"").await.status,
+        200
+    );
+    drop(b);
+}
+
+#[tokio::test]
+async fn one_source_can_not_fill_the_places_for_waiting_displays() {
+    let harness = start_with(false, |s| s.max_names_per_source = 2).await;
+    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    let authority = harness.authority.certificate().to_vec();
+    let trust = || Trust::Authority(&authority);
+    let kitchen = new_key();
+
+    assert_eq!(
+        enroll(&harness, trust(), "kitchen", &kitchen).await.status,
+        202
+    );
+    assert_eq!(
+        enroll(&harness, trust(), "hall", &new_key()).await.status,
+        202
+    );
+    // A third name from the same source is one too many, and says to wait and how long.
+    let refused = enroll(&harness, trust(), "study", &new_key()).await;
+    assert_eq!(refused.status, 429, "{}", refused.text());
+    assert_eq!(refused.header("retry-after"), Some("600"));
+    // It made nothing wait: the places are for displays, not for what is turned away.
+    let waiting: Vec<_> = harness
+        .enrollment
+        .pairings()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.device.to_string())
+        .collect();
+    assert_eq!(waiting.len(), 2, "{waiting:?}");
+    assert!(!waiting.contains(&"study".to_owned()));
+    // A display already waiting asks again as often as it likes.
+    for _ in 0..5 {
+        assert_eq!(
+            enroll(&harness, trust(), "kitchen", &kitchen).await.status,
+            202
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_request_that_is_not_signed_does_not_count_against_the_names_a_source_may_ask_as() {
+    let harness = start_with(false, |s| s.max_names_per_source = 1).await;
+    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    let authority = harness.authority.certificate().to_vec();
+    // Nonsense in the right wrapper is refused for what it is, however many times.
+    for _ in 0..3 {
+        let mut stream = connect(&harness, Trust::Authority(&authority), None).await;
+        let junk = send(
+            &mut stream,
+            "POST",
+            ENROLL,
+            Some(PKCS10),
+            STANDARD.encode(b"hello").as_bytes(),
+        )
+        .await;
+        assert_eq!(junk.status, 400);
+    }
+    assert_eq!(
+        enroll(
+            &harness,
+            Trust::Authority(&authority),
+            "kitchen",
+            &new_key()
+        )
+        .await
+        .status,
+        202
+    );
+}
+
+#[tokio::test]
+async fn someone_asking_to_join_is_not_told_which_names_the_server_knows() {
+    let harness = start().await;
+    let authority = harness.authority.certificate().to_vec();
+    let trust = || Trust::Authority(&authority);
+
+    // Window closed: nobody is accepted.
+    let closed = enroll(&harness, trust(), "garage", &new_key()).await;
+    // A display the owner turned down.
+    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    let turned_down_key = new_key();
+    enroll(&harness, trust(), "attic", &turned_down_key).await;
+    harness.enrollment.reject(&device("attic")).await.unwrap();
+    let rejected = enroll(&harness, trust(), "attic", &turned_down_key).await;
+    // A member that was revoked.
+    let revoked_key = new_key();
+    let code = PairingCode::derive(
+        &Fingerprint::of(&authority),
+        &device("cellar"),
+        &PublicKey::from_der(revoked_key.subject_public_key_info()),
+    );
+    enroll(&harness, trust(), "cellar", &revoked_key).await;
+    harness
+        .enrollment
+        .approve(&device("cellar"), &code)
+        .await
+        .unwrap();
+    let granted = enroll(&harness, trust(), "cellar", &revoked_key).await;
+    assert_eq!(granted.status, 200);
+    harness.enrollment.revoke(&device("cellar")).await.unwrap();
+    let revoked = enroll(&harness, trust(), "cellar", &revoked_key).await;
+
+    for refusal in [&closed, &rejected, &revoked] {
+        assert_eq!(refusal.status, 403, "{}", refusal.text());
+        assert_eq!(refusal.text(), "The request was refused\n");
+    }
+}
+
+#[tokio::test]
+async fn a_display_that_showed_its_certificate_is_told_why_it_was_refused() {
+    let harness = start().await;
+    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    let key = new_key();
+    let identity = join(&harness, "kitchen", key).await;
+    harness.enrollment.revoke(&device("kitchen")).await.unwrap();
+    let after = renew_as(&harness, &identity, "kitchen").await;
+    assert_eq!(after.status, 403);
+    assert_ne!(
+        after.text(),
+        "The request was refused\n",
+        "{}",
+        after.text()
+    );
+}

@@ -632,6 +632,7 @@ fn nothing_is_signed_under_an_intermediate_that_has_ended() {
 
 mod saved {
     use super::*;
+    use crate::domain::services::clock::earliest_plausible;
 
     fn files(directory: &std::path::Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(directory)
@@ -640,6 +641,48 @@ mod saved {
             .collect();
         names.sort();
         names
+    }
+
+    fn unset() -> DateTime<Utc> {
+        // What a machine with no real-time clock reads until a time service sets it.
+        Utc.with_ymd_and_hms(1970, 1, 1, 0, 5, 0).unwrap()
+    }
+
+    #[test]
+    fn no_authority_is_made_on_a_clock_that_has_not_been_set_and_nothing_is_left_behind() {
+        let parent = tempfile::tempdir().unwrap();
+        let directory = parent.path().join("pki");
+        let error = storage::create_all(&directory, unset())
+            .err()
+            .expect("should refuse")
+            .to_string();
+        assert!(error.contains("can't be right"), "{error}");
+        assert!(!directory.exists(), "a refusal makes nothing");
+        // The earliest plausible time is the first that is allowed; a second before it is not.
+        assert!(
+            storage::create_all(&directory, earliest_plausible() - Duration::seconds(1)).is_err()
+        );
+        assert!(!directory.exists());
+        storage::create_all(&directory, earliest_plausible()).unwrap();
+        assert_eq!(files(&directory).len(), 3);
+    }
+
+    #[test]
+    fn no_intermediate_is_signed_on_a_clock_that_has_not_been_set_and_the_files_are_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        open(directory.path(), Create::IfMissing).unwrap();
+        let before = std::fs::read_to_string(directory.path().join("intermediate.pem")).unwrap();
+        let error = storage::rotate_intermediate_at(directory.path(), None, unset())
+            .expect_err("should refuse")
+            .to_string();
+        assert!(error.contains("can't be right"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("intermediate.pem")).unwrap(),
+            before
+        );
+        assert!(!directory.path().join("retired.pem").exists());
+        storage::rotate_intermediate_at(directory.path(), None, Utc::now()).unwrap();
+        assert!(directory.path().join("retired.pem").exists());
     }
 
     #[test]

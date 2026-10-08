@@ -20,9 +20,10 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, anyhow};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use super::{PrivateAuthority, ROTATE_WITHIN, new_intermediate};
+use crate::domain::services::clock::{earliest_plausible, implausible};
 
 const ROOT_CERTIFICATE: &str = "root.pem";
 const ROOT_KEY: &str = "root.key";
@@ -94,7 +95,7 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
                 "There is no certificate authority in {}",
                 directory.display()
             )),
-            Create::IfMissing => create_all(directory),
+            Create::IfMissing => create_all(directory, Utc::now()),
         },
         _ => Err(anyhow!(
             "{} is only partly there (it needs {ROOT_CERTIFICATE} and {INTERMEDIATE}, and {ROOT_KEY} to replace \
@@ -123,7 +124,21 @@ fn load(directory: &Path) -> anyhow::Result<PrivateAuthority> {
     .with_context(|| format!("The authority in {} is not usable", directory.display()))
 }
 
-fn create_all(directory: &Path) -> anyhow::Result<PrivateAuthority> {
+/// Refuses a time that is before this program existed. The authority is made from the system clock, and a machine
+/// with no real-time clock reads 1970 until a time service sets it. A root dated from then would end in 1990 and
+/// every display that pinned it would refuse it once its own clock was right, with pairing them all again the only
+/// way out; an intermediate dated from then would be refused the same way. So nothing is made until the clock is set
+/// (under systemd the start is tried again after a pause).
+fn require_plausible(now: DateTime<Utc>) -> anyhow::Result<()> {
+    if now < earliest_plausible() {
+        return Err(anyhow!(implausible(now)));
+    }
+    Ok(())
+}
+
+pub(super) fn create_all(directory: &Path, now: DateTime<Utc>) -> anyhow::Result<PrivateAuthority> {
+    // Before anything is made, so a refusal leaves no directory behind.
+    require_plausible(now)?;
     fs::create_dir_all(directory)
         .with_context(|| format!("Failed to create {}", directory.display()))?;
     // Holds the keys, so no one else needs to see in.
@@ -133,7 +148,7 @@ fn create_all(directory: &Path) -> anyhow::Result<PrivateAuthority> {
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
             .with_context(|| format!("Failed to restrict {}", directory.display()))?;
     }
-    let (authority, files) = PrivateAuthority::generate(Utc::now())?;
+    let (authority, files) = PrivateAuthority::generate(now)?;
     // The root's key first and the intermediate last. Without the intermediate nothing has been signed,
     // so a crash before it is a start that can be repeated; and with it, the authority is whole.
     write_atomically(&directory.join(ROOT_KEY), &files.root_key, true)?;
@@ -157,6 +172,15 @@ fn create_all(directory: &Path) -> anyhow::Result<PrivateAuthority> {
 /// The two files change one after the other, each whole or not at all: the retired list first, so that a
 /// crash between them leaves the old intermediate still in use and also kept, which is harmless.
 pub fn rotate_intermediate(directory: &Path, root_key: Option<&Path>) -> anyhow::Result<()> {
+    rotate_intermediate_at(directory, root_key, Utc::now())
+}
+
+pub(super) fn rotate_intermediate_at(
+    directory: &Path,
+    root_key: Option<&Path>,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    require_plausible(now)?;
     let key_path = root_key
         .map(Path::to_path_buf)
         .unwrap_or_else(|| directory.join(ROOT_KEY));
@@ -164,7 +188,7 @@ pub fn rotate_intermediate(directory: &Path, root_key: Option<&Path>) -> anyhow:
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))
     };
     let root_certificate = read(&directory.join(ROOT_CERTIFICATE))?;
-    let new = new_intermediate(&root_certificate, &read(&key_path)?, Utc::now())?;
+    let new = new_intermediate(&root_certificate, &read(&key_path)?, now)?;
 
     let intermediate_path = directory.join(INTERMEDIATE);
     if intermediate_path.exists() {
