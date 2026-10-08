@@ -39,7 +39,7 @@ compile: secrets.yaml
 
 # The C++ is held to .clang-format, and the helper script to ruff (configured in ../pyproject.toml), which is the style it is already written in. `lint` fails on a difference and
 # `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
-CPP := $(wildcard eink_*.h) $(wildcard tests/*.cpp) tests/check.h
+CPP := $(wildcard eink_*.h) $(wildcard tests/*.cpp) tests/check.h $(wildcard host/*.cpp)
 
 .PHONY: lint
 lint:
@@ -58,6 +58,21 @@ format:
 .PHONY: vscode
 vscode:
 	$(POETRY) run python scripts/vscode_intellisense.py
+
+# mbedTLS built for the computer, from the very source ESPHome builds the chip's with (the ESP-IDF in its cache, so
+# `compile` has to have run once), and the spike that runs the display's whole TLS conversation against the real server.
+# Needs cmake and cargo. See host/README.md.
+MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/frameworks/*/components/mbedtls/mbedtls $(HOME)/.cache/esphome/idf/frameworks/*/components/mbedtls/mbedtls))
+
+.PHONY: host-tls
+host-tls:
+	@test -n "$(MBEDTLS_SRC)" || { echo "mbedTLS source not found: run 'make compile' first, or set MBEDTLS_SRC" >&2; exit 1; }
+	cmake -S host -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
+	cmake --build build/host --target spike_tls
+
+.PHONY: spike
+spike: host-tls
+	host/run_spike.sh
 
 .PHONY: clean
 clean:

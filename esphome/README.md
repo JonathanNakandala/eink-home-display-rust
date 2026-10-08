@@ -197,8 +197,9 @@ certificate authority, the server's root, which it gets in one of the two ways u
 below. The server sends two certificates in the handshake (its own and the intermediate, about 480 bytes each),
 ECDSA on P-256, and the display builds the path to the root it pins. The intermediate is replaced every few
 years, and nothing on the display changes when it is. The name matters: a display's own certificate
-has none, so it can't pass for the server to another display. (Whether mbedTLS here can check a name other than
-the address connected to is to be verified on a device.)
+has none, so it can't pass for the server to another display. (mbedTLS can check a name other than the address
+connected to, with `mbedtls_ssl_set_hostname`: shown by [host/](host/README.md), which runs the display's side of this
+against the real server on a computer. Heap and speed on the chip are still to be measured.)
 
 **Which root the display trusts.** There are two ways, and only the first step of joining differs:
 
@@ -221,9 +222,11 @@ falls back to fetching one.
 1. First wake with no root stored (and none compiled in): connect to `tlsport` **without verifying the server** and `GET cacerts`.
    The body is base64 of a DER CMS `SignedData` (`certs-only`) holding two certificates: the **root** and the
    **intermediate** under it. Pick out the root, the one that is self-signed (its subject and issuer are the
-   same and its signature checks against its own key), and keep only that, in memory for now. Ignore the
+   same and its signature checks against its own key), and keep only that, in memory for now. Do not keep the
    intermediate: the server sends it with its own certificate in every handshake, and completes a display's
-   path itself, so the display never needs to keep or send one. (With `server_root` set this step is skipped.)
+   path itself, so the display never has to keep or send one. (It does need it once, to check the certificate it is
+   given: that comes alone, and the intermediate is taken from the handshake it arrived on, see [host/](host/README.md).)
+   (With `server_root` set this step is skipped.)
 2. Make an ECDSA P-256 key (kept in flash, never leaves the display, not regenerated on renewal) and a PKCS #10
    request signed with ECDSA and SHA-256, with the display's name (the same name it sends as `device=`) as its
    only common name. Other fields are ignored. If the server's `csrattrs` includes the challenge-password OID, put
@@ -436,6 +439,9 @@ default), run each for a day, and compare `eink_device_last_wake_seconds` in `/m
 `eink_device_wifi_rssi_dbm`, rather than assuming.
 
 ## Tests
+
+The TLS side is also run against a real server on a computer, with the same mbedTLS the chip is built with:
+`make -C esphome spike` (see [host/README.md](host/README.md) for what it shows and what it does not).
 
 The calculations are kept apart from the hardware so they can be tested on a computer, with no board and no
 ESPHome install, just a C++17 compiler:
