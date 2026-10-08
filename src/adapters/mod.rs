@@ -1,3 +1,4 @@
+pub mod authenticated;
 pub mod certificate_authority;
 pub mod clock;
 pub mod departures;

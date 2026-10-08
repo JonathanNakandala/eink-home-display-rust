@@ -55,6 +55,53 @@ only the AAAA records for a specific IPv6 address. The log line at start-up says
   `avahi-resolve -n <instance-name>.local` (Linux).
 - Clients may log IPv4 peers as `::ffff:192.168.0.5`; that is the same address.
 
+## Plain HTTP, HTTPS, or both
+
+`[server] transport` chooses how displays reach the server. The default is `"http"`, which is how it has
+always worked, so a configuration without it changes nothing.
+
+| `transport` | Listens | Who is served | Protects against |
+|---|---|---|---|
+| `"http"` | plain HTTP on `bind` | everyone | nothing: anyone on the network can read the picture or pose as the server |
+| `"prefer-https"` | plain HTTP on `bind`, and HTTPS on `[server.tls] bind` | everyone; over HTTPS a display that has joined is known by its certificate | someone listening, for displays that use HTTPS |
+| `"https"` | HTTPS only | only displays that have joined (the way in is open so they can) | someone listening, and someone sending a display to plain HTTP |
+
+`prefer-https` is for moving displays over one at a time. It does not stop someone who can interfere with
+the network: they can make a display use plain HTTP, which is still there. Only `https` does, and only for
+a display that is itself set to HTTPS-only in its firmware (see [esphome/README.md](../esphome/README.md)),
+since that is the only display certain never to fall back.
+
+```toml
+[server]
+transport = "prefer-https"      # "http" (default), "prefer-https" or "https"
+
+[server.tls]
+bind = "[::]:8443"
+directory = "pki"               # the authority and the list of displays; back it up
+names = ["eink.local"]          # what displays connect to; left out: <instance_name>.local and localhost
+```
+
+- **The authority.** The first start in either HTTPS mode makes a private certificate authority in
+  `[server.tls] directory`: `authority.pem` (public: what displays are given to trust the server by) and
+  `authority.key` (the secret, readable by its owner only). It lasts 20 years. **Back up the directory.**
+  Without `authority.key` every display has to be paired again; the server will not quietly make a new one if
+  only one of the two files is there. The server logs the authority's fingerprint at every start.
+- **Which displays are members** is kept in `pairings.json` in the same directory. A file that can't be read
+  stops the server from starting, instead of starting empty: forgetting the members would lock every display
+  out, or let back in one that had been revoked.
+- **Names.** A display checks the server's certificate against a name, so it must connect by a name in
+  `names` (the `.local` name announced over mDNS is there by default). The certificate is made fresh in memory,
+  lasts 90 days (`server_certificate_days`), and is replaced when a third of that is left, with no restart.
+- **A display's certificate** lasts a year (`device_certificate_days`) and the display renews it itself while it
+  is valid. Revoking a display takes effect on its next request, not when its certificate runs out; so does
+  forgetting one and pairing another under the same name.
+- **TLS 1.3 only.** Older versions are refused.
+- **Announced over mDNS** beside the service, for a display to find: `tlsport` (where HTTPS is) and `secure`
+  (`optional` when plain HTTP is served too, `required` when it is not). With `https` the service itself points at
+  the HTTPS port.
+- **Monitoring with `https`.** `/healthz`, `/status` and `/metrics` are display routes like the rest, so with
+  `https` they need a member's certificate too. A monitor outside the network of displays can't reach them.
+
 ## Timezone
 
 Set `timezone = "Europe/London"` (any IANA name, such as `America/New_York` or `Australia/Sydney`) under `[location]`.

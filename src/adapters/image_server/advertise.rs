@@ -19,6 +19,15 @@ const SERVICE_SUBTYPE: &str = "_eink-display._sub._http._tcp.local.";
 const MAX_LABEL_BYTES: usize = 63;
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// The HTTPS the server offers, announced beside the service so a display finds it without being told.
+/// `tlsport` is where; `secure` says whether plain HTTP is served too (`optional`) or not (`required`).
+/// A display that has joined uses HTTPS when it is offered, and one set to HTTPS-only uses nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecureOffer {
+    pub port: u16,
+    pub required: bool,
+}
+
 /// A registered service. Dropping it withdraws the service with a goodbye (a record with a
 /// zero TTL, RFC 6762 section 8.4), so scans stop listing it at once instead of after the TTL.
 pub struct Advertisement {
@@ -32,8 +41,9 @@ impl Advertisement {
         port: u16,
         format: ImageFormat,
         families: Families,
+        secure: Option<SecureOffer>,
     ) -> anyhow::Result<Self> {
-        let info = service_info(settings, port, format, families)?;
+        let info = service_info(settings, port, format, families, secure)?;
         let fullname = info.get_fullname().to_owned();
         let daemon = ServiceDaemon::new().context("Failed to start the mDNS responder")?;
         // Nothing to announce on loopback, and no use listening for an IP version that isn't served.
@@ -99,6 +109,7 @@ fn service_info(
     port: u16,
     format: ImageFormat,
     families: Families,
+    secure: Option<SecureOffer>,
 ) -> anyhow::Result<ServiceInfo> {
     let name = settings.instance_name.trim();
     if name.is_empty() || name.len() > MAX_LABEL_BYTES {
@@ -112,13 +123,25 @@ fn service_info(
     // `format` is what is served now, and `formats` everything it can serve (set by display.image_format),
     // for whoever is looking at a scan. The display doesn't use either: it decodes by Content-Type.
     let formats = ImageFormat::ALL.map(ImageFormat::extension).join(",");
-    let txt = [
+    let tls_port = secure.map(|offer| offer.port.to_string());
+    let mut txt = vec![
         ("txtvers", "1"),
         ("path", "/image"),
         ("format", format.extension()),
         ("formats", formats.as_str()),
         ("version", env!("CARGO_PKG_VERSION")),
     ];
+    if let (Some(offer), Some(port)) = (secure, tls_port.as_deref()) {
+        txt.push(("tlsport", port));
+        txt.push((
+            "secure",
+            if offer.required {
+                "required"
+            } else {
+                "optional"
+            },
+        ));
+    }
 
     let ip = settings.bind.ip();
     let mut info = if ip.is_unspecified() {
@@ -145,6 +168,12 @@ fn service_info(
 fn is_loopback_interface(name: &str) -> bool {
     name.strip_prefix("lo")
         .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The host name the server announces for itself (`<label>.local`), which is also what a display
+/// reaches it by and what its certificate has to be for.
+pub fn mdns_host_name(instance_name: &str) -> String {
+    format!("{}.local", host_label(instance_name.trim()))
 }
 
 /// A DNS host label from a display name: lowercase letters, digits and single hyphens.
@@ -216,7 +245,7 @@ mod tests {
     #[test]
     fn describes_an_http_service_with_a_subtype_and_a_path() {
         let config = settings();
-        let info = service_info(&config, 8080, ImageFormat::Png, Families::Both).unwrap();
+        let info = service_info(&config, 8080, ImageFormat::Png, Families::Both, None).unwrap();
 
         assert_eq!(info.get_fullname(), "E-ink home display._http._tcp.local.");
         assert_eq!(info.get_type(), "_http._tcp.local.");
@@ -231,12 +260,60 @@ mod tests {
     }
 
     #[test]
+    fn plain_http_announces_no_https() {
+        let info = service_info(&settings(), 8080, ImageFormat::Png, Families::Both, None).unwrap();
+        assert_eq!(info.get_property_val_str("tlsport"), None);
+        assert_eq!(info.get_property_val_str("secure"), None);
+    }
+
+    #[test]
+    fn offering_https_beside_http_says_where_and_that_http_is_still_there() {
+        let offer = SecureOffer {
+            port: 8443,
+            required: false,
+        };
+        let info = service_info(
+            &settings(),
+            8080,
+            ImageFormat::Png,
+            Families::Both,
+            Some(offer),
+        )
+        .unwrap();
+        assert_eq!(info.get_port(), 8080);
+        assert_eq!(info.get_property_val_str("tlsport"), Some("8443"));
+        assert_eq!(info.get_property_val_str("secure"), Some("optional"));
+        // What was announced before is unchanged.
+        assert_eq!(info.get_property_val_str("path"), Some("/image"));
+        assert_eq!(info.get_property_val_str("txtvers"), Some("1"));
+    }
+
+    #[test]
+    fn https_only_is_announced_on_the_https_port_and_as_required() {
+        let offer = SecureOffer {
+            port: 8443,
+            required: true,
+        };
+        let info = service_info(
+            &settings(),
+            8443,
+            ImageFormat::Png,
+            Families::Both,
+            Some(offer),
+        )
+        .unwrap();
+        assert_eq!(info.get_port(), 8443);
+        assert_eq!(info.get_property_val_str("tlsport"), Some("8443"));
+        assert_eq!(info.get_property_val_str("secure"), Some("required"));
+    }
+
+    #[test]
     fn a_specific_bind_address_is_announced_as_is() {
         let config = ServerSettings {
             bind: "192.168.1.5:9000".parse().unwrap(),
             ..settings()
         };
-        let info = service_info(&config, 9000, ImageFormat::Bmp, Families::V4).unwrap();
+        let info = service_info(&config, 9000, ImageFormat::Bmp, Families::V4, None).unwrap();
 
         assert!(!info.is_addr_auto());
         assert!(
@@ -251,7 +328,7 @@ mod tests {
             bind: "[fd00::5]:9000".parse().unwrap(),
             ..settings()
         };
-        let info = service_info(&config, 9000, ImageFormat::Bmp, Families::V6).unwrap();
+        let info = service_info(&config, 9000, ImageFormat::Bmp, Families::V6, None).unwrap();
 
         assert!(!info.is_addr_auto());
         assert!(
@@ -268,7 +345,7 @@ mod tests {
                 ..settings()
             };
             assert!(
-                service_info(&config, 80, ImageFormat::Bmp, Families::Both).is_err(),
+                service_info(&config, 80, ImageFormat::Bmp, Families::Both, None).is_err(),
                 "{name:?}"
             );
         }
@@ -284,7 +361,7 @@ mod tests {
             ..settings()
         };
         let advertisement =
-            Advertisement::start(&config, 18080, ImageFormat::Bmp, Families::Both).unwrap();
+            Advertisement::start(&config, 18080, ImageFormat::Bmp, Families::Both, None).unwrap();
 
         let scanner = ServiceDaemon::new().unwrap();
         let found = scanner.browse("_http._tcp.local.").unwrap();
