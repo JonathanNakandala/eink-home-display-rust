@@ -23,6 +23,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tower_http::timeout::TimeoutLayer;
 
+use super::limits::Limits;
 use super::wire;
 use crate::application::enrollment::{EnrollError, Enrollment, Outcome, Refusal};
 use crate::domain::models::device_id::DeviceId;
@@ -56,12 +57,14 @@ pub struct Connection {
 struct Est {
     enrollment: Arc<Enrollment>,
     authority: Arc<dyn CertificateAuthority>,
+    limits: Arc<Limits>,
 }
 
 pub fn router(
     enrollment: Arc<Enrollment>,
     authority: Arc<dyn CertificateAuthority>,
     request_timeout: std::time::Duration,
+    limits: Arc<Limits>,
 ) -> Router {
     Router::new()
         .route(&format!("{BASE}/cacerts"), get(cacerts))
@@ -76,6 +79,7 @@ pub fn router(
         .with_state(Arc::new(Est {
             enrollment,
             authority,
+            limits,
         }))
 }
 
@@ -153,6 +157,27 @@ async fn simple_enroll(
         Ok(der) => der,
         Err((status, message)) => return text(status, message),
     };
+    // Anyone may get this far, so what one source can ask for is bounded. Only a request that is signed by the key it
+    // names counts: a request that isn't can't make anything wait, and is refused below with the reason.
+    if let (Some(peer), Ok(asked)) = (connection.peer, est.authority.inspect(&der))
+        && let Err(wait) = est.limits.allow_name(peer.ip(), &asked.device)
+    {
+        if est.limits.may_warn() {
+            log::warn!(
+                "{} has asked to join under more names than one source may; turned away",
+                from(&connection)
+            );
+        }
+        let mut response = text(StatusCode::TOO_MANY_REQUESTS, REFUSED);
+        response.headers_mut().insert(
+            RETRY_AFTER,
+            wait.as_secs()
+                .to_string()
+                .parse()
+                .expect("a number is a header value"),
+        );
+        return response;
+    }
     match est
         .enrollment
         .enroll(&der, connection.binding.as_deref())
@@ -171,7 +196,7 @@ async fn simple_enroll(
             )
                 .into_response()
         }
-        Err(e) => failure(e, &connection),
+        Err(e) => failure(&est, e, &connection, Disclose::No),
     }
 }
 
@@ -204,7 +229,7 @@ async fn simple_reenroll(
         .await
     {
         Ok(certificate) => issued(&certificate),
-        Err(e) => failure(e, &connection),
+        Err(e) => failure(&est, e, &connection, Disclose::Yes),
     }
 }
 
@@ -220,12 +245,27 @@ fn issued(certificate: &IssuedCertificate) -> Response {
     certificates(&[certificate.der.as_slice()])
 }
 
-/// How a refusal reads to the display. The text says why, for whoever reads the display's log; the
-/// status says whether to try again (a 4xx means the request itself must change).
-fn failure(error: EnrollError, connection: &Connection) -> Response {
+/// What the answer to a refusal says of why.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Disclose {
+    /// The caller showed a certificate from the authority, so it is a display that was here: it may be told.
+    Yes,
+    /// The caller is anyone. What it is told must not depend on what the server knows of a name, or asking
+    /// under names would show which ones are members, turned down or revoked. The log has the reason.
+    No,
+}
+
+/// What an unknown caller is told when it is refused for a reason that depends on the server's list of displays.
+const REFUSED: &str = "The request was refused";
+
+/// How a refusal reads to the display. The text says why, for whoever reads the display's log (but see
+/// `Disclose`); the status says whether to try again (a 4xx means the request itself must change).
+fn failure(est: &Est, error: EnrollError, connection: &Connection, disclose: Disclose) -> Response {
     match error {
         EnrollError::Refused(refusal) => {
-            log::warn!("EST request from {} refused: {refusal}", from(connection));
+            if est.limits.may_warn() {
+                log::warn!("EST request from {} refused: {refusal}", from(connection));
+            }
             let status = match &refusal {
                 Refusal::BadRequest(_)
                 | Refusal::ChannelBindingMissing
@@ -239,7 +279,12 @@ fn failure(error: EnrollError, connection: &Connection) -> Response {
                 | Refusal::WrongDevice => StatusCode::FORBIDDEN,
                 Refusal::TooManyPending => StatusCode::SERVICE_UNAVAILABLE,
             };
-            let mut response = text(status, &refusal.to_string());
+            let message = if disclose == Disclose::No && status == StatusCode::FORBIDDEN {
+                REFUSED.to_owned()
+            } else {
+                refusal.to_string()
+            };
+            let mut response = text(status, &message);
             if status == StatusCode::SERVICE_UNAVAILABLE {
                 response.headers_mut().insert(
                     RETRY_AFTER,

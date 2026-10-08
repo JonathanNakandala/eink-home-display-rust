@@ -9,6 +9,7 @@
 //! time for the whole connection. A client that does none of that is dropped rather than waited for.
 
 mod gate;
+mod limits;
 mod routes;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -30,6 +31,7 @@ use tokio_rustls::TlsAcceptor;
 use x509_parser::prelude::FromDer;
 
 pub use self::gate::{Access, guarded};
+use self::limits::Limits;
 pub use self::routes::{ClientIdentity, Connection};
 use self::tls::RenewingCertificate;
 use crate::adapters::certificate_authority::PrivateAuthority;
@@ -60,6 +62,11 @@ pub struct EstSettings {
     pub names: Vec<String>,
     pub certificate_lifetime: chrono::Duration,
     pub max_connections: usize,
+    /// How many of those one source (an address; an IPv6 /64) may hold, so that one stranger can't take them all.
+    pub max_connections_per_source: usize,
+    /// How many different display names one source may ask to join as in a day, so that one stranger can't take
+    /// every place for waiting requests. A display asking again under its one name does not count again.
+    pub max_names_per_source: usize,
     pub handshake_timeout: Duration,
     pub header_timeout: Duration,
     pub request_timeout: Duration,
@@ -73,6 +80,8 @@ impl Default for EstSettings {
             names: Vec::new(),
             certificate_lifetime: chrono::Duration::days(90),
             max_connections: 16,
+            max_connections_per_source: 4,
+            max_names_per_source: 4,
             handshake_timeout: Duration::from_secs(10),
             header_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(15),
@@ -101,6 +110,7 @@ pub struct EstServer {
     /// displays' are dated by the same one.
     enrollment: Arc<Enrollment>,
     certificate: Arc<RenewingCertificate>,
+    limits: Arc<Limits>,
     acceptor: TlsAcceptor,
     app: axum::Router,
 }
@@ -131,10 +141,15 @@ impl EstServer {
             settings.certificate_lifetime,
         )?);
         let config = tls::server_config(certificate.clone(), &authority)?;
+        let limits = Limits::new(
+            settings.max_connections_per_source,
+            settings.max_names_per_source,
+        );
         let mut app = routes::router(
             enrollment.clone(),
             authority.clone() as Arc<dyn CertificateAuthority>,
             settings.request_timeout,
+            limits.clone(),
         );
         if let Some(display) = display {
             app = app.merge(display);
@@ -151,6 +166,7 @@ impl EstServer {
             authority,
             enrollment,
             certificate,
+            limits,
             acceptor: TlsAcceptor::from(Arc::new(config)),
             app,
         })
@@ -174,6 +190,7 @@ impl EstServer {
             authority,
             enrollment,
             certificate,
+            limits,
             acceptor,
             app,
         } = self;
@@ -194,13 +211,18 @@ impl EstServer {
                             continue;
                         }
                     };
+                    // The source's own share first: it is what stops one stranger using up the rest.
+                    let Some(held) = limits.admit(peer.ip()) else {
+                        log::debug!("Dropped {peer}: it holds as many connections as one source may");
+                        continue;
+                    };
                     let Ok(slot) = slots.clone().try_acquire_owned() else {
                         log::debug!("Dropped {peer}: too many connections");
                         continue;
                     };
                     let (acceptor, app, settings) = (acceptor.clone(), app.clone(), settings.clone());
                     connections.spawn(async move {
-                        let _slot = slot;
+                        let (_slot, _held) = (slot, held);
                         if let Err(e) = serve_connection(stream, peer, acceptor, app, &settings).await {
                             log::debug!("EST connection from {peer} ended: {e:#}");
                         }

@@ -152,7 +152,11 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
   certificates *and the server's own*: with HTTPS on, the server will not start until the clock is set, and says
   why. Under the supplied unit it is started again after a pause (the unit also waits for `time-sync.target`). A
   clock that is corrected after start-up is noticed within a minute: a server certificate dated from the wrong
-  time is replaced then, and until it is, the old one is kept.
+  time is replaced then, and until it is, the old one is kept. **The authority is held to the same rule:** a new root
+  or intermediate is never made from a clock that reads before 2026 (a root dated from 1970 would end in 1990, and
+  every display that pinned it would have to be paired again), so a first start with `prefer-https` or `--init-pki`
+  on a machine that has not set its clock stops with a message and leaves nothing behind. Start it again once the
+  clock is right.
 - **A certificate never outlasts the intermediate that signed it.** One that would is cut short to the intermediate's
   end (and a warning says so), and once the intermediate has ended nothing is signed under it at all, with a message
   saying to put the root's key back and restart. This is what the warning at start-up about an intermediate near its
@@ -195,6 +199,14 @@ another key's request for a member's name is dropped with the member left as it 
 (eight) places for good. A display that is still asking after that asks again, with the window open, and has a fresh day.
 Members and displays you have approved never lapse.
 
+**One address can't take all the places.** Joining is open to anyone who can reach the port while the window is open, so
+each source (an address; all of an IPv6 /64 counts as one) may hold 4 connections at once and may ask to join under 4
+different display names a day. A display asking again under its one name costs nothing; a fifth name is answered `429`
+with `Retry-After: 600` and makes nothing wait. These are built in (`max_connections_per_source` and
+`max_names_per_source` in the code) and forgotten on restart. If you are pairing several displays from one machine (a
+test rig, say) and hit the limit, restart the server. Whatever a stranger asks, the answer to a refusal is the same
+words, `The request was refused`; the reason (turned down, revoked, window shut) is in the log.
+
 The socket is `admin.sock` in `[server.tls] directory`, and it is private to the user the server runs as. Two things
 keep other users out, and both are checked at start-up: the socket is created with mode 0600 (macOS ignores a mode on a
 socket, so there it is only a label), and **the directory it is in must be closed to everyone else**. A directory that
@@ -227,7 +239,7 @@ anywhere else is the server's own, which is exactly what someone in the middle w
 | `<name> asked to join` (info) | A display is waiting. Check the code on its panel, then approve. |
 | `The pairing code typed for <name> did not match` (warn) | A typo, or the code on the panel is not the one the server worked out. If you typed it carefully from the panel, **do not approve**: something may be between the display and the server. |
 | `<name> is a member, and another key asked for its name` (warn) | A display with an existing name asked again with a new key: a reflashed display, or someone trying to take its place. The member keeps working. Approve only if you meant to re-pair it. |
-| `EST request from <address> refused: …` (warn) | Someone at that address was turned away (window shut, wrong key, not a member). A few are a display retrying; a stream from an address that is not a display is worth a look. |
+| `EST request from <address> refused: …` (warn) | Someone at that address was turned away (window shut, wrong key, not a member). A few are a display retrying; a stream from an address that is not a display is worth a look. Only 10 a minute are logged one by one; `N more refusals in the last minute were not logged one by one` says how many were left out. |
 | `Turned away <name> (<address>): … not a member` (warn) | A certificate that is valid but whose display was revoked, forgotten or replaced. |
 | `The intermediate certificate ends in N days …` (warn) | The root's key is not on the machine to replace it. Put it back before then. |
 
