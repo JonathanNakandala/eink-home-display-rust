@@ -13,3 +13,5 @@ config/custom.toml
 /esphome/secrets.yaml
 /esphome/.esphome
 /esphome/build
+# ESPHome writes its own on every run, repeating the lines above
+/esphome/.gitignore

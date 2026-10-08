@@ -16,6 +16,27 @@ build/tests: $(SOURCES) $(HEADERS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES)
 
+# The firmware build tools are pinned in ../pyproject.toml and installed into ../.venv by Poetry (`poetry install` at
+# the repository root). This is not a Python project: Poetry is only how ESPHome gets installed.
+POETRY ?= poetry
+YAML := reterminal-e1003.yaml
+
+# secrets.yaml is git-ignored; `config` and `compile` need one to exist, so an example one stands in for checking.
+secrets.yaml:
+	cp secrets.example.yaml $@
+
+# Checks the YAML (every component, every !lambda's syntax of the YAML around it) in seconds. No toolchain download.
+.PHONY: check
+check: secrets.yaml
+	$(POETRY) run yamllint -c ../.yamllint.yaml $(YAML)
+	$(POETRY) run esphome config $(YAML) > /dev/null
+
+# Builds the firmware, which is what catches errors in the C++ of the lambdas and the device headers. The first run
+# fetches PlatformIO and the ESP-IDF toolchain (a few GB); later ones are incremental.
+.PHONY: compile
+compile: secrets.yaml
+	$(POETRY) run esphome compile $(YAML)
+
 .PHONY: clean
 clean:
 	rm -rf build
