@@ -70,33 +70,50 @@ impl fmt::Debug for PublicKey {
     }
 }
 
-/// How many decimal digits a code has. Twelve is about 40 bits: a short code can be matched by
-/// someone in the middle who generates keys until one gives the code they need, and at eight digits
-/// that is minutes of work for a laptop, at twelve it is not worth attempting.
-const DIGITS: usize = 12;
+/// How many characters a code has: eight of Crockford's Base32 (5 bits each) is 40 bits. A short code can
+/// be matched by someone in the middle who generates keys until one gives the code they need; at 40
+/// bits that is not worth attempting, and it is the same strength as twelve decimal digits in two thirds
+/// of the length.
+const LENGTH: usize = 8;
 const GROUP: usize = 4;
 
-/// `digits` (all ASCII, `DIGITS` of them) split into dash-separated groups.
-fn group(digits: &str) -> String {
-    (0..DIGITS)
+/// Crockford's Base32 (<https://www.crockford.com/base32.html>): digits and letters without `I`, `L`,
+/// `O` and `U`, so nothing read off a small panel can be taken for something else.
+const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// `characters` (all from `ALPHABET`, `LENGTH` of them) split into dash-separated groups.
+fn group(characters: &str) -> String {
+    (0..LENGTH)
         .step_by(GROUP)
-        .map(|start| &digits[start..start + GROUP])
+        .map(|start| &characters[start..start + GROUP])
         .collect::<Vec<_>>()
         .join("-")
 }
 
-/// The code a display shows and the owner types in, as `1234-5678-9012`.
+/// The value of a typed character, reading it as Crockford says to: any case, `I` and `L` as `1`, `O`
+/// as `0`. `U` is not a character of the alphabet and is refused.
+fn value_of(c: char) -> Option<u8> {
+    let c = match c.to_ascii_uppercase() {
+        'I' | 'L' => '1',
+        'O' => '0',
+        other => other,
+    };
+    let c = u8::try_from(c).ok()?;
+    ALPHABET.iter().position(|&a| a == c).map(|v| v as u8)
+}
+
+/// The code a display shows and the owner types in, as `B0AJ-QTW6`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PairingCode(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("a pairing code is {DIGITS} digits, like 1234-5678-9012")]
+#[error("a pairing code is {LENGTH} letters and digits, like B0AJ-QTW6")]
 pub struct InvalidPairingCode;
 
 impl PairingCode {
     /// What the display and the server each compute. It covers the authority certificate, the name the
     /// display claims and its public key, with each part's length so no two combinations give the same
-    /// input; the label keeps it from being reused as some other hash.
+    /// input; the label keeps it from being reused as some other hash. The code is the first 40 bits.
     pub fn derive(authority: &Fingerprint, device: &DeviceId, key: &PublicKey) -> Self {
         let mut hash = Sha256::new();
         hash.update(b"eink-home-display pairing code v1");
@@ -106,23 +123,35 @@ impl PairingCode {
             hash.update(part);
         }
         let digest = hash.finalize();
-        let number = u64::from_be_bytes(digest[..8].try_into().expect("a digest has 32 bytes"));
-        Self::from_number(number % 10u64.pow(DIGITS as u32))
+        let mut bytes = [0u8; 8];
+        bytes[3..].copy_from_slice(&digest[..5]);
+        Self::from_number(u64::from_be_bytes(bytes))
     }
 
-    /// The digits of `number`, padded with zeros to the full length, in groups.
+    /// The 40 bits of `number` as characters, most significant first, in groups.
     fn from_number(number: u64) -> Self {
-        let digits = format!("{number:0DIGITS$}");
-        Self(group(&digits))
+        let characters: String = (0..LENGTH)
+            .map(|i| ALPHABET[((number >> (5 * (LENGTH - 1 - i))) & 31) as usize] as char)
+            .collect();
+        Self(group(&characters))
     }
 
-    /// A code as typed: the digits, with dashes or spaces between them or none at all.
+    /// A code as typed: dashes and spaces between the characters or none, any case, and the look-alikes
+    /// (`I`, `L`, `O`) read as the digits they resemble.
     pub fn parse(text: &str) -> Result<Self, InvalidPairingCode> {
-        let digits: String = text.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
-        if digits.len() != DIGITS || !digits.chars().all(|c| c.is_ascii_digit()) {
-            return Err(InvalidPairingCode);
-        }
-        Ok(Self(group(&digits)))
+        let values: Option<Vec<u8>> = text
+            .chars()
+            .filter(|c| !matches!(c, '-' | ' '))
+            .map(value_of)
+            .collect();
+        let values = values
+            .filter(|v| v.len() == LENGTH)
+            .ok_or(InvalidPairingCode)?;
+        let characters: String = values
+            .iter()
+            .map(|&v| ALPHABET[v as usize] as char)
+            .collect();
+        Ok(Self(group(&characters)))
     }
 
     pub fn as_str(&self) -> &str {
@@ -261,17 +290,11 @@ mod tests {
     }
 
     #[test]
-    fn a_code_is_twelve_digits_in_three_groups() {
+    fn a_code_is_eight_characters_in_two_groups() {
         let code = PairingCode::derive(&authority(1), &device("kitchen"), &key(2));
-        let text = code.as_str();
-        assert_eq!(text.len(), 14, "{text}");
-        let groups: Vec<&str> = text.split('-').collect();
-        assert_eq!(groups.len(), 3, "{text}");
-        assert!(
-            groups
-                .iter()
-                .all(|g| g.len() == 4 && g.chars().all(|c| c.is_ascii_digit()))
-        );
+        let groups: Vec<&str> = code.as_str().split('-').collect();
+        assert_eq!(groups.len(), 2, "{code}");
+        assert!(groups.iter().all(|g| g.len() == 4), "{code}");
     }
 
     #[test]
@@ -316,27 +339,40 @@ mod tests {
     }
 
     #[test]
-    fn a_code_typed_with_dashes_spaces_or_neither_is_the_same_code() {
+    fn a_code_typed_with_dashes_spaces_any_case_or_neither_is_the_same_code() {
         let code = PairingCode::derive(&authority(1), &device("kitchen"), &key(2));
-        let digits: String = code.as_str().replace('-', "");
+        let plain: String = code.as_str().replace('-', "");
         for typed in [
             code.as_str().to_owned(),
-            digits.clone(),
-            format!(" {} {} {} ", &digits[..4], &digits[4..8], &digits[8..]),
+            plain.clone(),
+            plain.to_lowercase(),
+            format!(" {} {} ", &plain[..4], &plain[4..]).to_lowercase(),
         ] {
             assert_eq!(PairingCode::parse(&typed).unwrap(), code, "{typed:?}");
         }
     }
 
     #[test]
-    fn a_code_that_is_not_twelve_digits_is_refused() {
+    fn look_alikes_are_read_as_the_characters_they_resemble() {
+        let code = PairingCode::parse("0011-0011").unwrap();
+        for typed in ["OOIl-OOLi", "ooil-ooli", "00Il-oO1L"] {
+            assert_eq!(PairingCode::parse(typed).unwrap(), code, "{typed:?}");
+        }
+        // And what is shown never contains the ones that could be mistaken.
+        assert_eq!(code.as_str(), "0011-0011");
+    }
+
+    #[test]
+    fn a_code_that_is_not_eight_characters_of_the_alphabet_is_refused() {
         for typed in [
             "",
-            "1234",
-            "1234-5678-901",
-            "1234-5678-9012-3",
-            "1234-5678-90ab",
-            "١٢٣٤-٥٦٧٨-٩٠١٢",
+            "B0AJ",
+            "B0AJ-QTW",
+            "B0AJ-QTW66",
+            "B0AJ-QTWU", // U is not in the alphabet
+            "B0AJ-QT!6",
+            "B0AJ-QTW\u{0666}",
+            "١٢٣٤-٥٦٧٨",
         ] {
             assert_eq!(
                 PairingCode::parse(typed),
@@ -347,12 +383,26 @@ mod tests {
     }
 
     #[test]
-    fn a_small_number_keeps_its_leading_zeros() {
-        assert_eq!(PairingCode::from_number(42).as_str(), "0000-0000-0042");
-        assert_eq!(PairingCode::from_number(0).as_str(), "0000-0000-0000");
+    fn every_code_that_is_made_is_in_the_alphabet_and_parses_back_to_itself() {
+        for i in 0..2000u32 {
+            let code =
+                PairingCode::derive(&authority(1), &device("kitchen"), &key((i % 251) as u8));
+            let chars = code.as_str().replace('-', "");
+            assert_eq!(chars.len(), 8);
+            assert!(chars.bytes().all(|b| ALPHABET.contains(&b)), "{code}");
+            assert!(!chars.contains(['I', 'L', 'O', 'U']), "{code}");
+            assert_eq!(PairingCode::parse(code.as_str()).unwrap(), code);
+        }
+    }
+
+    #[test]
+    fn numbers_become_characters_five_bits_at_a_time() {
+        assert_eq!(PairingCode::from_number(0).as_str(), "0000-0000");
+        assert_eq!(PairingCode::from_number(31).as_str(), "0000-000Z");
+        assert_eq!(PairingCode::from_number(32).as_str(), "0000-0010");
         assert_eq!(
-            PairingCode::from_number(999_999_999_999).as_str(),
-            "9999-9999-9999"
+            PairingCode::from_number((1 << 40) - 1).as_str(),
+            "ZZZZ-ZZZZ"
         );
     }
 
@@ -367,6 +417,6 @@ mod tests {
         );
         let key = PublicKey::from_der((0u8..91).collect());
         let code = PairingCode::derive(&authority, &device("reterminal-e1003-a1b2c3"), &key);
-        assert_eq!(code.as_str(), "5404-2991-0703");
+        assert_eq!(code.as_str(), "B0AJ-QTW6");
     }
 }

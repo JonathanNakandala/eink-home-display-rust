@@ -915,7 +915,7 @@ mod tests {
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
-        let wrong = PairingCode::parse("0000-0000-0000").unwrap();
+        let wrong = PairingCode::parse("0000-0000").unwrap();
         let result = f.enrollment.approve(&device("kitchen"), &wrong).await;
         assert!(
             matches!(result, Err(ApproveError::WrongCode(_))),
