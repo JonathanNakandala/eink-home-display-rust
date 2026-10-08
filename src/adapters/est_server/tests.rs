@@ -34,12 +34,12 @@ use crate::adapters::pairing_store::FilePairingStore;
 use crate::application::enrollment::EnrollmentPolicy;
 use crate::domain::models::pairing::{Fingerprint, PairingCode, PublicKey};
 
-struct Harness {
-    address: SocketAddr,
-    enrollment: Arc<Enrollment>,
-    authority: Arc<PrivateAuthority>,
-    server: JoinHandle<anyhow::Result<()>>,
-    _directory: TempDir,
+pub(crate) struct Harness {
+    pub(crate) address: SocketAddr,
+    pub(crate) enrollment: Arc<Enrollment>,
+    pub(crate) authority: Arc<PrivateAuthority>,
+    pub(crate) server: JoinHandle<anyhow::Result<()>>,
+    pub(crate) _directory: TempDir,
 }
 
 impl Drop for Harness {
@@ -48,11 +48,44 @@ impl Drop for Harness {
     }
 }
 
-async fn start() -> Harness {
+pub(crate) async fn start() -> Harness {
     start_with(false, |_| {}).await
 }
 
-async fn start_with(require_channel_binding: bool, tune: impl FnOnce(&mut EstSettings)) -> Harness {
+pub(crate) async fn start_with(
+    require_channel_binding: bool,
+    tune: impl FnOnce(&mut EstSettings),
+) -> Harness {
+    start_full(require_channel_binding, tune, None).await
+}
+
+/// A server with a stand-in for the display routes behind a gate of the given kind.
+pub(crate) async fn start_guarded(access: Access) -> Harness {
+    start_full(false, |_| {}, Some(access)).await
+}
+
+/// `/image` says it was served; `/who` says who the request is from, as the routes would see it.
+pub(crate) fn stand_in_display() -> axum::Router {
+    use crate::adapters::authenticated::AuthenticatedDevice;
+    use axum::routing::get;
+    axum::Router::new()
+        .route("/image", get(|| async { "image-bytes" }))
+        .route(
+            "/who",
+            get(
+                |who: Option<axum::Extension<AuthenticatedDevice>>| async move {
+                    who.map(|w| w.0.0.to_string())
+                        .unwrap_or_else(|| "anonymous".to_owned())
+                },
+            ),
+        )
+}
+
+pub(crate) async fn start_full(
+    require_channel_binding: bool,
+    tune: impl FnOnce(&mut EstSettings),
+    guard: Option<Access>,
+) -> Harness {
     let directory = tempfile::tempdir().unwrap();
     let authority = Arc::new(
         crate::adapters::certificate_authority::open(&directory.path().join("authority")).unwrap(),
@@ -76,7 +109,8 @@ async fn start_with(require_channel_binding: bool, tune: impl FnOnce(&mut EstSet
         ..EstSettings::default()
     };
     tune(&mut settings);
-    let server = EstServer::bind(settings, authority.clone(), enrollment.clone()).unwrap();
+    let display = guard.map(|access| guarded(stand_in_display(), enrollment.clone(), access));
+    let server = EstServer::bind(settings, authority.clone(), enrollment.clone(), display).unwrap();
     let address = server.local_addr().unwrap();
     Harness {
         address,
@@ -89,7 +123,7 @@ async fn start_with(require_channel_binding: bool, tune: impl FnOnce(&mut EstSet
 
 /// Accepts any server certificate: what a display with no trust yet does to fetch the authority.
 #[derive(Debug)]
-struct TrustAnything;
+pub(crate) struct TrustAnything;
 
 impl ServerCertVerifier for TrustAnything {
     fn verify_server_cert(
@@ -139,17 +173,17 @@ impl ServerCertVerifier for TrustAnything {
     }
 }
 
-enum Trust<'a> {
+pub(crate) enum Trust<'a> {
     Anything,
     Authority(&'a [u8]),
 }
 
-struct Identity {
-    certificate: Vec<u8>,
-    key: KeyPair,
+pub(crate) struct Identity {
+    pub(crate) certificate: Vec<u8>,
+    pub(crate) key: KeyPair,
 }
 
-fn client_config(
+pub(crate) fn client_config(
     trust: Trust<'_>,
     identity: Option<&Identity>,
     versions: &[&'static rustls::SupportedProtocolVersion],
@@ -180,7 +214,7 @@ fn client_config(
     config
 }
 
-async fn connect_with(
+pub(crate) async fn connect_with(
     harness: &Harness,
     config: ClientConfig,
 ) -> std::io::Result<TlsStream<TcpStream>> {
@@ -190,7 +224,7 @@ async fn connect_with(
         .await
 }
 
-async fn connect(
+pub(crate) async fn connect(
     harness: &Harness,
     trust: Trust<'_>,
     identity: Option<&Identity>,
@@ -204,7 +238,7 @@ async fn connect(
 }
 
 /// What this connection's channel binding is, as the client computes it.
-fn binding(stream: &TlsStream<TcpStream>) -> Vec<u8> {
+pub(crate) fn binding(stream: &TlsStream<TcpStream>) -> Vec<u8> {
     stream
         .get_ref()
         .1
@@ -213,26 +247,26 @@ fn binding(stream: &TlsStream<TcpStream>) -> Vec<u8> {
         .to_vec()
 }
 
-struct Response {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
+pub(crate) struct Response {
+    pub(crate) status: u16,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Response {
-    fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
 
     /// The certificates in a certs-only response, as DER.
-    fn certificates(&self) -> Vec<Vec<u8>> {
+    pub(crate) fn certificates(&self) -> Vec<Vec<u8>> {
         assert_eq!(self.status, 200, "{}", self.text());
         assert_eq!(
             self.header("content-type"),
@@ -256,7 +290,7 @@ impl Response {
     }
 }
 
-async fn send(
+pub(crate) async fn send(
     stream: &mut TlsStream<TcpStream>,
     method: &str,
     path: &str,
@@ -299,7 +333,7 @@ async fn send(
 }
 
 /// The body of a response, undoing chunked encoding if the server used it.
-fn dechunk(raw: &[u8]) -> Vec<u8> {
+pub(crate) fn dechunk(raw: &[u8]) -> Vec<u8> {
     let text = String::from_utf8_lossy(raw);
     let Some((size, rest)) = text.split_once("\r\n") else {
         return raw.to_vec();
@@ -324,13 +358,13 @@ fn dechunk(raw: &[u8]) -> Vec<u8> {
     }
 }
 
-const ENROLL: &str = "/.well-known/est/simpleenroll";
-const REENROLL: &str = "/.well-known/est/simplereenroll";
-const CACERTS: &str = "/.well-known/est/cacerts";
-const CSRATTRS: &str = "/.well-known/est/csrattrs";
-const PKCS10: &str = "application/pkcs10";
+pub(crate) const ENROLL: &str = "/.well-known/est/simpleenroll";
+pub(crate) const REENROLL: &str = "/.well-known/est/simplereenroll";
+pub(crate) const CACERTS: &str = "/.well-known/est/cacerts";
+pub(crate) const CSRATTRS: &str = "/.well-known/est/csrattrs";
+pub(crate) const PKCS10: &str = "application/pkcs10";
 
-fn challenge_password(text: &str) -> Attribute {
+pub(crate) fn challenge_password(text: &str) -> Attribute {
     let mut value = vec![0x31, text.len() as u8 + 2, 0x0c, text.len() as u8];
     value.extend_from_slice(text.as_bytes());
     Attribute {
@@ -340,7 +374,7 @@ fn challenge_password(text: &str) -> Attribute {
 }
 
 /// A request for `name` with `key`, tied to `connection` if one is given, as the text sent in a body.
-fn request(name: &str, key: &KeyPair, connection: Option<&[u8]>) -> String {
+pub(crate) fn request(name: &str, key: &KeyPair, connection: Option<&[u8]>) -> String {
     let mut params = CertificateParams::default();
     params.distinguished_name = DistinguishedName::new();
     params.distinguished_name.push(DnType::CommonName, name);
@@ -353,17 +387,21 @@ fn request(name: &str, key: &KeyPair, connection: Option<&[u8]>) -> String {
     STANDARD.encode(csr.der().as_ref())
 }
 
-fn new_key() -> KeyPair {
+pub(crate) fn new_key() -> KeyPair {
     KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap()
 }
 
-fn device(name: &str) -> DeviceId {
+pub(crate) fn device(name: &str) -> DeviceId {
     DeviceId::parse(name).unwrap()
 }
 
 /// Everything a display does up to asking to join: gets the authority from an unverified connection,
 /// and works out the code its panel would show from what it saw.
-async fn first_contact(harness: &Harness, name: &str, key: &KeyPair) -> (Vec<u8>, PairingCode) {
+pub(crate) async fn first_contact(
+    harness: &Harness,
+    name: &str,
+    key: &KeyPair,
+) -> (Vec<u8>, PairingCode) {
     let mut stream = connect(harness, Trust::Anything, None).await;
     let response = send(&mut stream, "GET", CACERTS, None, b"").await;
     let authority = response.certificates().remove(0);
@@ -376,7 +414,12 @@ async fn first_contact(harness: &Harness, name: &str, key: &KeyPair) -> (Vec<u8>
 }
 
 /// One request on a connection of its own, tied to that connection like a display's.
-async fn enroll(harness: &Harness, trust: Trust<'_>, name: &str, key: &KeyPair) -> Response {
+pub(crate) async fn enroll(
+    harness: &Harness,
+    trust: Trust<'_>,
+    name: &str,
+    key: &KeyPair,
+) -> Response {
     let mut stream = connect(harness, trust, None).await;
     let body = request(name, key, Some(&binding(&stream)));
     send(&mut stream, "POST", ENROLL, Some(PKCS10), body.as_bytes()).await
@@ -610,7 +653,7 @@ async fn when_required_a_request_must_carry_the_binding() {
 /// the server rejects shows up not at the client's handshake (in TLS 1.3 that is already done) but as
 /// an alert instead of an answer, so the question is whether any HTTP came back. The connection is read
 /// until it ends, however it ends: the server closes without a TLS close_notify.
-async fn gets_an_answer(harness: &Harness, config: ClientConfig) -> bool {
+pub(crate) async fn gets_an_answer(harness: &Harness, config: ClientConfig) -> bool {
     let Ok(mut stream) = connect_with(harness, config).await else {
         return false;
     };
@@ -846,7 +889,7 @@ async fn a_connection_that_goes_on_too_long_is_ended() {
 }
 
 /// A display joining, start to finish, and holding its certificate.
-async fn join(harness: &Harness, name: &str, key: KeyPair) -> Identity {
+pub(crate) async fn join(harness: &Harness, name: &str, key: KeyPair) -> Identity {
     let (authority, code) = first_contact(harness, name, &key).await;
     harness.enrollment.open_window(ChronoDuration::minutes(10));
     let waiting = enroll(harness, Trust::Authority(&authority), name, &key).await;
@@ -864,7 +907,7 @@ async fn join(harness: &Harness, name: &str, key: KeyPair) -> Identity {
 }
 
 /// Renews as `identity`, over a verified connection, and says what the server answered.
-async fn renew_as(harness: &Harness, identity: &Identity, name: &str) -> Response {
+pub(crate) async fn renew_as(harness: &Harness, identity: &Identity, name: &str) -> Response {
     let mut stream = connect(
         harness,
         Trust::Authority(harness.authority.certificate()),
@@ -946,4 +989,93 @@ async fn a_client_that_sends_its_body_too_slowly_is_told_to_stop() {
         "{}",
         String::from_utf8_lossy(&raw)
     );
+}
+
+/// What the stand-in display routes answer to `path`, from a client showing `identity` (or nothing).
+pub(crate) async fn get_as(harness: &Harness, path: &str, identity: Option<&Identity>) -> Response {
+    let mut stream = connect(
+        harness,
+        Trust::Authority(harness.authority.certificate()),
+        identity,
+    )
+    .await;
+    send(&mut stream, "GET", path, None, b"").await
+}
+
+#[tokio::test]
+async fn with_open_access_anyone_is_served_and_a_member_is_named_by_its_certificate() {
+    let harness = start_guarded(Access::Open).await;
+    let anonymous = get_as(&harness, "/who", None).await;
+    assert_eq!(
+        (anonymous.status, anonymous.text().trim()),
+        (200, "anonymous")
+    );
+    assert_eq!(
+        get_as(&harness, "/image", None).await.text().trim(),
+        "image-bytes"
+    );
+
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    let named = get_as(&harness, "/who", Some(&kitchen)).await;
+    assert_eq!((named.status, named.text().trim()), (200, "kitchen"));
+}
+
+#[tokio::test]
+async fn with_open_access_a_certificate_that_is_shown_and_refused_is_refused() {
+    // Showing a bad certificate is not better than showing none.
+    let harness = start_guarded(Access::Open).await;
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    harness.enrollment.revoke(&device("kitchen")).await.unwrap();
+    assert_eq!(get_as(&harness, "/image", Some(&kitchen)).await.status, 403);
+    assert_eq!(get_as(&harness, "/who", Some(&kitchen)).await.status, 403);
+    // While without it, the same routes are open.
+    assert_eq!(get_as(&harness, "/image", None).await.status, 200);
+}
+
+#[tokio::test]
+async fn a_certificate_of_a_replaced_display_is_turned_away_from_the_display_routes() {
+    let harness = start_guarded(Access::Open).await;
+    let first = join(&harness, "kitchen", new_key()).await;
+    harness.enrollment.forget(&device("kitchen")).await.unwrap();
+    let second = join(&harness, "kitchen", new_key()).await;
+    assert_eq!(get_as(&harness, "/who", Some(&first)).await.status, 403);
+    assert_eq!(
+        get_as(&harness, "/who", Some(&second)).await.text().trim(),
+        "kitchen"
+    );
+}
+
+#[tokio::test]
+async fn with_members_only_a_display_without_a_certificate_gets_nothing() {
+    let harness = start_guarded(Access::Members).await;
+    for path in ["/image", "/who"] {
+        let refused = get_as(&harness, path, None).await;
+        assert_eq!(refused.status, 403, "{path}: {}", refused.text());
+        assert!(!refused.text().contains("image-bytes"));
+    }
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    assert_eq!(
+        get_as(&harness, "/image", Some(&kitchen))
+            .await
+            .text()
+            .trim(),
+        "image-bytes"
+    );
+    assert_eq!(
+        get_as(&harness, "/who", Some(&kitchen)).await.text().trim(),
+        "kitchen"
+    );
+
+    harness.enrollment.revoke(&device("kitchen")).await.unwrap();
+    assert_eq!(get_as(&harness, "/image", Some(&kitchen)).await.status, 403);
+}
+
+#[tokio::test]
+async fn with_members_only_a_new_display_can_still_reach_the_way_in() {
+    // Otherwise nothing could ever join.
+    let harness = start_guarded(Access::Members).await;
+    assert_eq!(get_as(&harness, CACERTS, None).await.status, 200);
+    assert_eq!(get_as(&harness, CSRATTRS, None).await.status, 200);
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    assert_eq!(get_as(&harness, "/image", Some(&kitchen)).await.status, 200);
 }

@@ -24,6 +24,11 @@ pub fn load_valid_application_config(path: &Path) -> anyhow::Result<ApplicationC
         .location
         .zone()
         .with_context(|| format!("The [location] in {} is invalid", path.display()))?;
+    config
+        .server
+        .check()
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("The [server] in {} is invalid", path.display()))?;
     if let Some(schedule) = &config.schedule {
         schedule
             .to_schedule()
@@ -67,6 +72,24 @@ mod tests {
         assert!(format!("{error:#}").contains("is invalid"), "{error:#}");
         // A program that doesn't use weather loads it all the same.
         assert!(load_application_config(&on).is_ok());
+    }
+
+    #[test]
+    fn two_listeners_on_one_port_are_refused_at_load_with_the_setting_named() {
+        use crate::config::server::Transport;
+        let mut config = ApplicationConfig::example();
+        config.weather.enabled = false;
+        config.server.transport = Transport::PreferHttps;
+        config.server.tls.bind = config.server.bind;
+        let path = std::env::temp_dir().join("eink_load_test_same_port.toml");
+        std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+        let error = format!("{:#}", load_valid_application_config(&path).unwrap_err());
+        assert!(
+            error.contains("[server]") && error.contains("prefer-https"),
+            "{error}"
+        );
+        // The same file read without the rules still loads, as a program that ignores servers needs.
+        assert!(load_application_config(&path).is_ok());
     }
 
     #[test]

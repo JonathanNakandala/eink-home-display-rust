@@ -144,6 +144,55 @@ With several servers on one network, set `server_name` to the Rust app's `instan
 `fallback_url` (a `.local` name by default) only matters until the first scan succeeds, or if one
 finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 
+### Secure transport (what the firmware has to do)
+
+The server can offer HTTPS (see `[server] transport` in [deploy/README.md](../deploy/README.md)). The display
+has the same three choices, as a substitution, and its choice matters as much as the server's: the server can
+only offer, and only a display set to HTTPS-only is certain not to fall back.
+
+| display `transport` | does | when HTTPS can't be used |
+|---|---|---|
+| `http` | plain HTTP only; ignores what the server offers | n/a |
+| `prefer-https` | HTTPS if the server announces `tlsport` and the display has joined; otherwise HTTP | falls back to HTTP only when there is nothing to use (no `tlsport`, not joined, nothing answering on the port). A **certificate problem is not a reason to fall back**: it is what an attack looks like, so it is a failure, shown in the notice |
+| `https` | HTTPS only, never HTTP, whatever is announced | the wake fails like any other failure; the picture stays |
+
+**Finding it.** The `_http._tcp` service has two more TXT keys when HTTPS is on offer: `tlsport` (the HTTPS
+port, on the same address) and `secure` (`optional` or `required`). With `required` the service port is the HTTPS
+port.
+
+**TLS.** TLS 1.3 only. The server's certificate is for a name (`<instance_name>.local` by default), so the display
+connects to the address it found but verifies the certificate against that name, which is not the same as the
+address. It trusts exactly one certificate authority, the server's, kept in flash and not in the firmware, so one
+firmware serves every home. The server sends one certificate (about 480 bytes), ECDSA on P-256.
+
+**Joining (EST, RFC 7030 as updated by RFC 8951; see `reference/`).** All under `/.well-known/est/`, TLS 1.3:
+
+1. First wake with no authority stored: connect to `tlsport` **without verifying the server** and `GET cacerts`.
+   The body is base64 of a DER CMS `SignedData` holding the authority's certificate (`certs-only`). Keep the
+   certificate, in memory for now.
+2. Make an ECDSA P-256 key (kept in flash, never leaves the display, not regenerated on renewal) and a PKCS #10
+   request signed with ECDSA and SHA-256, with the display's name (the same name it sends as `device=`) as its
+   only common name. Other fields are ignored. If the server's `csrattrs` includes the challenge-password OID, put
+   in `challengePassword` the base64 of the connection's RFC 9266 channel binding: the TLS 1.3 exporter with
+   label `EXPORTER-Channel-Binding`, no context, 32 bytes.
+3. **Work out the pairing code and show it on the panel**, from what the display itself saw (never from anything
+   the server says; the server does not send it):
+   `SHA-256("eink-home-display pairing code v1" || SHA-256(authority DER) || u64be(len(name)) || name ||
+   u64be(len(SPKI)) || SPKI)`, then the first 8 bytes as a big-endian number, modulo 10^12, as 12 digits with
+   leading zeros, written `dddd-dddd-dddd`. SPKI is the DER `SubjectPublicKeyInfo` of the display's key.
+   Example: authority DER `30 03 02 01 01`, name `reterminal-e1003-a1b2c3`, SPKI the 91 bytes `00 01 .. 5a`
+   give `5404-2991-0703`. The owner types this at the server; if someone is between the two, the codes differ and
+   the approval fails. That comparison is the only thing that authenticates the first contact.
+4. `POST simpleenroll` (`Content-Type: application/pkcs10`, body base64 of the DER request, no
+   `Content-Transfer-Encoding`). `202` with `Retry-After`: not approved yet; sleep that long and ask again (a new
+   request on a new connection, so a channel binding is made again). `200`: the body is base64 of a CMS `SignedData`
+   with the display's certificate. Store it. `403` means the owner declined, or the window isn't open.
+5. From then on verify the server against the stored authority, and show the certificate as the TLS client
+   certificate. The server names the display by it, ignoring `device=`.
+6. Renew with `POST simplereenroll` over a connection that shows the current certificate, at a third of its life
+   left, with the same key. Changing the key is possible but if the answer is lost the display is no longer
+   recognised and has to be paired again, so don't.
+
 ### Which image format: content negotiation
 
 The server publishes every format it can send (BMP and PNG) on each render, and `GET /image` picks one

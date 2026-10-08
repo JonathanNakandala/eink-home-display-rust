@@ -8,7 +8,7 @@ use eink_home_display_rust::adapters::clock::SystemClock;
 use eink_home_display_rust::adapters::display_image_generator::chrome_render::{
     ChromeSource, DEFAULT_IDLE_TIMEOUT,
 };
-use eink_home_display_rust::adapters::image_server::{Handles, ServerSettings, serve};
+use eink_home_display_rust::adapters::image_server::{Handles, ServerSettings, router};
 use eink_home_display_rust::adapters::published_images::DirectoryImages;
 use eink_home_display_rust::application::devices::DeviceBoard;
 use eink_home_display_rust::application::launch;
@@ -141,8 +141,25 @@ async fn main() -> Result<()> {
     }
     // The display downloads its image, so serve it for as long as the refresh loop runs.
     let settings = ServerSettings::from(&config.server);
+    let format = config.display.image_format.into();
+    let display_routes = router(
+        images,
+        format,
+        schedule.clone(),
+        settings.timing,
+        Handles {
+            refresh: refresh.clone(),
+            status: status.clone(),
+            devices: devices.clone(),
+        },
+        clock.clone(),
+    );
+    // Opened before anything runs, so a port that is taken or an authority that can't be read stops the
+    // program here.
+    let listening =
+        bootstrap::start_serving(&config.server, display_routes, format, clock.clone()).await?;
     tokio::select! {
         result = periodic => result,
-        result = serve(&settings, images, config.display.image_format.into(), schedule.clone(), Handles { refresh: refresh.clone(), status: status.clone(), devices: devices.clone() }, clock.clone()) => result,
+        result = listening.run() => result,
     }
 }

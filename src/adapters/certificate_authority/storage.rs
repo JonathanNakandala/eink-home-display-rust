@@ -33,6 +33,13 @@ pub fn open(directory: &Path) -> anyhow::Result<PrivateAuthority> {
         (false, false) => {
             fs::create_dir_all(directory)
                 .with_context(|| format!("Failed to create {}", directory.display()))?;
+            // Holds the authority's key, so no one else needs to see in.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+                    .with_context(|| format!("Failed to restrict {}", directory.display()))?;
+            }
             let (authority, certificate, key) = PrivateAuthority::generate(Utc::now())?;
             // The key first: with a certificate and no key, a crash in between would leave the
             // half-made state that is refused above, not a usable one.

@@ -8,9 +8,10 @@
 //! a time to finish the handshake, a time to send the request head, a time to finish the request, and a
 //! time for the whole connection. A client that does none of that is dropped rather than waited for.
 
+mod gate;
 mod routes;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod tls;
 mod wire;
 
@@ -29,10 +30,11 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use x509_parser::prelude::FromDer;
 
+pub use self::gate::{Access, guarded};
 pub use self::routes::{ClientIdentity, Connection};
 use self::tls::RenewingCertificate;
 use crate::adapters::certificate_authority::PrivateAuthority;
-use crate::adapters::listen::{self, Bound};
+use crate::adapters::listen::{self, Bound, Families};
 use crate::application::enrollment::Enrollment;
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::PublicKey;
@@ -65,13 +67,14 @@ impl Default for EstSettings {
             handshake_timeout: Duration::from_secs(10),
             header_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(15),
-            connection_lifetime: Duration::from_secs(60),
+            connection_lifetime: Duration::from_secs(120),
         }
     }
 }
 
 pub struct EstServer {
     listener: TcpListener,
+    families: Families,
     settings: EstSettings,
     authority: Arc<PrivateAuthority>,
     certificate: Arc<RenewingCertificate>,
@@ -81,10 +84,12 @@ pub struct EstServer {
 
 impl EstServer {
     /// Opens the port and makes the server's certificate. Fails at once if either can't be done.
+    /// `display` is served beside the EST routes if given, already behind its own gate (see `guarded`).
     pub fn bind(
         settings: EstSettings,
         authority: Arc<PrivateAuthority>,
         enrollment: Arc<Enrollment>,
+        display: Option<axum::Router>,
     ) -> anyhow::Result<Self> {
         let Bound { listener, families } = listen::bind(settings.bind)?;
         let certificate = Arc::new(RenewingCertificate::new(
@@ -94,11 +99,14 @@ impl EstServer {
             settings.certificate_lifetime,
         )?);
         let config = tls::server_config(certificate.clone(), authority.certificate())?;
-        let app = routes::router(
+        let mut app = routes::router(
             enrollment,
             authority.clone() as Arc<dyn CertificateAuthority>,
             settings.request_timeout,
         );
+        if let Some(display) = display {
+            app = app.merge(display);
+        }
         log::info!(
             "Serving EST over TLS 1.3 at https://{} ({families}); server certificate for {}",
             settings.bind,
@@ -106,6 +114,7 @@ impl EstServer {
         );
         Ok(Self {
             listener,
+            families,
             settings,
             authority,
             certificate,
@@ -118,10 +127,16 @@ impl EstServer {
         self.listener.local_addr()
     }
 
+    /// Which IP versions the socket takes, for announcing it.
+    pub fn families(&self) -> Families {
+        self.families
+    }
+
     /// Serves until the future is dropped, which also ends every connection.
     pub async fn run(self) -> anyhow::Result<()> {
         let Self {
             listener,
+            families: _,
             settings,
             authority,
             certificate,

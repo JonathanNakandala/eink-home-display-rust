@@ -306,4 +306,18 @@ mod tests {
             "9999-9999-9999"
         );
     }
+
+    #[test]
+    fn a_fixed_example_gives_the_code_the_firmware_documentation_shows() {
+        // The expected code was computed by a separate implementation of the formula (Python), and is
+        // the example in esphome/README.md for whoever writes the display's side of it.
+        let authority = Fingerprint::of(&[0x30, 0x03, 0x02, 0x01, 0x01]);
+        assert_eq!(
+            authority.to_string().replace(':', "").to_lowercase(),
+            "1b65f68a522c858715f5dd951cd0402dc16691778814bf0759822b7a257421d0"
+        );
+        let key = PublicKey::from_der((0u8..91).collect());
+        let code = PairingCode::derive(&authority, &device("reterminal-e1003-a1b2c3"), &key);
+        assert_eq!(code.as_str(), "5404-2991-0703");
+    }
 }

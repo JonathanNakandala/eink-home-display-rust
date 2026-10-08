@@ -76,6 +76,16 @@ wake_delay_seconds = 30
 stale_grace_seconds = 300
 refresh_cooldown_seconds = 30
 device_overdue_grace_seconds = 900
+transport = "http"
+
+[server.tls]
+bind = "[::]:8443"
+directory = "pki"
+names = []
+server_certificate_days = 90
+device_certificate_days = 365
+pairing_retry_minutes = 5
+require_channel_binding = false
 
 [schedule]
 cron = ["*/10 * * * *"]

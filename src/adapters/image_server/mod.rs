@@ -21,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tower_http::trace::TraceLayer;
 
-use self::advertise::Advertisement;
+pub use self::advertise::{Advertisement, SecureOffer, mdns_host_name};
 use crate::adapters::listen::{self, Bound};
 use crate::application::devices::DeviceBoard;
 use crate::application::plan::PlanTiming;
@@ -105,27 +105,77 @@ pub async fn serve(
     handles: Handles,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
-    let Bound { listener, families } = listen::bind(settings.bind)?;
-    let port = listener.local_addr()?.port();
-    log::info!(
-        "Serving the display image at http://{}/image ({families})",
-        settings.bind
-    );
-    // Discovery is a convenience, so the server runs without it. It announces the IP versions the
-    // socket really accepts, which isn't always what the configured address says (see `listen`).
-    // Held until serving ends, which is when the goodbye goes out.
-    let _advertisement = settings
+    let app = router(images, format, schedule, settings.timing, handles, clock);
+    serve_router(settings, app, format, None).await
+}
+
+/// Starts announcing the server over mDNS, if `settings` ask for it. Discovery is a convenience, so a
+/// failure is a warning and the server runs without it. Held until serving ends, which is when the
+/// goodbye goes out.
+pub fn announce(
+    settings: &ServerSettings,
+    port: u16,
+    format: ImageFormat,
+    families: listen::Families,
+    secure: Option<SecureOffer>,
+) -> Option<Advertisement> {
+    settings
         .advertise
-        .then(|| Advertisement::start(settings, port, format, families))
+        .then(|| Advertisement::start(settings, port, format, families, secure))
         .transpose()
         .unwrap_or_else(|e| {
             log::warn!("Not advertising over mDNS: {e:#}");
             None
-        });
-    axum::serve(
-        listener,
-        router(images, format, schedule, settings.timing, handles, clock),
-    )
-    .await
-    .context("Image server stopped")
+        })
+}
+
+/// Serves `app` over plain HTTP at `settings.bind` and announces it, with the HTTPS on offer if any.
+pub async fn serve_router(
+    settings: &ServerSettings,
+    app: Router,
+    format: ImageFormat,
+    secure: Option<SecureOffer>,
+) -> anyhow::Result<()> {
+    bind_http(settings)?
+        .serve(settings, app, format, secure)
+        .await
+}
+
+/// The plain-HTTP socket, open and not yet serving, so its address can be read (the port may have
+/// been left to the system to choose) before it is.
+pub struct HttpListener {
+    bound: Bound,
+}
+
+pub fn bind_http(settings: &ServerSettings) -> anyhow::Result<HttpListener> {
+    Ok(HttpListener {
+        bound: listen::bind(settings.bind)?,
+    })
+}
+
+impl HttpListener {
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.bound.listener.local_addr()
+    }
+
+    pub async fn serve(
+        self,
+        settings: &ServerSettings,
+        app: Router,
+        format: ImageFormat,
+        secure: Option<SecureOffer>,
+    ) -> anyhow::Result<()> {
+        let Bound { listener, families } = self.bound;
+        let port = listener.local_addr()?.port();
+        log::info!(
+            "Serving the display image at http://{}/image ({families})",
+            settings.bind
+        );
+        // It announces the IP versions the socket really accepts, which isn't always what the
+        // configured address says (see `listen`).
+        let _advertisement = announce(settings, port, format, families, secure);
+        axum::serve(listener, app)
+            .await
+            .context("Image server stopped")
+    }
 }

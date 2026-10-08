@@ -63,6 +63,16 @@
         "instance_name": "E-ink home display",
         "refresh_cooldown_seconds": 30,
         "stale_grace_seconds": 300,
+        "tls": {
+          "bind": "[::]:8443",
+          "device_certificate_days": 365,
+          "directory": "pki",
+          "names": [],
+          "pairing_retry_minutes": 5,
+          "require_channel_binding": false,
+          "server_certificate_days": 90
+        },
+        "transport": "http",
         "wake_delay_seconds": 30
       }
     },
@@ -448,6 +458,23 @@
           "default": 300,
           "minimum": 0
         },
+        "tls": {
+          "$ref": "#/$defs/TlsConfig",
+          "default": {
+            "bind": "[::]:8443",
+            "device_certificate_days": 365,
+            "directory": "pki",
+            "names": [],
+            "pairing_retry_minutes": 5,
+            "require_channel_binding": false,
+            "server_certificate_days": 90
+          }
+        },
+        "transport": {
+          "description": "Plain HTTP, HTTPS, or both: `\"http\"`, `\"prefer-https\"` or `\"https\"`. See `[server.tls]` for the\nHTTPS side. The default is `\"http\"`, so a configuration without this behaves as it always has.",
+          "$ref": "#/$defs/Transport",
+          "default": "http"
+        },
         "wake_delay_seconds": {
           "description": "How long after a scheduled render the display is told to come back, so the new image is ready.\nAlso how soon it retries while a render is due but not finished.",
           "type": "integer",
@@ -492,6 +519,65 @@
           "default": "https://api.tfl.gov.uk"
         }
       }
+    },
+    "TlsConfig": {
+      "description": "HTTPS and the certificate authority behind it. Used when `transport` is `prefer-https` or `https`.",
+      "type": "object",
+      "properties": {
+        "bind": {
+          "description": "Address for HTTPS. Must differ from `bind`'s port when both run (`prefer-https`).",
+          "type": "string",
+          "default": "[::]:8443"
+        },
+        "device_certificate_days": {
+          "description": "How long a display's certificate lasts. A display renews it by itself while it is valid; one\nthat is off for longer has to be paired again.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 365,
+          "minimum": 0
+        },
+        "directory": {
+          "description": "Where the server's certificate authority and the list of displays that have joined are kept.\nBack this directory up: its `authority.key` is the one thing that can't be remade without\npairing every display again. Relative paths are resolved against the working directory.",
+          "type": "string",
+          "default": "pki"
+        },
+        "names": {
+          "description": "The host names and IP addresses the server's certificate is for: what a display connects to, and\nchecks the certificate against. Left empty, it is `<instance_name>.local` (the name announced over\nmDNS, with the characters a host name can't have replaced) and `localhost`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "pairing_retry_minutes": {
+          "description": "How long a display that is waiting for approval is told to wait before asking again.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "require_channel_binding": {
+          "description": "Require a request for a certificate to prove it was made on the connection it arrived on\n(RFC 9266). Leave off until the displays do this.",
+          "type": "boolean",
+          "default": false
+        },
+        "server_certificate_days": {
+          "description": "How long the server's own certificate lasts. It is replaced when a third of that is left.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 90,
+          "minimum": 0
+        }
+      }
+    },
+    "Transport": {
+      "description": "How displays reach the server.\n\n`http` is plain HTTP, as before: nothing is encrypted and anyone on the network can read the\npicture or pose as the server. `prefer-https` serves both: a display that has joined uses HTTPS and is\nrecognised by its certificate, and one that hasn't carries on over HTTP. That keeps every display\nworking while they are moved over, and protects against someone listening, but not against someone\nwho can interfere with the network, who can still send a display to HTTP. `https` serves HTTPS only\nand only to displays that have joined: the one setting that protects against that. A display's own\nsetting (in its firmware) matters as much, since only a display set to HTTPS-only is certain not to\nfall back.",
+      "type": "string",
+      "enum": [
+        "http",
+        "prefer-https",
+        "https"
+      ]
     },
     "WeatherConfig": {
       "type": "object",
