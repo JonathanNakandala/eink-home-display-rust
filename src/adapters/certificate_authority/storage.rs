@@ -17,8 +17,17 @@ use super::PrivateAuthority;
 const CERTIFICATE: &str = "authority.pem";
 const KEY: &str = "authority.key";
 
-/// The authority kept in `directory`, made there first if there is none.
-pub fn open(directory: &Path) -> anyhow::Result<PrivateAuthority> {
+/// Whether to make an authority when there is none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Create {
+    IfMissing,
+    /// Open only what is there. A directory with no authority in it is an error: it is as likely to be
+    /// a volume that was not mounted as a first start, and a new authority would lock out every display.
+    Never,
+}
+
+/// The authority kept in `directory`, made there first if there is none and `create` allows it.
+pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority> {
     let certificate_path = directory.join(CERTIFICATE);
     let key_path = directory.join(KEY);
     match (certificate_path.exists(), key_path.exists()) {
@@ -30,6 +39,10 @@ pub fn open(directory: &Path) -> anyhow::Result<PrivateAuthority> {
             PrivateAuthority::from_pem(&certificate, &key)
                 .with_context(|| format!("The authority in {} is not usable", directory.display()))
         }
+        (false, false) if create == Create::Never => Err(anyhow!(
+            "There is no certificate authority in {}",
+            directory.display()
+        )),
         (false, false) => {
             fs::create_dir_all(directory)
                 .with_context(|| format!("Failed to create {}", directory.display()))?;

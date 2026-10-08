@@ -22,7 +22,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use time::OffsetDateTime;
 use x509_parser::prelude::FromDer;
 
-pub use self::storage::open;
+pub use self::storage::{Create, open};
 use crate::domain::models::pairing::Fingerprint;
 use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,

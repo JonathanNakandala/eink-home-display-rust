@@ -40,6 +40,16 @@ use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::PublicKey;
 use crate::domain::services::certificate_authority::CertificateAuthority;
 
+/// A name the server's certificate always has, whatever else it is configured with.
+///
+/// A display checks the certificate against a name, and anything it checks must not be something the
+/// owner can change by editing the configuration: rename the instance, or add an address, and every
+/// display that checked the old name would stop trusting the server. So the display checks this one,
+/// which never changes. The certificate's trust still comes from the authority a display has pinned; the
+/// name is what tells the server's certificate from a display's, which has none. (`.internal` is
+/// reserved for private use, so it can never belong to anyone else.)
+pub const SERVER_NAME: &str = "eink-home-display.internal";
+
 /// RFC 9266: the label, and no context, whose exported value identifies one TLS 1.3 connection.
 const BINDING_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
 const BINDING_LEN: usize = 32;
@@ -86,12 +96,19 @@ impl EstServer {
     /// Opens the port and makes the server's certificate. Fails at once if either can't be done.
     /// `display` is served beside the EST routes if given, already behind its own gate (see `guarded`).
     pub fn bind(
-        settings: EstSettings,
+        mut settings: EstSettings,
         authority: Arc<PrivateAuthority>,
         enrollment: Arc<Enrollment>,
         display: Option<axum::Router>,
     ) -> anyhow::Result<Self> {
         let Bound { listener, families } = listen::bind(settings.bind)?;
+        if !settings
+            .names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(SERVER_NAME))
+        {
+            settings.names.insert(0, SERVER_NAME.to_owned());
+        }
         let certificate = Arc::new(RenewingCertificate::new(
             &authority,
             &settings.names,

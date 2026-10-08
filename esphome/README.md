@@ -153,17 +153,20 @@ only offer, and only a display set to HTTPS-only is certain not to fall back.
 | display `transport` | does | when HTTPS can't be used |
 |---|---|---|
 | `http` | plain HTTP only; ignores what the server offers | n/a |
-| `prefer-https` | HTTPS if the server announces `tlsport` and the display has joined; otherwise HTTP | falls back to HTTP only when there is nothing to use (no `tlsport`, not joined, nothing answering on the port). A **certificate problem is not a reason to fall back**: it is what an attack looks like, so it is a failure, shown in the notice |
+| `prefer-https` | HTTPS if the server announces `tlsport` and the display has joined; otherwise HTTP | **falls back to HTTP on any failure**, and says so in the notice so the owner can see it. Someone who can break the TLS can also strip `tlsport` or block the port, so refusing to fall back would add no protection, only a display that stops working. This mode is for moving over, not for protection |
 | `https` | HTTPS only, never HTTP, whatever is announced | the wake fails like any other failure; the picture stays |
 
 **Finding it.** The `_http._tcp` service has two more TXT keys when HTTPS is on offer: `tlsport` (the HTTPS
 port, on the same address) and `secure` (`optional` or `required`). With `required` the service port is the HTTPS
 port.
 
-**TLS.** TLS 1.3 only. The server's certificate is for a name (`<instance_name>.local` by default), so the display
-connects to the address it found but verifies the certificate against that name, which is not the same as the
-address. It trusts exactly one certificate authority, the server's, kept in flash and not in the firmware, so one
-firmware serves every home. The server sends one certificate (about 480 bytes), ECDSA on P-256.
+**TLS.** TLS 1.3 only. The display connects to the address mDNS gave it and verifies the certificate against
+the fixed name **`eink-home-display.internal`**, which the server's certificate always has and no configuration can
+remove, not against the address and not against the mDNS name (which the owner can change). It trusts exactly one
+certificate authority, the server's, kept in flash and not in the firmware, so one firmware serves every home.
+The server sends one certificate (about 480 bytes), ECDSA on P-256. The name matters: a display's own certificate
+has none, so it can't pass for the server to another display. (Whether mbedTLS here can check a name other than
+the address connected to is to be verified on a device.)
 
 **Joining (EST, RFC 7030 as updated by RFC 8951; see `reference/`).** All under `/.well-known/est/`, TLS 1.3:
 
@@ -189,9 +192,33 @@ firmware serves every home. The server sends one certificate (about 480 bytes), 
    with the display's certificate. Store it. `403` means the owner declined, or the window isn't open.
 5. From then on verify the server against the stored authority, and show the certificate as the TLS client
    certificate. The server names the display by it, ignoring `device=`.
-6. Renew with `POST simplereenroll` over a connection that shows the current certificate, at a third of its life
-   left, with the same key. Changing the key is possible but if the answer is lost the display is no longer
-   recognised and has to be paired again, so don't.
+6. Renew with `POST simplereenroll` over a connection that shows the current certificate, with a third of its
+   life left (the server issues 90 days, so at 30), with the same key, checking on every wake and retrying on the
+   next if it fails. Write the new certificate to the spare of two slots and switch to it only once it is complete,
+   so a power cut in the middle leaves the old one.
+7. Changing the key is possible and safe (the server keeps both until the new one is first used), but there is
+   no reason to, so leave it.
+
+**The rule under all of this: pairing is removed only by the owner, never by an error.** The key, the certificate
+and the authority are not deleted because a connection failed, a certificate was refused, a response was `403`, the
+clock was wrong or the server was unreachable. Only a deliberate action (a long press, or a flash that erases)
+clears them. They are stored as one versioned blob with a checksum, so a half-written one is recognised and the
+previous one used.
+
+**After being off for a while** (a flat battery, a drawer), in this order:
+
+1. The clock is wrong after power was lost. **Set it by SNTP before any TLS**; certificate dates are checked against
+   it. If it can't be set, that is "try again next wake", never "unpaired".
+2. If the certificate's end is earlier than the clock now, it has expired: connect **without** showing it and
+   `POST simpleenroll` with the same key. The server gives a new certificate to the key it already holds, with no
+   owner and no window. Store it and carry on.
+3. If the server answers `403` to that, the key is not one it knows (for instance after an erase). Show the code for
+   the key and a notice that the owner has to approve it; keep asking, with the `Retry-After` given. If it was a member
+   before, its old key keeps working on the server meanwhile, if it still has it.
+
+**What to tell the owner, on the panel** (each different, none blank): waiting for approval and the code; the clock
+is not set; the server can't be reached; the certificate is refused (and by what); not recognised, ask the owner to
+approve. And report which in the telemetry's `last_failure`, so `/status` says why.
 
 ### Which image format: content negotiation
 

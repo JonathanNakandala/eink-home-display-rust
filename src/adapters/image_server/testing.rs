@@ -54,6 +54,16 @@ pub(super) async fn start_with(
     format: ImageFormat,
     clock: Arc<dyn Clock>,
 ) -> (String, Arc<StatusBoard>) {
+    start_full(images, format, clock, None).await
+}
+
+/// Like `start_with`, reporting on the displays in the certificate authority too.
+pub(super) async fn start_full(
+    images: Arc<dyn PublishedImages>,
+    format: ImageFormat,
+    clock: Arc<dyn Clock>,
+    members: Option<Arc<crate::application::enrollment::Enrollment>>,
+) -> (String, Arc<StatusBoard>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let timing = PlanTiming {
@@ -66,6 +76,7 @@ pub(super) async fn start_with(
         refresh: RefreshControl::new(Duration::from_secs(30)),
         status: Arc::clone(&status),
         devices: DeviceBoard::new(Duration::from_secs(900)),
+        members,
     };
     tokio::spawn(async move {
         axum::serve(

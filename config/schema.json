@@ -65,7 +65,7 @@
         "stale_grace_seconds": 300,
         "tls": {
           "bind": "[::]:8443",
-          "device_certificate_days": 365,
+          "device_certificate_days": 90,
           "directory": "pki",
           "names": [],
           "pairing_retry_minutes": 5,
@@ -462,7 +462,7 @@
           "$ref": "#/$defs/TlsConfig",
           "default": {
             "bind": "[::]:8443",
-            "device_certificate_days": 365,
+            "device_certificate_days": 90,
             "directory": "pki",
             "names": [],
             "pairing_retry_minutes": 5,
@@ -530,10 +530,10 @@
           "default": "[::]:8443"
         },
         "device_certificate_days": {
-          "description": "How long a display's certificate lasts. A display renews it by itself while it is valid; one\nthat is off for longer has to be paired again.",
+          "description": "How long a display's certificate lasts. Short on purpose: a display renews it with a third of its life\nleft, so renewal happens all the time and not once in years when no one remembers how it works, and a\ndisplay that has stopped renewing shows in `/status` within weeks. It is not what keeps a revoked\ndisplay out (that takes effect on its next request). A display that is off for longer than this gets\na new certificate by itself, with no one at the server, when it is next switched on.",
           "type": "integer",
           "format": "uint32",
-          "default": 365,
+          "default": 90,
           "minimum": 0
         },
         "directory": {
@@ -542,7 +542,7 @@
           "default": "pki"
         },
         "names": {
-          "description": "The host names and IP addresses the server's certificate is for: what a display connects to, and\nchecks the certificate against. Left empty, it is `<instance_name>.local` (the name announced over\nmDNS, with the characters a host name can't have replaced) and `localhost`.",
+          "description": "More host names and IP addresses for the server's certificate, for a browser or `curl` to connect\nby. Left empty, it is `<instance_name>.local` (the name announced over mDNS, with the characters a\nhost name can't have replaced) and `localhost`. The certificate also always has the fixed name\n`eink-home-display.internal`, which is what a display checks, so changing this never affects them.",
           "type": "array",
           "default": [],
           "items": {

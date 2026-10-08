@@ -30,7 +30,7 @@ use tokio_rustls::client::TlsStream;
 
 use super::*;
 use crate::adapters::clock::SystemClock;
-use crate::adapters::pairing_store::FilePairingStore;
+use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::EnrollmentPolicy;
 use crate::domain::models::pairing::{Fingerprint, PairingCode, PublicKey};
 
@@ -88,9 +88,13 @@ pub(crate) async fn start_full(
 ) -> Harness {
     let directory = tempfile::tempdir().unwrap();
     let authority = Arc::new(
-        crate::adapters::certificate_authority::open(&directory.path().join("authority")).unwrap(),
+        crate::adapters::certificate_authority::open(
+            &directory.path().join("authority"),
+            crate::adapters::certificate_authority::Create::IfMissing,
+        )
+        .unwrap(),
     );
-    let store = FilePairingStore::open(&directory.path().join("pairings"))
+    let store = FilePairingStore::open(&directory.path().join("pairings"), Missing::StartEmpty)
         .await
         .unwrap();
     let enrollment = Arc::new(Enrollment::new(
@@ -1078,4 +1082,86 @@ async fn with_members_only_a_new_display_can_still_reach_the_way_in() {
     assert_eq!(get_as(&harness, CSRATTRS, None).await.status, 200);
     let kitchen = join(&harness, "kitchen", new_key()).await;
     assert_eq!(get_as(&harness, "/image", Some(&kitchen)).await.status, 200);
+}
+
+/// The names in the server's certificate, as a client sees it.
+async fn names_in_the_servers_certificate(harness: &Harness) -> Vec<String> {
+    let stream = connect(harness, Trust::Anything, None).await;
+    let chain = stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .expect("a certificate")
+        .to_vec();
+    let (_, certificate) = x509_parser::parse_x509_certificate(chain[0].as_ref()).unwrap();
+    let alt = certificate
+        .subject_alternative_name()
+        .unwrap()
+        .unwrap()
+        .value;
+    alt.general_names
+        .iter()
+        .filter_map(|name| match name {
+            x509_parser::extensions::GeneralName::DNSName(name) => Some(name.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_servers_certificate_always_has_the_fixed_name_whatever_is_configured() {
+    for configured in [
+        vec![],
+        vec!["localhost".to_owned()],
+        vec!["other.example".to_owned(), "localhost".to_owned()],
+        // Already there, in another case: not added twice.
+        vec![SERVER_NAME.to_uppercase(), "localhost".to_owned()],
+    ] {
+        let harness = start_with(false, |s| s.names = configured.clone()).await;
+        let names = names_in_the_servers_certificate(&harness).await;
+        assert!(
+            names.iter().any(|n| n.eq_ignore_ascii_case(SERVER_NAME)),
+            "{configured:?}: {names:?}"
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|n| n.eq_ignore_ascii_case(SERVER_NAME))
+                .count(),
+            1,
+            "{names:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_display_that_checks_the_fixed_name_trusts_the_server_whatever_its_own_names_are() {
+    // The names the owner chose are not the display's business: it checks the fixed one against the
+    // authority it pinned, and connects by whatever address mDNS gave it.
+    let harness = start_with(false, |s| {
+        s.names = vec!["renamed-later.example".to_owned()]
+    })
+    .await;
+    let config = client_config(
+        Trust::Authority(harness.authority.certificate()),
+        None,
+        &[&rustls::version::TLS13],
+    );
+    let tcp = TcpStream::connect(harness.address).await.unwrap();
+    let mut stream = TlsConnector::from(Arc::new(config))
+        .connect(ServerName::try_from(SERVER_NAME).unwrap(), tcp)
+        .await
+        .expect("the fixed name should verify");
+    let response = send(&mut stream, "GET", CSRATTRS, None, b"").await;
+    assert_eq!(response.status, 200);
+}
+
+#[tokio::test]
+async fn a_display_certificate_is_not_taken_for_the_server() {
+    // A display's certificate has no name at all, so it can't pass as the server to another display
+    // that does not check key usage.
+    let harness = start().await;
+    let member = join(&harness, "kitchen", new_key()).await;
+    let (_, parsed) = x509_parser::parse_x509_certificate(&member.certificate).unwrap();
+    assert!(parsed.subject_alternative_name().unwrap().is_none());
 }

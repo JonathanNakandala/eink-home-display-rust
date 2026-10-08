@@ -21,10 +21,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::domain::models::device_id::DeviceId;
-use crate::domain::models::pairing::{Pairing, PairingCode, PairingState, PublicKey};
+use crate::domain::models::pairing::{
+    Pairing, PairingCode, PairingState, PublicKey, Replacement, Rollover,
+};
 use crate::domain::services::pairing_store::PairingStore;
 
 const FILE: &str = "pairings.json";
+/// The version before the last change, kept beside the file.
+const PREVIOUS: &str = "pairings.json.bak";
 /// Bumped when the layout changes, so an older server refuses a file it would misread.
 const VERSION: u32 = 1;
 
@@ -33,29 +37,76 @@ pub struct FilePairingStore {
     pairings: Mutex<BTreeMap<DeviceId, Pairing>>,
 }
 
+/// What to do when there is no file of pairings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Missing {
+    /// Start with none, and write the empty file at once, so that its being gone later means something.
+    StartEmpty,
+    /// An error. Used when the display's certificates already exist: a missing file then is a file that
+    /// was lost, and starting with no members would turn away every display that holds a good certificate.
+    Refuse,
+}
+
 impl FilePairingStore {
-    /// The pairings kept in `directory`, none if there is no file yet.
-    pub async fn open(directory: &Path) -> anyhow::Result<Self> {
+    /// The pairings kept in `directory`.
+    pub async fn open(directory: &Path, missing: Missing) -> anyhow::Result<Self> {
         tokio::fs::create_dir_all(directory)
             .await
             .with_context(|| format!("Failed to create {}", directory.display()))?;
         let path = directory.join(FILE);
-        let pairings = match tokio::fs::read(&path).await {
-            Ok(bytes) => parse(&bytes)
-                .with_context(|| format!("{} is not usable; fix or remove it", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+        let previous = directory.join(PREVIOUS);
+        let (pairings, found) = match tokio::fs::read(&path).await {
+            Ok(bytes) => (
+                parse(&bytes).with_context(|| {
+                    let hint = if previous.exists() {
+                        format!(
+                            " (the version before the last change is {})",
+                            previous.display()
+                        )
+                    } else {
+                        String::new()
+                    };
+                    format!("{} is not usable; fix or remove it{hint}", path.display())
+                })?,
+                true,
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if previous.exists() {
+                    return Err(anyhow!(
+                        "{} is missing but {} is there; restore it (copy the .bak back) or delete the .bak to start with no displays",
+                        path.display(),
+                        previous.display()
+                    ));
+                }
+                if missing == Missing::Refuse {
+                    return Err(anyhow!("{} is missing", path.display()));
+                }
+                (BTreeMap::new(), false)
+            }
             Err(e) => {
                 return Err(e).with_context(|| format!("Failed to read {}", path.display()));
             }
         };
-        Ok(Self {
+        let store = Self {
             path,
             pairings: Mutex::new(pairings),
-        })
+        };
+        if !found {
+            store.save(&BTreeMap::new()).await?;
+        }
+        Ok(store)
     }
 
     async fn save(&self, pairings: &BTreeMap<DeviceId, Pairing>) -> anyhow::Result<()> {
         let bytes = serde_json::to_vec_pretty(&File::from(pairings))?;
+        // Keep the version being replaced, for the day the new one turns out to be wrong (or is deleted).
+        if let Some(directory) = self.path.parent() {
+            match tokio::fs::copy(&self.path, directory.join(PREVIOUS)).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::warn!("Could not keep the previous list of displays: {e}"),
+            }
+        }
         write_atomically(&self.path, &bytes)
             .await
             .with_context(|| format!("Failed to save {}", self.path.display()))
@@ -132,6 +183,25 @@ struct Record {
     state: State,
     requested_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    /// Added after version 1 first shipped; a file without it is read as having none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollover: Option<RolloverRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replacement: Option<ReplacementRecord>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RolloverRecord {
+    key: String,
+    since: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReplacementRecord {
+    key: String,
+    code: String,
+    approved: bool,
+    requested_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -169,6 +239,16 @@ impl From<&BTreeMap<DeviceId, Pairing>> for File {
                     },
                     requested_at: p.requested_at,
                     updated_at: p.updated_at,
+                    rollover: p.rollover.as_ref().map(|r| RolloverRecord {
+                        key: STANDARD.encode(r.key.as_der()),
+                        since: r.since,
+                    }),
+                    replacement: p.replacement.as_ref().map(|r| ReplacementRecord {
+                        key: STANDARD.encode(r.key.as_der()),
+                        code: r.code.to_string(),
+                        approved: r.approved,
+                        requested_at: r.requested_at,
+                    }),
                 })
                 .collect(),
         }
@@ -187,27 +267,54 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, Pairing>> {
     for record in file.pairings {
         let device = DeviceId::parse(&record.device)
             .with_context(|| format!("The name {:?} is not valid", record.device))?;
-        let pairing = Pairing {
-            key: PublicKey::from_der(
-                STANDARD
-                    .decode(&record.key)
-                    .with_context(|| format!("The key of {device} is not base64"))?,
-            ),
-            code: PairingCode::parse(&record.code)
-                .with_context(|| format!("The code of {device} is not valid"))?,
-            state: match record.state {
-                State::Pending => PairingState::Pending,
-                State::Approved => PairingState::Approved,
-                State::Enrolled { serial, not_after } => {
-                    PairingState::Enrolled { serial, not_after }
-                }
-                State::Rejected => PairingState::Rejected,
-                State::Revoked => PairingState::Revoked,
-            },
-            requested_at: record.requested_at,
-            updated_at: record.updated_at,
-            device,
-        };
+        let pairing =
+            Pairing {
+                key: PublicKey::from_der(
+                    STANDARD
+                        .decode(&record.key)
+                        .with_context(|| format!("The key of {device} is not base64"))?,
+                ),
+                code: PairingCode::parse(&record.code)
+                    .with_context(|| format!("The code of {device} is not valid"))?,
+                state: match record.state {
+                    State::Pending => PairingState::Pending,
+                    State::Approved => PairingState::Approved,
+                    State::Enrolled { serial, not_after } => {
+                        PairingState::Enrolled { serial, not_after }
+                    }
+                    State::Rejected => PairingState::Rejected,
+                    State::Revoked => PairingState::Revoked,
+                },
+                requested_at: record.requested_at,
+                updated_at: record.updated_at,
+                rollover: record
+                    .rollover
+                    .map(|r| {
+                        Ok::<_, anyhow::Error>(Rollover {
+                            key: PublicKey::from_der(STANDARD.decode(&r.key).with_context(
+                                || format!("The new key of {device} is not base64"),
+                            )?),
+                            since: r.since,
+                        })
+                    })
+                    .transpose()?,
+                replacement: record
+                    .replacement
+                    .map(|r| {
+                        Ok::<_, anyhow::Error>(Replacement {
+                            key: PublicKey::from_der(STANDARD.decode(&r.key).with_context(
+                                || format!("The replacement key of {device} is not base64"),
+                            )?),
+                            code: PairingCode::parse(&r.code).with_context(|| {
+                                format!("The replacement code of {device} is not valid")
+                            })?,
+                            approved: r.approved,
+                            requested_at: r.requested_at,
+                        })
+                    })
+                    .transpose()?,
+                device,
+            };
         if pairings.insert(pairing.device.clone(), pairing).is_some() {
             return Err(anyhow!("A display is listed twice"));
         }
@@ -229,14 +336,71 @@ mod tests {
     fn pairing(name: &str, state: PairingState) -> Pairing {
         let device = DeviceId::parse(name).unwrap();
         let key = PublicKey::from_der(name.as_bytes().repeat(8));
-        Pairing {
-            code: PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key),
-            device,
-            key,
-            state,
-            requested_at: at(1),
-            updated_at: at(2),
-        }
+        let code = PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key);
+        let mut pairing = Pairing::new(device, key, code, state, at(1));
+        pairing.updated_at = at(2);
+        pairing
+    }
+
+    /// A member in the middle of changing keys, and another key asking to take its name.
+    fn changing_keys() -> Pairing {
+        let mut member = pairing(
+            "f-changing",
+            PairingState::Enrolled {
+                serial: "01".to_owned(),
+                not_after: at(30),
+            },
+        );
+        let next = PublicKey::from_der(vec![7; 91]);
+        member.rollover = Some(Rollover {
+            key: next,
+            since: at(3),
+        });
+        let other = PublicKey::from_der(vec![9; 91]);
+        member.replacement = Some(Replacement {
+            code: PairingCode::derive(&Fingerprint::of(b"authority"), &member.device, &other),
+            key: other,
+            approved: true,
+            requested_at: at(4),
+        });
+        member
+    }
+
+    #[tokio::test]
+    async fn a_key_change_and_a_replacement_waiting_survive_a_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        store.put(&changing_keys()).await.unwrap();
+        drop(store);
+        let reopened = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        assert_eq!(reopened.all().await.unwrap(), [changing_keys()]);
+    }
+
+    #[tokio::test]
+    async fn a_file_from_before_key_changes_existed_is_read_as_having_none() {
+        // The layout is only added to, so a file an earlier version wrote still loads.
+        let directory = tempfile::tempdir().unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        store
+            .put(&pairing("kitchen", PairingState::Pending))
+            .await
+            .unwrap();
+        let text = std::fs::read_to_string(directory.path().join(FILE)).unwrap();
+        assert!(
+            !text.contains("rollover") && !text.contains("replacement"),
+            "{text}"
+        );
+        let reopened = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        let loaded = reopened.all().await.unwrap();
+        assert!(loaded[0].rollover.is_none() && loaded[0].replacement.is_none());
     }
 
     fn every_state() -> Vec<Pairing> {
@@ -256,29 +420,133 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_no_file_there_are_no_pairings_and_none_is_made_until_one_is_kept() {
+    async fn with_no_file_there_are_no_pairings_and_an_empty_file_is_made_at_once() {
+        // Made at once so that its being gone later is something that can be noticed.
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         assert!(store.all().await.unwrap().is_empty());
+        assert!(directory.path().join(FILE).exists());
+        let reopened = FilePairingStore::open(directory.path(), Missing::Refuse)
+            .await
+            .unwrap();
+        assert!(reopened.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_is_refused_when_there_should_be_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = FilePairingStore::open(directory.path(), Missing::Refuse)
+            .await
+            .err()
+            .expect("should refuse");
+        assert!(error.to_string().contains("is missing"), "{error:#}");
+        // And nothing was made for it.
         assert!(!directory.path().join(FILE).exists());
+    }
+
+    #[tokio::test]
+    async fn the_version_before_the_last_change_is_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        store
+            .put(&pairing("kitchen", PairingState::Pending))
+            .await
+            .unwrap();
+        store
+            .put(&pairing("hall", PairingState::Pending))
+            .await
+            .unwrap();
+        let previous = std::fs::read_to_string(directory.path().join(PREVIOUS)).unwrap();
+        assert!(
+            previous.contains("kitchen") && !previous.contains("hall"),
+            "{previous}"
+        );
+        let current = std::fs::read_to_string(directory.path().join(FILE)).unwrap();
+        assert!(current.contains("kitchen") && current.contains("hall"));
+    }
+
+    #[tokio::test]
+    async fn a_deleted_file_with_its_backup_still_there_stops_start_up_and_says_how_to_restore() {
+        for missing in [Missing::StartEmpty, Missing::Refuse] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+                .await
+                .unwrap();
+            store
+                .put(&pairing("kitchen", PairingState::Pending))
+                .await
+                .unwrap();
+            store
+                .put(&pairing("hall", PairingState::Pending))
+                .await
+                .unwrap();
+            drop(store);
+            std::fs::remove_file(directory.path().join(FILE)).unwrap();
+
+            let error = FilePairingStore::open(directory.path(), missing)
+                .await
+                .err()
+                .expect("should refuse");
+            let text = format!("{error:#}");
+            assert!(
+                text.contains("is missing") && text.contains(".bak"),
+                "{text}"
+            );
+            // Nothing was made or overwritten, so the backup is still the way back.
+            assert!(!directory.path().join(FILE).exists());
+            assert!(directory.path().join(PREVIOUS).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_file_points_at_the_backup_when_there_is_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        store
+            .put(&pairing("kitchen", PairingState::Pending))
+            .await
+            .unwrap();
+        store
+            .put(&pairing("hall", PairingState::Pending))
+            .await
+            .unwrap();
+        drop(store);
+        std::fs::write(directory.path().join(FILE), "damaged").unwrap();
+        let error = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .err()
+            .expect("should refuse");
+        assert!(format!("{error:#}").contains(".bak"), "{error:#}");
     }
 
     #[tokio::test]
     async fn every_state_survives_a_restart() {
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         for p in every_state() {
             store.put(&p).await.unwrap();
         }
         drop(store);
-        let reopened = FilePairingStore::open(directory.path()).await.unwrap();
+        let reopened = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         assert_eq!(reopened.all().await.unwrap(), every_state());
     }
 
     #[tokio::test]
     async fn they_come_back_in_name_order_whatever_order_they_were_kept_in() {
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         for p in every_state().into_iter().rev() {
             store.put(&p).await.unwrap();
         }
@@ -304,7 +572,9 @@ mod tests {
     #[tokio::test]
     async fn keeping_a_display_again_replaces_it() {
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         store
             .put(&pairing("kitchen", PairingState::Pending))
             .await
@@ -316,21 +586,27 @@ mod tests {
         let all = store.all().await.unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].state, PairingState::Approved);
-        let reopened = FilePairingStore::open(directory.path()).await.unwrap();
+        let reopened = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         assert_eq!(reopened.all().await.unwrap(), all);
     }
 
     #[tokio::test]
     async fn a_removed_display_stays_removed_after_a_restart() {
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         for p in every_state() {
             store.put(&p).await.unwrap();
         }
         let gone = DeviceId::parse("c-enrolled").unwrap();
         store.remove(&gone).await.unwrap();
         assert_eq!(store.get(&gone).await.unwrap(), None);
-        let reopened = FilePairingStore::open(directory.path()).await.unwrap();
+        let reopened = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         assert_eq!(reopened.get(&gone).await.unwrap(), None);
         assert_eq!(reopened.all().await.unwrap().len(), 4);
         // Removing one that is not there is not an error.
@@ -340,16 +616,20 @@ mod tests {
     #[tokio::test]
     async fn no_temporary_file_is_left_behind() {
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         store
             .put(&pairing("kitchen", PairingState::Pending))
             .await
             .unwrap();
-        let files: Vec<String> = std::fs::read_dir(directory.path())
+        let mut files: Vec<String> = std::fs::read_dir(directory.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(files, [FILE]);
+        files.sort();
+        // The list, and the version before its last change; no half-written file between them.
+        assert_eq!(files, [FILE, PREVIOUS]);
     }
 
     #[tokio::test]
@@ -364,7 +644,7 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join(FILE);
             std::fs::write(&path, &contents).unwrap();
-            let error = FilePairingStore::open(directory.path())
+            let error = FilePairingStore::open(directory.path(), Missing::StartEmpty)
                 .await
                 .err()
                 .unwrap_or_else(|| panic!("should refuse {contents}"));
@@ -376,7 +656,9 @@ mod tests {
     #[tokio::test]
     async fn the_same_display_listed_twice_is_an_error() {
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         store
             .put(&pairing("kitchen", PairingState::Pending))
             .await
@@ -386,7 +668,7 @@ mod tests {
         let record = file["pairings"][0].clone();
         file["pairings"].as_array_mut().unwrap().push(record);
         std::fs::write(directory.path().join(FILE), file.to_string()).unwrap();
-        let error = FilePairingStore::open(directory.path())
+        let error = FilePairingStore::open(directory.path(), Missing::StartEmpty)
             .await
             .err()
             .unwrap();
@@ -398,7 +680,9 @@ mod tests {
     async fn a_failed_write_changes_nothing_in_memory_or_on_disk() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
-        let store = FilePairingStore::open(directory.path()).await.unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         store
             .put(&pairing("kitchen", PairingState::Pending))
             .await
@@ -428,7 +712,11 @@ mod tests {
     #[tokio::test]
     async fn two_changes_at_once_both_land() {
         let directory = tempfile::tempdir().unwrap();
-        let store = std::sync::Arc::new(FilePairingStore::open(directory.path()).await.unwrap());
+        let store = std::sync::Arc::new(
+            FilePairingStore::open(directory.path(), Missing::StartEmpty)
+                .await
+                .unwrap(),
+        );
         let tasks: Vec<_> = (0..20)
             .map(|i| {
                 let store = store.clone();
@@ -444,7 +732,9 @@ mod tests {
             task.await.unwrap();
         }
         assert_eq!(store.all().await.unwrap().len(), 20);
-        let reopened = FilePairingStore::open(directory.path()).await.unwrap();
+        let reopened = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
         assert_eq!(reopened.all().await.unwrap().len(), 20);
     }
 }

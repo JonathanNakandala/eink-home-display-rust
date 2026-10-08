@@ -106,6 +106,64 @@ pub fn render(status: &Status) -> String {
         }
     }
 
+    if !status.members.is_empty() {
+        gauge(
+            &mut out,
+            "eink_member_state",
+            "1 for where the display stands in the certificate authority, 0 for the other states.",
+        );
+        for member in &status.members {
+            let name = escape(&member.name);
+            for state in ["pending", "approved", "member", "rejected", "revoked"] {
+                let _ = writeln!(
+                    out,
+                    "eink_member_state{{device=\"{name}\",state=\"{state}\"}} {}",
+                    u8::from(member.state == state)
+                );
+            }
+        }
+        gauge(
+            &mut out,
+            "eink_member_certificate_expiry_timestamp_seconds",
+            "When the latest certificate a member was given ends. Alert on this being soon: a display renews with a third of its life left, so one that is close to the end has stopped renewing. Once past, it gets a new one by itself when switched on.",
+        );
+        for member in &status.members {
+            if let Some(at) = member.certificate_not_after {
+                let _ = writeln!(
+                    out,
+                    "eink_member_certificate_expiry_timestamp_seconds{{device=\"{}\"}} {}",
+                    escape(&member.name),
+                    at.timestamp()
+                );
+            }
+        }
+        gauge(
+            &mut out,
+            "eink_member_replacement_waiting",
+            "1 if a different key is waiting for the owner to approve it taking the display's name.",
+        );
+        for member in &status.members {
+            let _ = writeln!(
+                out,
+                "eink_member_replacement_waiting{{device=\"{}\"}} {}",
+                escape(&member.name),
+                u8::from(member.replacement_waiting)
+            );
+        }
+        gauge(
+            &mut out,
+            "eink_member_changing_keys",
+            "1 if the display has been given a certificate for a new key and has not used it yet.",
+        );
+        for member in &status.members {
+            let _ = writeln!(
+                out,
+                "eink_member_changing_keys{{device=\"{}\"}} {}",
+                escape(&member.name),
+                u8::from(member.changing_keys)
+            );
+        }
+    }
     if !status.devices.is_empty() {
         gauge(
             &mut out,
@@ -264,6 +322,7 @@ mod tests {
     use super::*;
     use crate::application::devices::DeviceStatus;
     use crate::application::status::ImageStatus;
+    use crate::application::status::MemberStatus;
     use crate::domain::models::render_report::SourceReport;
 
     fn at() -> chrono::DateTime<chrono_tz::Tz> {
@@ -301,11 +360,65 @@ mod tests {
                 last_wake_seconds: Some(24),
                 last_image: None,
             }],
+            members: vec![
+                MemberStatus {
+                    name: "kitchen".to_owned(),
+                    state: "member",
+                    certificate_not_after: Some(
+                        chrono_tz::Europe::London
+                            .with_ymd_and_hms(2026, 12, 25, 12, 0, 0)
+                            .unwrap(),
+                    ),
+                    certificate_expires_in_seconds: Some(172_800),
+                    certificate_expired: false,
+                    changing_keys: true,
+                    replacement_waiting: false,
+                },
+                MemberStatus {
+                    name: "hall".to_owned(),
+                    state: "pending",
+                    certificate_not_after: None,
+                    certificate_expires_in_seconds: None,
+                    certificate_expired: false,
+                    changing_keys: false,
+                    replacement_waiting: true,
+                },
+            ],
             next_render: None,
             schedule: Vec::new(),
             uptime_seconds: 3600,
             version: "1.2.3",
         }
+    }
+
+    #[test]
+    fn exposes_where_each_display_stands_in_the_authority() {
+        let text = render(&status());
+        for line in [
+            "eink_member_state{device=\"kitchen\",state=\"member\"} 1",
+            "eink_member_state{device=\"kitchen\",state=\"pending\"} 0",
+            "eink_member_state{device=\"hall\",state=\"pending\"} 1",
+            "eink_member_state{device=\"hall\",state=\"member\"} 0",
+            "eink_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"} 1798200000",
+            "eink_member_replacement_waiting{device=\"hall\"} 1",
+            "eink_member_replacement_waiting{device=\"kitchen\"} 0",
+            "eink_member_changing_keys{device=\"kitchen\"} 1",
+            "eink_member_changing_keys{device=\"hall\"} 0",
+        ] {
+            assert!(
+                text.lines().any(|l| l == line),
+                "missing {line:?} in:\n{text}"
+            );
+        }
+        // A display with no certificate has no expiry to report, not a zero that would alert.
+        assert!(!text.contains("expiry_timestamp_seconds{device=\"hall\"}"));
+    }
+
+    #[test]
+    fn says_nothing_about_the_authority_when_there_are_no_members() {
+        let mut plain = status();
+        plain.members.clear();
+        assert!(!render(&plain).contains("eink_member"));
     }
 
     #[test]
