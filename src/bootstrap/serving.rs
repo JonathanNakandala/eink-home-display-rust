@@ -26,6 +26,7 @@ use crate::adapters::est_server::{Access, EstServer, EstSettings, guarded};
 use crate::adapters::image_server::{self, SecureOffer, ServerSettings};
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
+use crate::application::handshakes::Handshakes;
 use crate::config::server::{ServerConfig, Transport};
 use crate::domain::models::display::ImageFormat;
 use crate::domain::services::certificate_authority::CertificateAuthority;
@@ -64,6 +65,8 @@ impl Listening {
 pub struct Security {
     pub authority: Arc<PrivateAuthority>,
     pub enrollment: Arc<Enrollment>,
+    /// Counted by the HTTPS server, reported by `/metrics`.
+    pub handshakes: Arc<Handshakes>,
 }
 
 /// Opens the authority and the list of displays if `config.transport` uses them, so they can be given to
@@ -84,6 +87,7 @@ pub async fn open_security(
     Ok(Some(Security {
         authority,
         enrollment,
+        handshakes: Arc::default(),
     }))
 }
 
@@ -114,6 +118,7 @@ pub async fn start(
     let Security {
         authority,
         enrollment,
+        handshakes,
     } = security.context("HTTPS is served but the authority was not opened")?;
     let est_settings = EstSettings {
         bind: config.tls.bind,
@@ -135,7 +140,8 @@ pub async fn start(
             authority.clone(),
             enrollment.clone(),
             Some(secure_app),
-        )?;
+        )?
+        .counting(handshakes);
         let (http_address, https_address) = (http.local_addr()?, https.local_addr()?);
         let offer = SecureOffer {
             port: https_address.port(),
@@ -165,7 +171,8 @@ pub async fn start(
         authority.clone(),
         enrollment.clone(),
         Some(secure_app),
-    )?;
+    )?
+    .counting(handshakes);
     let address = https.local_addr()?;
     let mut announced = settings;
     announced.bind = config.tls.bind;
@@ -418,6 +425,7 @@ mod tests {
             address,
             enrollment,
             authority,
+            handshakes: Arc::default(),
             server: tokio::spawn(listening.run()),
             _directory: pki,
         }

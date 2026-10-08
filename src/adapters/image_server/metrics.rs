@@ -23,6 +23,18 @@ const HEALTH_STATES: [(Health, &str); 5] = [
     (Health::Stale, "stale"),
 ];
 
+/// How many TLS connections began with a full handshake and how many resumed a session. A display that
+/// wakes every few minutes should mostly resume; a count that stays at full means tickets are not being used.
+pub fn handshakes(out: &mut String, (full, resumed): (u64, u64)) {
+    let _ = writeln!(
+        out,
+        "# HELP eink_tls_handshakes_total TLS connections accepted since the service started, by how they began.\n\
+         # TYPE eink_tls_handshakes_total counter\n\
+         eink_tls_handshakes_total{{kind=\"full\"}} {full}\n\
+         eink_tls_handshakes_total{{kind=\"resumed\"}} {resumed}"
+    );
+}
+
 pub fn render(status: &Status) -> String {
     let mut out = String::new();
     let gauge = |out: &mut String, name: &str, help: &str| {
@@ -324,6 +336,19 @@ mod tests {
     use crate::application::status::ImageStatus;
     use crate::application::status::MemberStatus;
     use crate::domain::models::render_report::SourceReport;
+
+    #[test]
+    fn handshakes_are_counted_by_how_they_began() {
+        let mut out = String::new();
+        handshakes(&mut out, (7, 42));
+        assert_eq!(
+            out,
+            "# HELP eink_tls_handshakes_total TLS connections accepted since the service started, by how they began.\n\
+             # TYPE eink_tls_handshakes_total counter\n\
+             eink_tls_handshakes_total{kind=\"full\"} 7\n\
+             eink_tls_handshakes_total{kind=\"resumed\"} 42\n"
+        );
+    }
 
     fn at() -> chrono::DateTime<chrono_tz::Tz> {
         London.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap()

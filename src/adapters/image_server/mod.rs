@@ -70,6 +70,9 @@ pub struct Handles {
     /// Where each display stands in the certificate authority, for `/status` and `/metrics`, when HTTPS
     /// is served.
     pub members: Option<Arc<crate::application::enrollment::Enrollment>>,
+    /// How many TLS connections were full handshakes and how many resumed one, for `/metrics`, when HTTPS is
+    /// served.
+    pub handshakes: Option<Arc<crate::application::handshakes::Handshakes>>,
 }
 
 /// What the server says about itself in its API description.
