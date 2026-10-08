@@ -191,8 +191,9 @@ async fn open_authority(
     init_pki: bool,
 ) -> anyhow::Result<(Arc<PrivateAuthority>, Arc<Enrollment>)> {
     let tls = &config.tls;
-    let authority_there = tls.directory.join("authority.pem").exists()
-        || tls.directory.join("authority.key").exists();
+    let authority_there = tls.directory.join("root.pem").exists()
+        || tls.directory.join("root.key").exists()
+        || tls.directory.join("intermediate.pem").exists();
     let create = if init_pki || config.transport == Transport::PreferHttps {
         Create::IfMissing
     } else {
@@ -210,13 +211,14 @@ async fn open_authority(
     );
     let remaining = authority.not_after() - clock.now().to_utc();
     log::info!(
-        "Certificate authority {} (valid until {})",
+        "Certificate authority: root {} (valid until {}), intermediate valid until {}",
         authority.fingerprint(),
-        authority.not_after().format("%Y-%m-%d")
+        authority.not_after().format("%Y-%m-%d"),
+        authority.intermediate_not_after().format("%Y-%m-%d")
     );
     if remaining < AUTHORITY_WARNING {
         log::warn!(
-            "The certificate authority ends on {}; every display has to be paired again by then",
+            "The certificate authority's root ends on {}; every display has to be paired again by then",
             authority.not_after().format("%Y-%m-%d")
         );
     }
@@ -514,8 +516,8 @@ mod tests {
     #[tokio::test]
     async fn an_unreadable_authority_stops_start_up_and_is_left_alone() {
         let pki = tempfile::tempdir().unwrap();
-        std::fs::write(pki.path().join("authority.pem"), "not a certificate").unwrap();
-        std::fs::write(pki.path().join("authority.key"), "not a key").unwrap();
+        std::fs::write(pki.path().join("root.pem"), "not a certificate").unwrap();
+        std::fs::write(pki.path().join("intermediate.pem"), "not a key").unwrap();
         let error = format!(
             "{:#}",
             listening(&config(Transport::Https, pki.path()))
@@ -525,7 +527,7 @@ mod tests {
         );
         assert!(error.contains("authority"), "{error}");
         assert_eq!(
-            std::fs::read_to_string(pki.path().join("authority.key")).unwrap(),
+            std::fs::read_to_string(pki.path().join("intermediate.pem")).unwrap(),
             "not a key"
         );
     }
@@ -551,7 +553,7 @@ mod tests {
 
         // Asked to, it makes both the authority and an empty list.
         listening(&config(Transport::Https, &pki)).await.unwrap();
-        assert!(pki.join("authority.pem").exists() && pki.join("pairings.json").exists());
+        assert!(pki.join("root.pem").exists() && pki.join("pairings.json").exists());
     }
 
     #[tokio::test]
@@ -561,7 +563,7 @@ mod tests {
         restarted(&config(Transport::PreferHttps, pki.path()))
             .await
             .unwrap();
-        assert!(pki.path().join("authority.pem").exists());
+        assert!(pki.path().join("root.pem").exists());
         assert!(pki.path().join("pairings.json").exists());
     }
 

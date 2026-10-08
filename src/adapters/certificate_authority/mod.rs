@@ -1,10 +1,19 @@
 //! The server's own certificate authority, made with `rcgen`. It signs the certificates of the displays
-//! that have been approved (and, later, the server's own), so nothing here depends on a public
-//! authority or a domain name.
+//! that have been approved and the server's own, so nothing here depends on a public authority or a
+//! domain name.
 //!
-//! The authority is a P-256 key and a long-lived certificate kept in two files (see `storage`). What a
-//! certificate says is decided here, never by a request: the display's name and key, a short life, and
-//! the one use it is for, proving who is connecting.
+//! It is two levels, as a private authority should be:
+//!
+//! - the **root**: long-lived, signs nothing but intermediates (`pathlen:1`). It is what a display pins
+//!   and what a pairing code is worked out from, so it can never change without pairing every display
+//!   again. Its key is used only to make an intermediate (at the start, and when one is due), never to
+//!   serve a request, so it need not be on the machine that serves, and `PrivateAuthority` never holds it.
+//! - an **intermediate**: shorter-lived, signs the server's and the displays' certificates
+//!   (`pathlen:0`). If it is lost or leaks, a new one is signed by the root and no display is paired
+//!   again.
+//!
+//! What a certificate says is decided here, never by a request: the display's name and key, a short life,
+//! and the one use it is for, proving who is connecting.
 
 mod request;
 mod storage;
@@ -18,21 +27,26 @@ use rcgen::{
     Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PublicKeyData, SanType, SerialNumber,
     SignatureAlgorithm,
 };
+use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use time::OffsetDateTime;
 use x509_parser::prelude::FromDer;
 
-pub use self::storage::{Create, open};
+pub use self::storage::{Create, open, rotate_intermediate};
 use crate::domain::models::pairing::Fingerprint;
 use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,
 };
 
-/// The authority's name, as it shows in a certificate viewer.
-const NAME: &str = "E-ink home display authority";
-/// Long enough that it doesn't expire in the life of a display, which can't be told to trust a new one
-/// without pairing again. Its key never leaves this machine, so a long life costs little.
-const AUTHORITY_YEARS: i64 = 20;
+const ROOT_NAME: &str = "E-ink home display root";
+const INTERMEDIATE_NAME: &str = "E-ink home display issuing authority";
+/// Long enough that it doesn't expire in the life of a display, which can't be told to trust a new root
+/// without pairing again.
+const ROOT_YEARS: i64 = 20;
+/// Short enough to be replaced from time to time, which keeps the means of doing so in working order.
+const INTERMEDIATE_YEARS: i64 = 5;
+/// An intermediate with less than this left is replaced (see `storage`).
+pub const ROTATE_WITHIN: Duration = Duration::days(365);
 /// A certificate starts a little before it was made, so a display whose clock is a few minutes behind
 /// doesn't find it "not yet valid".
 const BACKDATE: Duration = Duration::hours(1);
@@ -40,14 +54,32 @@ const BACKDATE: Duration = Duration::hours(1);
 /// The server's own certificate and key, for it to prove who it is to a display.
 pub struct ServerIdentity {
     pub certificate: CertificateDer<'static>,
+    /// The intermediate that signed it, sent after it so a display can build the path to the root it
+    /// pins without having kept the intermediate.
+    pub intermediate: CertificateDer<'static>,
     pub key: PrivateKeyDer<'static>,
 }
 
+/// What a new authority is kept as (see `storage`).
+pub struct AuthorityFiles {
+    /// The root certificate. Public: it is what displays are given to trust the server by.
+    pub root_certificate: String,
+    /// The root's key. Used only to make intermediates; keep it somewhere safe, off the server if you can.
+    pub root_key: String,
+    /// The intermediate's certificate and then its key, in one file so they are always replaced together.
+    pub intermediate: String,
+}
+
+/// The authority as it is used to serve. It holds the intermediate's key, not the root's.
 pub struct PrivateAuthority {
     issuer: Issuer<'static, KeyPair>,
-    certificate: Vec<u8>,
+    root: Vec<u8>,
+    intermediate: Vec<u8>,
+    /// Earlier intermediates that have not ended yet: certificates they signed are still good.
+    retired: Vec<Vec<u8>>,
     fingerprint: Fingerprint,
-    not_after: DateTime<Utc>,
+    root_not_after: DateTime<Utc>,
+    intermediate_not_after: DateTime<Utc>,
 }
 
 /// A display's public key, in the form `rcgen` signs.
@@ -65,56 +97,145 @@ impl PublicKeyData for SubjectKey {
     }
 }
 
+/// An authority's certificate: `path_len` more authorities may stand below it.
+fn authority_params(
+    name: &str,
+    now: DateTime<Utc>,
+    years: i64,
+    path_len: u8,
+) -> anyhow::Result<CertificateParams> {
+    let mut params = CertificateParams::default();
+    params.distinguished_name = DistinguishedName::new();
+    params.distinguished_name.push(DnType::CommonName, name);
+    params.is_ca = IsCa::Ca(BasicConstraints::Constrained(path_len));
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    params.not_before = to_time(now - BACKDATE)?;
+    params.not_after = to_time(now + Duration::days(365 * years))?;
+    params.serial_number = Some(serial()?);
+    params.use_authority_key_identifier_extension = true;
+    Ok(params)
+}
+
+fn key_from_pem(pem: &str, what: &str) -> anyhow::Result<KeyPair> {
+    let der = PrivatePkcs8KeyDer::from_pem_slice(pem.as_bytes())
+        .map_err(|e| anyhow!("The {what} key is not a valid PEM private key: {e}"))?;
+    KeyPair::from_pkcs8_der_and_sign_algo(&der, &PKCS_ECDSA_P256_SHA256)
+        .with_context(|| format!("The {what} key is not a P-256 key"))
+}
+
+fn certificate_from_pem(pem: &str, what: &str) -> anyhow::Result<CertificateDer<'static>> {
+    CertificateDer::from_pem_slice(pem.as_bytes())
+        .map_err(|e| anyhow!("The {what} certificate is not valid PEM: {e}"))
+}
+
+fn end_of(parsed: &x509_parser::certificate::X509Certificate<'_>) -> anyhow::Result<DateTime<Utc>> {
+    DateTime::from_timestamp(parsed.validity().not_after.timestamp(), 0)
+        .context("A certificate has an impossible end date")
+}
+
+/// A new intermediate signed by the root, as the contents of the intermediate's file: its certificate and
+/// then its key. This is the one thing the root's key is for.
+pub fn new_intermediate(
+    root_certificate_pem: &str,
+    root_key_pem: &str,
+    now: DateTime<Utc>,
+) -> anyhow::Result<String> {
+    let root_certificate = certificate_from_pem(root_certificate_pem, "root")?;
+    let root_key = key_from_pem(root_key_pem, "root")?;
+    let (_, root) = x509_parser::parse_x509_certificate(&root_certificate)
+        .map_err(|e| anyhow!("The root certificate can't be read: {e}"))?;
+    if root.public_key().raw != root_key.subject_public_key_info().as_slice() {
+        return Err(anyhow!(
+            "The root key does not belong to the root certificate"
+        ));
+    }
+    let root_end = end_of(&root)?;
+    let root_issuer = Issuer::from_ca_cert_der(&root_certificate, root_key)
+        .context("Failed to use the root certificate to sign with")?;
+
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+        .context("Failed to generate the intermediate's key")?;
+    let mut params = authority_params(INTERMEDIATE_NAME, now, INTERMEDIATE_YEARS, 0)?;
+    // Never outlive the root: nothing below an ended authority is trusted.
+    let end = (now + Duration::days(365 * INTERMEDIATE_YEARS)).min(root_end);
+    params.not_after = to_time(end)?;
+    let certificate = params
+        .signed_by(&key, &root_issuer)
+        .context("Failed to sign the intermediate's certificate")?;
+    Ok(format!("{}{}", certificate.pem(), key.serialize_pem()))
+}
+
 impl PrivateAuthority {
-    /// A new authority, and the two files' contents (certificate, then key) to keep it by.
-    pub fn generate(now: DateTime<Utc>) -> anyhow::Result<(Self, String, String)> {
+    /// A new root and intermediate, and the three files' contents to keep them by.
+    pub fn generate(now: DateTime<Utc>) -> anyhow::Result<(Self, AuthorityFiles)> {
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .context("Failed to generate the authority's key")?;
-        let mut params = CertificateParams::default();
-        params.distinguished_name = DistinguishedName::new();
-        params.distinguished_name.push(DnType::CommonName, NAME);
-        // It may sign certificates for displays and for nothing beneath them: not for another authority.
-        params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params.not_before = to_time(now - BACKDATE)?;
-        params.not_after = to_time(now + Duration::days(365 * AUTHORITY_YEARS))?;
-        params.serial_number = Some(serial()?);
+            .context("Failed to generate the root's key")?;
+        let params = authority_params(ROOT_NAME, now, ROOT_YEARS, 1)?;
         let certificate = params
             .self_signed(&key)
-            .context("Failed to sign the authority's certificate")?;
-        let (certificate_pem, key_pem) = (certificate.pem(), key.serialize_pem());
-        let authority = Self::from_pem(&certificate_pem, &key_pem)?;
-        Ok((authority, certificate_pem, key_pem))
+            .context("Failed to sign the root's certificate")?;
+        let (root_certificate, root_key) = (certificate.pem(), key.serialize_pem());
+        let intermediate = new_intermediate(&root_certificate, &root_key, now)?;
+        let authority = Self::from_pem(&root_certificate, &intermediate, &[], now)?;
+        Ok((
+            authority,
+            AuthorityFiles {
+                root_certificate,
+                root_key,
+                intermediate,
+            },
+        ))
     }
 
-    /// An authority from its saved files, checked to belong together and to be an authority.
-    pub fn from_pem(certificate_pem: &str, key_pem: &str) -> anyhow::Result<Self> {
-        use rustls_pki_types::CertificateDer;
-        use rustls_pki_types::pem::PemObject;
-
-        let certificate = CertificateDer::from_pem_slice(certificate_pem.as_bytes())
-            .map_err(|e| anyhow!("The authority certificate is not valid PEM: {e}"))?;
-        let key = KeyPair::from_pem(key_pem).context("The authority key is not a valid key")?;
-
-        let (_, parsed) = x509_parser::parse_x509_certificate(&certificate)
-            .map_err(|e| anyhow!("The authority certificate can't be read: {e}"))?;
-        if !parsed.is_ca() {
-            return Err(anyhow!("The authority certificate is not a CA certificate"));
+    /// An authority from its saved files, checked to belong together. `intermediate_pem` is the
+    /// intermediate's certificate and key; `retired` are the PEM of earlier intermediates. Ones that
+    /// have ended by `now` are dropped.
+    pub fn from_pem(
+        root_pem: &str,
+        intermediate_pem: &str,
+        retired: &[String],
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<Self> {
+        let root = certificate_from_pem(root_pem, "root")?;
+        let (_, root_parsed) = x509_parser::parse_x509_certificate(&root)
+            .map_err(|e| anyhow!("The root certificate can't be read: {e}"))?;
+        if !root_parsed.is_ca() {
+            return Err(anyhow!("The root certificate is not a CA certificate"));
         }
+        root_parsed
+            .verify_signature(None)
+            .map_err(|_| anyhow!("The root certificate is not self-signed"))?;
+
+        let intermediate = certificate_from_pem(intermediate_pem, "intermediate")?;
+        let key = key_from_pem(intermediate_pem, "intermediate")?;
+        let (_, parsed) = x509_parser::parse_x509_certificate(&intermediate)
+            .map_err(|e| anyhow!("The intermediate certificate can't be read: {e}"))?;
+        check_intermediate(&parsed, &root_parsed)?;
         if parsed.public_key().raw != key.subject_public_key_info().as_slice() {
             return Err(anyhow!(
-                "The authority key does not belong to the authority certificate"
+                "The intermediate key does not belong to the intermediate certificate"
             ));
         }
-        let not_after = DateTime::from_timestamp(parsed.validity().not_after.timestamp(), 0)
-            .context("The authority certificate has an impossible end date")?;
-        let issuer = Issuer::from_ca_cert_der(&certificate, key)
-            .context("Failed to use the authority certificate to sign with")?;
+        let mut earlier = Vec::new();
+        for pem in retired {
+            let der = certificate_from_pem(pem, "retired intermediate")?;
+            let (_, old) = x509_parser::parse_x509_certificate(&der)
+                .map_err(|e| anyhow!("A retired intermediate can't be read: {e}"))?;
+            check_intermediate(&old, &root_parsed)?;
+            if end_of(&old)? > now && der.as_ref() != intermediate.as_ref() {
+                earlier.push(der.to_vec());
+            }
+        }
+        let issuer = Issuer::from_ca_cert_der(&intermediate, key)
+            .context("Failed to use the intermediate certificate to sign with")?;
         Ok(Self {
             issuer,
-            fingerprint: Fingerprint::of(&certificate),
-            certificate: certificate.to_vec(),
-            not_after,
+            fingerprint: Fingerprint::of(&root),
+            root_not_after: end_of(&root_parsed)?,
+            intermediate_not_after: end_of(&parsed)?,
+            root: root.to_vec(),
+            intermediate: intermediate.to_vec(),
+            retired: earlier,
         })
     }
 
@@ -161,19 +282,62 @@ impl PrivateAuthority {
             .context("Failed to sign the server's certificate")?;
         Ok(ServerIdentity {
             certificate: certificate.der().clone(),
+            intermediate: CertificateDer::from(self.intermediate.clone()),
             key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
         })
     }
 
-    /// When the authority's certificate ends, after which nothing it signed is trusted.
+    /// When the root ends, after which nothing is trusted and every display has to be paired again.
     pub fn not_after(&self) -> DateTime<Utc> {
-        self.not_after
+        self.root_not_after
     }
+
+    /// When the intermediate in use ends. Before then it is replaced (see `rotate_intermediate`).
+    pub fn intermediate_not_after(&self) -> DateTime<Utc> {
+        self.intermediate_not_after
+    }
+
+    /// Every intermediate whose certificates are still good: the one in use, then earlier ones. A display
+    /// need not send its intermediate; the server completes the path from these.
+    pub fn intermediates(&self) -> Vec<&[u8]> {
+        std::iter::once(&self.intermediate)
+            .chain(&self.retired)
+            .map(Vec::as_slice)
+            .collect()
+    }
+}
+
+/// Checks `intermediate` is an authority that may sign certificates but not further authorities, and that
+/// `root` signed it.
+fn check_intermediate(
+    intermediate: &x509_parser::certificate::X509Certificate<'_>,
+    root: &x509_parser::certificate::X509Certificate<'_>,
+) -> anyhow::Result<()> {
+    if !intermediate.is_ca() {
+        return Err(anyhow!("The intermediate is not a CA certificate"));
+    }
+    let constraints = intermediate
+        .basic_constraints()
+        .ok()
+        .flatten()
+        .map(|c| c.value.path_len_constraint);
+    if constraints != Some(Some(0)) {
+        return Err(anyhow!(
+            "The intermediate may sign more than certificates (its path length is not 0)"
+        ));
+    }
+    intermediate
+        .verify_signature(Some(root.public_key()))
+        .map_err(|_| anyhow!("The intermediate was not signed by this root"))
 }
 
 impl CertificateAuthority for PrivateAuthority {
     fn certificate(&self) -> &[u8] {
-        &self.certificate
+        &self.root
+    }
+
+    fn intermediate(&self) -> Option<&[u8]> {
+        Some(&self.intermediate)
     }
 
     fn fingerprint(&self) -> Fingerprint {
