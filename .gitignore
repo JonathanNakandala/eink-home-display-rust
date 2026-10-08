@@ -15,3 +15,5 @@ config/custom.toml
 /esphome/build
 # ESPHome writes its own on every run, repeating the lines above
 /esphome/.gitignore
+# Made by `make -C esphome vscode`: paths on this machine
+/.vscode/c_cpp_properties.json
