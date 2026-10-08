@@ -139,9 +139,14 @@ it downloads and draws the new image, then sleeps until the next scheduled rende
 
 ### How the device finds the server
 
-[eink_discovery.h](eink_discovery.h) queries mDNS for `_http._tcp` services and takes the first one
-whose TXT record has `txtvers=1` and a `path`, with an IPv4 address and a port. The result is
-remembered in flash, so a normal wake does no lookup:
+[eink_discovery.h](eink_discovery.h) queries mDNS and takes the first service whose TXT record has `txtvers=1` and a
+`path`, with an IPv4 address and a port. Which service type it browses depends on `server_transport` (a substitution in
+[packages/server.yaml](packages/server.yaml)): `_https._tcp` for `https`, and `_http._tcp` for `http` and `prefer-https`,
+as under "Finding it" below. What to make of an answer is decided in [eink_service.h](eink_service.h), which is tested on
+a computer. Besides the HTTP port it remembers the `tlsport` the server announces, for the secure transport; nothing
+uses it yet, so whatever `server_transport` says, the firmware still speaks plain HTTP. An unknown value stops the
+build, so a typo can't quietly leave a display on plain HTTP. The result is remembered in flash, so a normal wake does
+no lookup:
 
 1. Download from the remembered address (or `fallback_url` before there is one).
 2. If that fails, look the server up once, remember what is found, and download again.
@@ -438,7 +443,10 @@ make -C esphome test
 | [eink_wake.h](eink_wake.h) | sleep length from the plan, the backoff, the time a wake has used, the memory the image needs | yes |
 | [eink_battery.h](eink_battery.h) | charge from voltage, the low/empty latches and what to do about them | yes |
 | [eink_report.h](eink_report.h) | the check-in query string, failure names, what is remembered of the last wake | yes |
-| [eink_format.h](eink_format.h) | the server's URL from an address, an age in words | yes |
+| [eink_format.h](eink_format.h) | the server's URL from an address, an age in words, the notices | yes |
+| [eink_service.h](eink_service.h) | which of the servers a scan found to use, and its HTTP and HTTPS ports | yes |
+| [eink_plan.h](eink_plan.h), [eink_clock.h](eink_clock.h) | whether to redraw after a plan; whether the clock can be believed | yes |
+| [eink_state.h](eink_state.h) | the typed state one wake keeps between its scripts | no: nothing to test but the types |
 | [eink_telemetry.h](eink_telemetry.h) | the radio signal and RTC memory behind the report | no: needs the chip |
 | [eink_discovery.h](eink_discovery.h), [eink_health.h](eink_health.h), [eink_notice.h](eink_notice.h) | mDNS, the heap, the panel | no: need the chip |
 

@@ -13,6 +13,11 @@ substitutions:
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
   # Empty takes the first image server found.
   server_name: ""
+  # How this display reaches the server: http (plain HTTP only), prefer-https (HTTPS when the server offers it and
+  # the display has joined, else HTTP) or https (HTTPS only, never HTTP). Anything else stops the build. Only `https`
+  # looks under `_https._tcp`; the others look under `_http._tcp`. The HTTPS side is not built into the firmware yet,
+  # so whatever is set here, it still speaks plain HTTP: it only remembers where the server says its HTTPS is.
+  server_transport: http
 
 http_request:
   # Plain HTTP on the LAN; TLS would cost a lot of RAM for nothing.
@@ -30,6 +35,11 @@ globals:
     initial_value: '0'
 
   - id: server_port
+    type: uint16_t
+    restore_value: yes
+    initial_value: '0'
+  # Where the server says its HTTPS is (0 if it does not offer it). Not used yet.
+  - id: server_tls_port
     type: uint16_t
     restore_value: yes
     initial_value: '0'
@@ -218,9 +228,11 @@ script:
     then:
       - lambda: |-
           id(searched) = true;
-          eink_discovery::Server server;
-          id(server_found) = eink_discovery::find(server, "${server_name}");
+          eink_service::Server server;
+          constexpr auto transport = eink_service::transport_from("${server_transport}");
+          id(server_found) = eink_discovery::find(server, "${server_name}", transport);
           if (!id(server_found))
             return;
           id(server_ip) = server.ip;
           id(server_port) = server.port;
+          id(server_tls_port) = server.tls_port;
