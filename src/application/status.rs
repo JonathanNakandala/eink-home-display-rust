@@ -522,7 +522,7 @@ mod tests {
         });
         changing.replacement = Some(Replacement {
             key: PublicKey::from_der(vec![3; 91]),
-            code: PairingCode::parse("0000-0001").unwrap(),
+            code: PairingCode::parse("0000-0000-0001").unwrap(),
             approved: false,
             requested_at: at(10, 0, 0).to_utc(),
         });

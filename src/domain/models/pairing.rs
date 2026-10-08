@@ -70,11 +70,16 @@ impl fmt::Debug for PublicKey {
     }
 }
 
-/// How many characters a code has: eight of Crockford's Base32 (5 bits each) is 40 bits. A short code can
-/// be matched by someone in the middle who generates keys until one gives the code they need; at 40
-/// bits that is not worth attempting, and it is the same strength as twelve decimal digits in two thirds
-/// of the length.
-const LENGTH: usize = 8;
+/// How many characters a code has: twelve of Crockford's Base32 (5 bits each) is 60 bits.
+///
+/// The code is worked out from things an attacker in the middle can see and choose (the root they show,
+/// the name, the key), and nothing in it is random or secret, so they can search offline for values that
+/// give the code the owner will see. At 40 bits that is minutes to hours on one graphics card; at 60 it
+/// is not worth attempting. (A commitment step or a password-authenticated exchange would let the code be
+/// shorter; see the notes with the pairing protocol. This is the simple way to be safe.)
+const LENGTH: usize = 12;
+/// How many bits of the hash the code holds.
+const BITS: u32 = 5 * LENGTH as u32;
 const GROUP: usize = 4;
 
 /// Crockford's Base32 (<https://www.crockford.com/base32.html>): digits and letters without `I`, `L`,
@@ -102,18 +107,18 @@ fn value_of(c: char) -> Option<u8> {
     ALPHABET.iter().position(|&a| a == c).map(|v| v as u8)
 }
 
-/// The code a display shows and the owner types in, as `B0AJ-QTW6`.
+/// The code a display shows and the owner types in, as `B0AJ-QTW6-Y8SA`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PairingCode(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("a pairing code is {LENGTH} letters and digits, like B0AJ-QTW6")]
+#[error("a pairing code is {LENGTH} letters and digits, like B0AJ-QTW6-Y8SA")]
 pub struct InvalidPairingCode;
 
 impl PairingCode {
     /// What the display and the server each compute. It covers the authority certificate, the name the
     /// display claims and its public key, with each part's length so no two combinations give the same
-    /// input; the label keeps it from being reused as some other hash. The code is the first 40 bits.
+    /// input; the label keeps it from being reused as some other hash. The code is the first 60 bits.
     pub fn derive(authority: &Fingerprint, device: &DeviceId, key: &PublicKey) -> Self {
         let mut hash = Sha256::new();
         hash.update(b"eink-home-display pairing code v1");
@@ -123,12 +128,11 @@ impl PairingCode {
             hash.update(part);
         }
         let digest = hash.finalize();
-        let mut bytes = [0u8; 8];
-        bytes[3..].copy_from_slice(&digest[..5]);
-        Self::from_number(u64::from_be_bytes(bytes))
+        let first = u64::from_be_bytes(digest[..8].try_into().expect("a digest has 32 bytes"));
+        Self::from_number(first >> (64 - BITS))
     }
 
-    /// The 40 bits of `number` as characters, most significant first, in groups.
+    /// The low `BITS` bits of `number` as characters, most significant first, in groups.
     fn from_number(number: u64) -> Self {
         let characters: String = (0..LENGTH)
             .map(|i| ALPHABET[((number >> (5 * (LENGTH - 1 - i))) & 31) as usize] as char)
@@ -290,10 +294,10 @@ mod tests {
     }
 
     #[test]
-    fn a_code_is_eight_characters_in_two_groups() {
+    fn a_code_is_twelve_characters_in_three_groups() {
         let code = PairingCode::derive(&authority(1), &device("kitchen"), &key(2));
         let groups: Vec<&str> = code.as_str().split('-').collect();
-        assert_eq!(groups.len(), 2, "{code}");
+        assert_eq!(groups.len(), 3, "{code}");
         assert!(groups.iter().all(|g| g.len() == 4), "{code}");
     }
 
@@ -346,7 +350,7 @@ mod tests {
             code.as_str().to_owned(),
             plain.clone(),
             plain.to_lowercase(),
-            format!(" {} {} ", &plain[..4], &plain[4..]).to_lowercase(),
+            format!(" {} {} {} ", &plain[..4], &plain[4..8], &plain[8..]).to_lowercase(),
         ] {
             assert_eq!(PairingCode::parse(&typed).unwrap(), code, "{typed:?}");
         }
@@ -354,25 +358,26 @@ mod tests {
 
     #[test]
     fn look_alikes_are_read_as_the_characters_they_resemble() {
-        let code = PairingCode::parse("0011-0011").unwrap();
-        for typed in ["OOIl-OOLi", "ooil-ooli", "00Il-oO1L"] {
+        let code = PairingCode::parse("0011-0011-0011").unwrap();
+        for typed in ["OOIl-OOLi-OOIl", "ooil-ooli-ooil", "00Il-oO1L-0oiL"] {
             assert_eq!(PairingCode::parse(typed).unwrap(), code, "{typed:?}");
         }
         // And what is shown never contains the ones that could be mistaken.
-        assert_eq!(code.as_str(), "0011-0011");
+        assert_eq!(code.as_str(), "0011-0011-0011");
     }
 
     #[test]
-    fn a_code_that_is_not_eight_characters_of_the_alphabet_is_refused() {
+    fn a_code_that_is_not_twelve_characters_of_the_alphabet_is_refused() {
         for typed in [
             "",
             "B0AJ",
-            "B0AJ-QTW",
-            "B0AJ-QTW66",
-            "B0AJ-QTWU", // U is not in the alphabet
-            "B0AJ-QT!6",
-            "B0AJ-QTW\u{0666}",
-            "١٢٣٤-٥٦٧٨",
+            "B0AJ-QTW6", // the old eight-character code is not enough
+            "B0AJ-QTW6-Y8S",
+            "B0AJ-QTW6-Y8SAA",
+            "B0AJ-QTW6-Y8SU", // U is not in the alphabet
+            "B0AJ-QTW6-Y8!A",
+            "B0AJ-QTW6-Y8S\u{0666}",
+            "١٢٣٤-٥٦٧٨-٩٠١٢",
         ] {
             assert_eq!(
                 PairingCode::parse(typed),
@@ -388,7 +393,7 @@ mod tests {
             let code =
                 PairingCode::derive(&authority(1), &device("kitchen"), &key((i % 251) as u8));
             let chars = code.as_str().replace('-', "");
-            assert_eq!(chars.len(), 8);
+            assert_eq!(chars.len(), 12);
             assert!(chars.bytes().all(|b| ALPHABET.contains(&b)), "{code}");
             assert!(!chars.contains(['I', 'L', 'O', 'U']), "{code}");
             assert_eq!(PairingCode::parse(code.as_str()).unwrap(), code);
@@ -397,12 +402,12 @@ mod tests {
 
     #[test]
     fn numbers_become_characters_five_bits_at_a_time() {
-        assert_eq!(PairingCode::from_number(0).as_str(), "0000-0000");
-        assert_eq!(PairingCode::from_number(31).as_str(), "0000-000Z");
-        assert_eq!(PairingCode::from_number(32).as_str(), "0000-0010");
+        assert_eq!(PairingCode::from_number(0).as_str(), "0000-0000-0000");
+        assert_eq!(PairingCode::from_number(31).as_str(), "0000-0000-000Z");
+        assert_eq!(PairingCode::from_number(32).as_str(), "0000-0000-0010");
         assert_eq!(
-            PairingCode::from_number((1 << 40) - 1).as_str(),
-            "ZZZZ-ZZZZ"
+            PairingCode::from_number((1 << 60) - 1).as_str(),
+            "ZZZZ-ZZZZ-ZZZZ"
         );
     }
 
@@ -417,6 +422,6 @@ mod tests {
         );
         let key = PublicKey::from_der((0u8..91).collect());
         let code = PairingCode::derive(&authority, &device("reterminal-e1003-a1b2c3"), &key);
-        assert_eq!(code.as_str(), "B0AJ-QTW6");
+        assert_eq!(code.as_str(), "B0AJ-QTW6-Y8SA");
     }
 }

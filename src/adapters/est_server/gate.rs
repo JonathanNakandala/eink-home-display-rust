@@ -81,8 +81,11 @@ async fn check(
         }
         Ok(false) => {
             log::warn!(
-                "Turned away {}: its certificate is valid but it is not a member",
-                client.device
+                "Turned away {} ({}): its certificate is valid but it is not a member",
+                client.device,
+                connection
+                    .peer
+                    .map_or_else(|| "an unknown address".to_owned(), |p| p.ip().to_string())
             );
             refuse("This display is not a member")
         }

@@ -1204,3 +1204,24 @@ async fn a_display_certificate_is_not_taken_for_the_server() {
     let (_, parsed) = x509_parser::parse_x509_certificate(&member.certificate).unwrap();
     assert!(parsed.subject_alternative_name().unwrap().is_none());
 }
+
+#[tokio::test]
+async fn a_refused_request_is_logged_with_where_it_came_from() {
+    crate::captured_log::install();
+    let harness = start().await;
+    // The window is shut, so this is refused, and the warning says who asked.
+    let key = new_key();
+    let response = enroll(
+        &harness,
+        Trust::Authority(harness.authority.certificate()),
+        "logsource-display",
+        &key,
+    )
+    .await;
+    assert_eq!(response.status, 403);
+    let lines = crate::captured_log::lines_containing("EST request from 127.0.0.1 refused");
+    assert!(
+        lines.iter().any(|line| line.starts_with("WARN")),
+        "{lines:?}"
+    );
+}
