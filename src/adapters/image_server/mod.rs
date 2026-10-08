@@ -178,7 +178,7 @@ pub fn router(
 ) -> Router {
     let (router, _) = routes().split_for_parts();
     let description: Arc<str> = openapi_json().into();
-    router
+    let router = router
         .route(
             "/openapi.json",
             get(move || {
@@ -191,15 +191,16 @@ pub fn router(
                 }
             }),
         )
-        .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(Published {
-            images,
-            format,
-            schedule,
-            timing,
-            handles,
-            clock,
-        }))
+        .layer(TraceLayer::new_for_http());
+    // After every route is added, since a layer covers only the routes there are when it is put on.
+    crate::adapters::response_headers::hardened(router).with_state(Arc::new(Published {
+        images,
+        format,
+        schedule,
+        timing,
+        handles,
+        clock,
+    }))
 }
 
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {

@@ -1585,6 +1585,37 @@ fn resuming_client(harness: &Harness, identity: Option<&Identity>) -> Arc<Client
 }
 
 #[tokio::test]
+async fn every_answer_over_tls_carries_the_security_headers() {
+    use crate::adapters::response_headers::HEADERS;
+
+    let harness = start_guarded(Access::Open).await;
+    let trust = || Trust::Authority(harness.authority.certificate());
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    let mut answers = Vec::new();
+    // The way in, an unknown path, a wrong method, and a display route with and without a certificate.
+    for (method, path, identity) in [
+        ("GET", CACERTS, None),
+        ("GET", "/nope", None),
+        ("DELETE", CACERTS, None),
+        ("GET", "/who", None),
+        ("GET", "/who", Some(&kitchen)),
+    ] {
+        let mut stream = connect(&harness, trust(), identity).await;
+        answers.push((path, send(&mut stream, method, path, None, b"").await));
+    }
+    for (path, answer) in answers {
+        for (name, value) in HEADERS {
+            assert_eq!(
+                answer.header(name),
+                Some(value),
+                "{name} on {path} ({})",
+                answer.status
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_display_that_comes_back_resumes_its_session_and_is_still_known_by_its_certificate() {
     let harness = start_guarded(Access::Members).await;
     let kitchen = join(&harness, "kitchen", new_key()).await;

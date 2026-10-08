@@ -156,6 +156,7 @@ impl EstServer {
         if let Some(display) = display {
             app = app.merge(display);
         }
+        let app = crate::adapters::response_headers::hardened(app);
         log::info!(
             "Serving EST over TLS 1.3 at https://{} ({families}); server certificate for {}",
             settings.bind,
