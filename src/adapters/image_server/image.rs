@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use sha2::{Digest, Sha256};
 
 use super::identity::{Caller, Named};
 use super::{Published, negotiate, transfer};
@@ -12,6 +13,9 @@ use crate::domain::models::display::ImageFormat;
 
 /// Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can
 /// decode, the server's preferred one if it has no preference. 406 if it can decode none of them.
+///
+/// The reply carries an `ETag` (a hash of the file), and a client that sends it back as `If-None-Match` is
+/// answered 304 with no body when it already has that image.
 ///
 /// A format whose file can't be inspected or read is skipped, so one bad file doesn't take the
 /// others down with it. It is a 500 only when that leaves the client nothing it accepts, and never
@@ -30,8 +34,18 @@ use crate::domain::models::display::ImageFormat;
             content(("image/bmp"), ("image/png"), ("image/qoi")),
             headers(
                 ("content-length" = String, description = "The size of the file, which is how a dropped download is noticed."),
+                ("etag" = String, description = "Identifies this file's bytes, so a client that keeps the picture can ask with `If-None-Match` whether it has changed."),
                 ("cache-control" = String, description = "Always `no-store`: the picture changes every refresh."),
                 ("vary" = String, description = "Always `Accept`, because the format depends on it.")
+            )
+        ),
+        (
+            status = 304,
+            description = "The client's `If-None-Match` names the image it would be sent, so it already has it. No body.",
+            headers(
+                ("etag" = String, description = "The same value the client sent."),
+                ("cache-control" = String, description = "Always `no-store`."),
+                ("vary" = String, description = "Always `Accept`.")
             )
         ),
         (
@@ -101,6 +115,23 @@ pub(super) async fn image(
     for format in candidates {
         match published.images.read(format).await {
             Ok(Some(bytes)) => {
+                let etag = etag_of(&bytes);
+                if headers
+                    .get(header::IF_NONE_MATCH)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| names(value, &etag))
+                {
+                    // Nothing is sent, so nothing is noted as sent either.
+                    return (
+                        StatusCode::NOT_MODIFIED,
+                        [
+                            (header::ETAG, etag.as_str()),
+                            (header::CACHE_CONTROL, "no-store"),
+                            (header::VARY, "Accept"),
+                        ],
+                    )
+                        .into_response();
+                }
                 // Which display got which format, so a comparison of formats says who it was run on. Noted as the
                 // reply is handed to the server, not when the last byte has gone: that is for the transfer timing.
                 if let Some(device) = &caller {
@@ -114,6 +145,7 @@ pub(super) async fn image(
                 let length = bytes.len();
                 return (
                     [
+                        (header::ETAG, etag.as_str()),
                         (header::CONTENT_TYPE, format.content_type()),
                         // Sent as a stream so a dropped download is noticed, which loses the length otherwise.
                         (header::CONTENT_LENGTH, length.to_string().as_str()),
@@ -140,6 +172,24 @@ pub(super) async fn image(
         return failed("The image could not be read");
     }
     (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response()
+}
+
+/// A name for these bytes: a strong validator, since it is the hash of the file itself, so a render that
+/// comes out the same has the same one and a different one never does. Per format, as the bytes differ.
+fn etag_of(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    format!("\"{hex}\"")
+}
+
+/// Whether an `If-None-Match` value names `etag`: `*`, or any of a comma-separated list. Compared weakly, as
+/// the header is (RFC 9110 section 13.1.2), so a `W/` the client or a proxy added makes no difference.
+fn names(header: &str, etag: &str) -> bool {
+    header.trim() == "*"
+        || header
+            .split(',')
+            .map(|candidate| candidate.trim().trim_start_matches("W/"))
+            .any(|candidate| candidate == etag)
 }
 
 /// A server error that says what failed, without the detail (which is in the log).
@@ -229,6 +279,111 @@ mod tests {
             );
             assert_eq!(response.text().await.unwrap(), body, "{accept:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_client_that_has_the_image_is_told_so_and_sent_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
+        let client = reqwest::Client::new();
+        let conditional = |etag: String| {
+            client
+                .get(format!("{base}/image"))
+                .header("If-None-Match", etag)
+                .send()
+        };
+
+        let first = fetch(&base, None).await;
+        let etag = first.headers()["etag"].to_str().unwrap().to_owned();
+        assert!(etag.starts_with('"') && etag.ends_with('"'), "{etag}");
+
+        for sent in [
+            etag.clone(),
+            format!("W/{etag}"),
+            format!("\"other\", {etag}"),
+            "*".to_owned(),
+        ] {
+            let response = conditional(sent.clone()).await.unwrap();
+            assert_eq!(response.status(), 304, "{sent}");
+            assert_eq!(response.headers()["etag"], etag.as_str(), "{sent}");
+            assert_eq!(response.headers()["cache-control"], "no-store", "{sent}");
+            assert_eq!(response.headers()["vary"], "Accept", "{sent}");
+            assert!(response.bytes().await.unwrap().is_empty(), "{sent}");
+        }
+
+        // Another value, or none, gets the picture.
+        let other = conditional("\"stale\"".to_owned()).await.unwrap();
+        assert_eq!(other.status(), 200);
+        assert_eq!(other.text().await.unwrap(), "png-bytes");
+
+        // A new render has a new name, so the old one no longer matches.
+        publish(tmp.path(), ImageFormat::Png, b"new-bytes")
+            .await
+            .unwrap();
+        let renewed = conditional(etag.clone()).await.unwrap();
+        assert_eq!(renewed.status(), 200);
+        assert_ne!(renewed.headers()["etag"], etag.as_str());
+        assert_eq!(renewed.text().await.unwrap(), "new-bytes");
+    }
+
+    #[tokio::test]
+    async fn a_name_belongs_to_one_format_and_one_set_of_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
+        publish(tmp.path(), ImageFormat::Bmp, b"bmp-bytes")
+            .await
+            .unwrap();
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
+        let etag = |response: reqwest::Response| response.headers()["etag"].clone();
+        let bmp = etag(fetch(&base, Some("image/bmp")).await);
+        let png = etag(fetch(&base, Some("image/png")).await);
+        assert_ne!(bmp, png);
+
+        // The BMP's name does not stand for the PNG a client asking for PNG would be sent.
+        let response = reqwest::Client::new()
+            .get(format!("{base}/image"))
+            .header("Accept", "image/png")
+            .header("If-None-Match", bmp)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn an_answer_of_not_modified_is_not_noted_as_an_image_sent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = start(tmp.path().to_path_buf(), ImageFormat::Png).await;
+        publish(tmp.path(), ImageFormat::Png, b"png-bytes")
+            .await
+            .unwrap();
+        reqwest::get(format!("{base}/plan?device=kitchen"))
+            .await
+            .unwrap();
+        let url = format!("{base}/image?device=kitchen");
+        let client = reqwest::Client::new();
+        let etag = client.get(&url).send().await.unwrap().headers()["etag"].clone();
+        let again = client
+            .get(&url)
+            .header("If-None-Match", etag)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(again.status(), 304);
+
+        let status = reqwest::get(format!("{base}/status"))
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        // Still the one delivery that sent the file.
+        assert_eq!(status["devices"][0]["last_image"]["bytes"], 9);
     }
 
     #[tokio::test]
