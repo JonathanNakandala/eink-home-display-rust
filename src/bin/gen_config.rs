@@ -6,7 +6,8 @@ use eink_home_display_rust::config::application::ApplicationConfig;
 /// Generate the config JSON Schema and example TOML from the config types.
 #[derive(Parser)]
 struct Args {
-    /// Write config/schema.json, config/example.toml and config/openapi.json instead of printing to stdout
+    /// Write config/schema.json, config/example.toml, config/openapi.json and config/admin-openapi.json instead
+    /// of printing to stdout
     #[arg(long)]
     write: bool,
 }
@@ -24,7 +25,13 @@ fn main() -> anyhow::Result<()> {
             dir.join("openapi.json"),
             eink_home_display_rust::adapters::image_server::openapi_json(),
         )?;
-        println!("Wrote config/schema.json, config/example.toml and config/openapi.json");
+        std::fs::write(
+            dir.join("admin-openapi.json"),
+            eink_home_display_rust::adapters::admin::openapi_json(),
+        )?;
+        println!(
+            "Wrote config/schema.json, config/example.toml, config/openapi.json and config/admin-openapi.json"
+        );
     } else {
         println!("{example}");
     }

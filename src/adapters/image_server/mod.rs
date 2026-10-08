@@ -314,6 +314,14 @@ mod api_description {
     }
 
     #[test]
+    fn every_reference_in_the_description_points_at_something() {
+        assert_eq!(
+            crate::adapters::api_doc_testing::dangling_references(&described()),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn the_description_is_openapi_3_1_and_claims_no_licence() {
         let api = described();
         assert_eq!(api["openapi"], "3.1.0");
@@ -376,24 +384,12 @@ mod api_description {
         assert_eq!((status, body), (503, example(503)));
     }
 
-    /// The problems with `instance` against `schema`, a schema from the description (which may refer to the
-    /// document's components), the way a client generated from the description would see it. Empty if none.
     fn check(schema: &Value, instance: &Value) -> Vec<String> {
-        let mut schema = schema.clone();
-        schema["components"] = described()["components"].clone();
-        let validator = jsonschema::validator_for(&schema).unwrap();
-        validator
-            .iter_errors(instance)
-            .map(|e| e.to_string())
-            .collect()
+        crate::adapters::api_doc_testing::check(&described(), schema, instance)
     }
 
-    /// The problems with `instance` against the schema called `name` in the description.
     fn problems(name: &str, instance: &Value) -> Vec<String> {
-        check(
-            &serde_json::json!({ "$ref": format!("#/components/schemas/{name}") }),
-            instance,
-        )
+        crate::adapters::api_doc_testing::problems(&described(), name, instance)
     }
 
     fn at(hour: u32) -> chrono::DateTime<chrono_tz::Tz> {
@@ -578,44 +574,8 @@ mod api_description {
         assert_eq!(problems("Status", &json), Vec::<String>::new());
     }
 
-    /// Every example in the description, with the schema it should satisfy and where it is.
     fn examples() -> Vec<(String, Value, Value)> {
-        let api = described();
-        let mut found = Vec::new();
-        for (path, item) in api["paths"].as_object().unwrap() {
-            for (method, operation) in item.as_object().unwrap() {
-                for parameter in operation["parameters"].as_array().into_iter().flatten() {
-                    if let Some(example) = parameter.get("example") {
-                        found.push((
-                            format!("{method} {path} parameter {}", parameter["name"]),
-                            parameter["schema"].clone(),
-                            example.clone(),
-                        ));
-                    }
-                }
-                for (status, response) in operation["responses"].as_object().unwrap() {
-                    for (kind, media) in response["content"].as_object().into_iter().flatten() {
-                        let Some(schema) = media.get("schema") else {
-                            continue;
-                        };
-                        let named = media.get("example").into_iter().chain(
-                            media["examples"]
-                                .as_object()
-                                .into_iter()
-                                .flat_map(|all| all.values().map(|e| &e["value"])),
-                        );
-                        for example in named {
-                            found.push((
-                                format!("{method} {path} {status} {kind}"),
-                                schema.clone(),
-                                example.clone(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        found
+        crate::adapters::api_doc_testing::examples(&described())
     }
 
     #[test]

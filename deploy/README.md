@@ -151,6 +151,38 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
   never set. Make sure the time service has set the clock before the server starts (the unit waits for
   `time-sync.target`).
 
+### Letting a display join: `displayctl`
+
+A display that has not joined is turned away until you open the pairing window. That is done from the machine the server
+runs on, with `displayctl`, which talks to the running server over a local socket (never the network):
+
+```sh
+displayctl --config-file config.toml window open        # 15 minutes; give a number for longer (1 to 240)
+displayctl --config-file config.toml window show        # is it open, and until when
+displayctl --config-file config.toml window close
+```
+
+The socket is `admin.sock` in `[server.tls] directory`, and it is private to the user the server runs as. Two things
+keep other users out, and both are checked at start-up: the socket is created with mode 0600 (macOS ignores a mode on a
+socket, so there it is only a label), and **the directory it is in must be closed to everyone else**. A directory that
+is not (for example one you made yourself with the default 755) stops the server from starting, and says to `chmod 700`
+it. The authority's own directory is made that way.
+
+- **Run `displayctl` as the user the server runs as,** from the server's working directory (a relative `directory` in
+  the configuration is taken from where you are), or give the socket itself with `--socket PATH`.
+- **It is offered only with HTTPS** (`transport = "prefer-https"` or `"https"`), because pairing is what it is for. With
+  `"http"` there is no socket and nothing is written to disk.
+- **A long path will not do.** A Unix socket's path is limited to about 100 bytes. If the default is too long, the server
+  says so; set `[server.admin] socket` to a shorter one (in a directory only you can use).
+- **Turn it off** with `[server.admin] enabled = false`. Then nothing can open the window, so no new display can join.
+- **Windows:** not offered yet. The pipe it would use has not been checked to keep other users out, and that is its
+  whole protection, so the server logs that it is unavailable and runs without it.
+- **No secret comes back from it:** not a pairing code, a key or a certificate. You read the code off the display.
+- **The API is described** in [config/admin-openapi.json](../config/admin-openapi.json) (OpenAPI 3.1), which is also served at
+  `/openapi.json` on the socket. Any HTTP client that can use a Unix socket can use it, for example
+  `curl --unix-socket pki/admin.sock http://localhost/v1/window`. A `PUT` needs the JSON header:
+  `curl -X PUT -H 'content-type: application/json' -d '{"minutes": 15}' --unix-socket pki/admin.sock http://localhost/v1/window`.
+
 ### What to watch for in the logs
 
 Pairing is protected by the code on the display's panel, so the log is where an attempt to interfere shows up.

@@ -61,6 +61,35 @@ impl Transport {
     }
 }
 
+/// The admin interface: how the owner of a running server looks at it and changes it (opening the pairing window,
+/// and later approving displays), from the same machine, with `displayctl`. It is a local socket, not a network
+/// port. It runs only when HTTPS does (`transport = "prefer-https"` or `"https"`), because pairing is what it is for.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AdminConfig {
+    /// Offer the admin interface. Turn it off and nothing can open the pairing window, so no new display can join
+    /// until it is back on.
+    #[serde(default = "default_admin_enabled")]
+    pub enabled: bool,
+    /// Where the socket is. Left out, it is `admin.sock` in `[server.tls] directory`. A Unix socket path has to be
+    /// short (about 100 bytes), and the directory it is in has to be closed to other users; set this if either is
+    /// a problem for the default.
+    #[serde(default)]
+    pub socket: Option<PathBuf>,
+}
+
+fn default_admin_enabled() -> bool {
+    true
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_admin_enabled(),
+            socket: None,
+        }
+    }
+}
+
 /// HTTPS and the certificate authority behind it. Used when `transport` is `prefer-https` or `https`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TlsConfig {
@@ -172,6 +201,9 @@ pub struct ServerConfig {
     pub transport: Transport,
     #[serde(default)]
     pub tls: TlsConfig,
+    /// How the owner looks at the running server and changes it. See `AdminConfig`.
+    #[serde(default)]
+    pub admin: AdminConfig,
 }
 
 fn default_device_overdue_grace_seconds() -> u32 {
@@ -219,11 +251,20 @@ impl Default for ServerConfig {
             device_overdue_grace_seconds: default_device_overdue_grace_seconds(),
             transport: Transport::default(),
             tls: TlsConfig::default(),
+            admin: AdminConfig::default(),
         }
     }
 }
 
 impl ServerConfig {
+    /// Where the admin socket is: as configured, or `admin.sock` beside the authority.
+    pub fn admin_socket(&self) -> PathBuf {
+        self.admin
+            .socket
+            .clone()
+            .unwrap_or_else(|| self.tls.directory.join("admin.sock"))
+    }
+
     /// Whether the settings make sense together, in words for whoever wrote them.
     pub fn check(&self) -> Result<(), String> {
         if !self.transport.serves_https() {
