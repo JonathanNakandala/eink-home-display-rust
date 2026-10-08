@@ -55,10 +55,15 @@ inline std::string clock_text(int64_t unix_seconds, int32_t utc_offset_s) {
 inline std::string failure_notice(eink_report::Failure reason, bool clock_set, int64_t unix_seconds, bool offset_known,
                                   int32_t utc_offset_s) {
   std::string what = "Last update failed";
-  if (reason == eink_report::Failure::WIFI)
-    what = "No Wi-Fi";
-  else if (reason == eink_report::Failure::MEMORY)
-    what = "Out of memory";
+  switch (reason) {
+    case eink_report::Failure::WIFI: what = "No Wi-Fi"; break;
+    case eink_report::Failure::MEMORY: what = "Out of memory"; break;
+    case eink_report::Failure::CLOCK: what = "Clock not set"; break;
+    case eink_report::Failure::CERTIFICATE: what = "Certificate refused"; break;
+    case eink_report::Failure::APPROVAL: what = "Waiting for approval"; break;
+    case eink_report::Failure::UNRECOGNISED: what = "Not recognised - ask the owner to approve"; break;
+    default: break;
+  }
   return (clock_set && offset_known) ? what + " @ " + clock_text(unix_seconds, utc_offset_s) : what;
 }
 

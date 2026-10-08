@@ -835,7 +835,11 @@
           "server",
           "download",
           "memory",
-          "timeout"
+          "timeout",
+          "clock",
+          "certificate",
+          "approval",
+          "unrecognised"
         ]
       },
       "FailureStatus": {
