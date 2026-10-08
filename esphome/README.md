@@ -181,10 +181,12 @@ the address connected to is to be verified on a device.)
 3. **Work out the pairing code and show it on the panel**, from what the display itself saw (never from anything
    the server says; the server does not send it):
    `SHA-256("eink-home-display pairing code v1" || SHA-256(authority DER) || u64be(len(name)) || name ||
-   u64be(len(SPKI)) || SPKI)`, then the first 8 bytes as a big-endian number, modulo 10^12, as 12 digits with
-   leading zeros, written `dddd-dddd-dddd`. SPKI is the DER `SubjectPublicKeyInfo` of the display's key.
+   u64be(len(SPKI)) || SPKI)`, then the first 5 bytes (40 bits) as eight 5-bit values, most significant first,
+   written in Crockford's Base32 (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, upper case) as `XXXX-XXXX`. SPKI is the DER
+   `SubjectPublicKeyInfo` of the display's key. Show it in a large font, upper case; the alphabet leaves out
+   `I`, `L`, `O` and `U`, and the server reads a typed `I`/`L` as `1` and `O` as `0`, in any case.
    Example: authority DER `30 03 02 01 01`, name `reterminal-e1003-a1b2c3`, SPKI the 91 bytes `00 01 .. 5a`
-   give `5404-2991-0703`. The owner types this at the server; if someone is between the two, the codes differ and
+   give `B0AJ-QTW6`. The owner types this at the server; if someone is between the two, the codes differ and
    the approval fails. That comparison is the only thing that authenticates the first contact.
 4. `POST simpleenroll` (`Content-Type: application/pkcs10`, body base64 of the DER request, no
    `Content-Transfer-Encoding`). `202` with `Retry-After`: not approved yet; sleep that long and ask again (a new
