@@ -28,6 +28,10 @@ pub enum InvalidDeviceId {
     TooLong,
     #[error("a device name uses only letters, digits, '-', '_' and '.'")]
     BadCharacter,
+    /// `.` and `..` mean "here" and "up" wherever a name is taken for a path, and a run of dots is read as neither
+    /// by a person. Nothing here uses a name as a path, but a name should not be one anyone could mistake.
+    #[error("a device name can't be only dots")]
+    OnlyDots,
 }
 
 impl DeviceId {
@@ -46,6 +50,9 @@ impl DeviceId {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         {
             return Err(InvalidDeviceId::BadCharacter);
+        }
+        if name.chars().all(|c| c == '.') {
+            return Err(InvalidDeviceId::OnlyDots);
         }
         Ok(Self(name.to_owned()))
     }
@@ -116,5 +123,19 @@ mod tests {
         let id: DeviceId = "kitchen".parse().unwrap();
         assert_eq!(id.to_string(), "kitchen");
         assert_eq!(serde_json::to_string(&id).unwrap(), "\"kitchen\"");
+    }
+
+    #[test]
+    fn a_name_of_only_dots_is_refused_and_dots_among_other_characters_are_not() {
+        for dots in [".", "..", "...", "  ..  "] {
+            assert_eq!(
+                DeviceId::parse(dots),
+                Err(InvalidDeviceId::OnlyDots),
+                "{dots:?}"
+            );
+        }
+        for fine in [".a", "a.", "a.b", "a..b", "a-.", "e1003.local", "1.2"] {
+            assert!(DeviceId::parse(fine).is_ok(), "{fine:?}");
+        }
     }
 }

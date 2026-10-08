@@ -330,9 +330,7 @@ mod tests {
         use crate::adapters::pairing_store::{FilePairingStore, Missing};
         use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
         use crate::domain::models::device_id::DeviceId;
-        use crate::domain::models::pairing::{
-            Fingerprint, Pairing, PairingCode, PairingState, PublicKey,
-        };
+        use crate::domain::models::pairing::{Pairing, PairingState, PublicKey};
         use crate::domain::services::pairing_store::PairingStore;
 
         let pki = tempfile::tempdir().unwrap();
@@ -356,9 +354,8 @@ mod tests {
         ] {
             let device = DeviceId::parse(name).unwrap();
             let key = PublicKey::from_der(name.as_bytes().repeat(8));
-            let code = PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key);
             store
-                .put(&Pairing::new(device, key, code, state, now))
+                .put(&Pairing::new(device, key, state, now))
                 .await
                 .unwrap();
         }

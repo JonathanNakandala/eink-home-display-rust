@@ -169,9 +169,12 @@ impl fmt::Display for PairingCode {
     }
 }
 
+/// Never printed by `{:?}`. The code is meant to be read off the display's own panel and nowhere else, and a
+/// derived `Debug` on anything that holds one (a record, an answer, a log line of either) would print it. `Display`
+/// still shows it, for the few places that mean to: the tests, and the example for whoever writes the firmware.
 impl fmt::Debug for PairingCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PairingCode({self})")
+        f.write_str("PairingCode(<hidden>)")
     }
 }
 
@@ -225,7 +228,6 @@ pub struct Rollover {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Replacement {
     pub key: PublicKey,
-    pub code: PairingCode,
     pub approved: bool,
     pub requested_at: DateTime<Utc>,
 }
@@ -235,8 +237,6 @@ pub struct Replacement {
 pub struct Pairing {
     pub device: DeviceId,
     pub key: PublicKey,
-    /// What the display shows; kept so the owner can be told which request is which.
-    pub code: PairingCode,
     pub state: PairingState,
     pub requested_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -247,17 +247,10 @@ pub struct Pairing {
 }
 
 impl Pairing {
-    pub fn new(
-        device: DeviceId,
-        key: PublicKey,
-        code: PairingCode,
-        state: PairingState,
-        now: DateTime<Utc>,
-    ) -> Self {
+    pub fn new(device: DeviceId, key: PublicKey, state: PairingState, now: DateTime<Utc>) -> Self {
         Self {
             device,
             key,
-            code,
             state,
             requested_at: now,
             updated_at: now,
@@ -423,5 +416,24 @@ mod tests {
         let key = PublicKey::from_der((0u8..91).collect());
         let code = PairingCode::derive(&authority, &device("reterminal-e1003-a1b2c3"), &key);
         assert_eq!(code.as_str(), "B0AJ-QTW6-Y8SA");
+    }
+
+    #[test]
+    fn debug_never_prints_a_code_so_a_log_of_anything_holding_one_cannot_leak_it() {
+        let code = PairingCode::derive(&authority(1), &device("kitchen"), &key(2));
+        let plain = code.as_str().replace('-', "");
+        for shown in [
+            format!("{code:?}"),
+            format!("{code:#?}"),
+            format!("{:?}", Some(code.clone())),
+        ] {
+            assert!(
+                !shown.contains(code.as_str()) && !shown.contains(&plain),
+                "{shown}"
+            );
+            assert!(shown.contains("hidden"), "{shown}");
+        }
+        // Display is still the way to mean to show one.
+        assert_eq!(code.to_string(), code.as_str());
     }
 }

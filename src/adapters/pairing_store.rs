@@ -21,9 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::domain::models::device_id::DeviceId;
-use crate::domain::models::pairing::{
-    Pairing, PairingCode, PairingState, PublicKey, Replacement, Rollover,
-};
+use crate::domain::models::pairing::{Pairing, PairingState, PublicKey, Replacement, Rollover};
 use crate::domain::services::pairing_store::PairingStore;
 
 const FILE: &str = "pairings.json";
@@ -179,7 +177,6 @@ struct Record {
     device: String,
     /// The display's public key, base64 of its DER.
     key: String,
-    code: String,
     state: State,
     requested_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -199,7 +196,6 @@ struct RolloverRecord {
 #[derive(Serialize, Deserialize)]
 struct ReplacementRecord {
     key: String,
-    code: String,
     approved: bool,
     requested_at: DateTime<Utc>,
 }
@@ -226,7 +222,6 @@ impl From<&BTreeMap<DeviceId, Pairing>> for File {
                 .map(|p| Record {
                     device: p.device.to_string(),
                     key: STANDARD.encode(p.key.as_der()),
-                    code: p.code.to_string(),
                     state: match &p.state {
                         PairingState::Pending => State::Pending,
                         PairingState::Approved => State::Approved,
@@ -245,7 +240,6 @@ impl From<&BTreeMap<DeviceId, Pairing>> for File {
                     }),
                     replacement: p.replacement.as_ref().map(|r| ReplacementRecord {
                         key: STANDARD.encode(r.key.as_der()),
-                        code: r.code.to_string(),
                         approved: r.approved,
                         requested_at: r.requested_at,
                     }),
@@ -274,8 +268,6 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, Pairing>> {
                         .decode(&record.key)
                         .with_context(|| format!("The key of {device} is not base64"))?,
                 ),
-                code: PairingCode::parse(&record.code)
-                    .with_context(|| format!("The code of {device} is not valid"))?,
                 state: match record.state {
                     State::Pending => PairingState::Pending,
                     State::Approved => PairingState::Approved,
@@ -305,9 +297,6 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, Pairing>> {
                             key: PublicKey::from_der(STANDARD.decode(&r.key).with_context(
                                 || format!("The replacement key of {device} is not base64"),
                             )?),
-                            code: PairingCode::parse(&r.code).with_context(|| {
-                                format!("The replacement code of {device} is not valid")
-                            })?,
                             approved: r.approved,
                             requested_at: r.requested_at,
                         })
@@ -327,7 +316,6 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::domain::models::pairing::Fingerprint;
 
     fn at(minute: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 8, 12, minute, 0).unwrap()
@@ -336,8 +324,7 @@ mod tests {
     fn pairing(name: &str, state: PairingState) -> Pairing {
         let device = DeviceId::parse(name).unwrap();
         let key = PublicKey::from_der(name.as_bytes().repeat(8));
-        let code = PairingCode::derive(&Fingerprint::of(b"authority"), &device, &key);
-        let mut pairing = Pairing::new(device, key, code, state, at(1));
+        let mut pairing = Pairing::new(device, key, state, at(1));
         pairing.updated_at = at(2);
         pairing
     }
@@ -358,7 +345,6 @@ mod tests {
         });
         let other = PublicKey::from_der(vec![9; 91]);
         member.replacement = Some(Replacement {
-            code: PairingCode::derive(&Fingerprint::of(b"authority"), &member.device, &other),
             key: other,
             approved: true,
             requested_at: at(4),
@@ -639,7 +625,7 @@ mod tests {
             r#"{"version":1,"pairings":[{"device":"bad name!","key":"","code":"0000-0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
             r#"{"version":2,"pairings":[]}"#.to_owned(),
             r#"{"version":1,"pairings":[{"device":"kitchen","key":"!!!","code":"0000-0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
-            r#"{"version":1,"pairings":[{"device":"kitchen","key":"AA==","code":"12","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
+            r#"{"version":1,"pairings":[{"device":"kitchen","key":"AA==","state":{"state":"not-a-state"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
         ] {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join(FILE);
@@ -736,5 +722,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reopened.all().await.unwrap().len(), 20);
+    }
+
+    #[tokio::test]
+    async fn no_code_is_written_to_the_file() {
+        // The code is worked out when one is typed and never kept, so nobody reading the file can copy it.
+        let directory = tempfile::tempdir().unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::StartEmpty)
+            .await
+            .unwrap();
+        let mut member = changing_keys();
+        member.state = PairingState::Pending;
+        store.put(&member).await.unwrap();
+        store
+            .put(&pairing("hall", PairingState::Pending))
+            .await
+            .unwrap();
+        let text = std::fs::read_to_string(directory.path().join(FILE)).unwrap();
+        assert!(!text.contains("\"code\""), "{text}");
+        let fingerprint = crate::domain::models::pairing::Fingerprint::of(b"authority");
+        for p in store.all().await.unwrap() {
+            let code = crate::domain::models::pairing::PairingCode::derive(
+                &fingerprint,
+                &p.device,
+                &p.key,
+            );
+            assert!(
+                !text.contains(code.as_str()) && !text.contains(&code.as_str().replace('-', "")),
+                "{text}"
+            );
+        }
+        let backup = std::fs::read_to_string(directory.path().join(PREVIOUS)).unwrap();
+        assert!(!backup.contains("\"code\""), "{backup}");
+    }
+
+    #[tokio::test]
+    async fn a_file_that_still_has_codes_in_it_is_read_and_the_codes_are_dropped_when_it_is_next_written()
+     {
+        let directory = tempfile::tempdir().unwrap();
+        let old = r#"{"version":1,"pairings":[{"device":"kitchen","key":"AAAA","code":"0000-0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z","replacement":{"key":"BBBB","code":"1111-1111-1111","approved":false,"requested_at":"2026-10-08T12:00:00Z"}}]}"#;
+        std::fs::write(directory.path().join(FILE), old).unwrap();
+        let store = FilePairingStore::open(directory.path(), Missing::Refuse)
+            .await
+            .unwrap();
+        let all = store.all().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].replacement.is_some());
+        store.put(&all[0]).await.unwrap();
+        let text = std::fs::read_to_string(directory.path().join(FILE)).unwrap();
+        assert!(!text.contains("code"), "{text}");
     }
 }

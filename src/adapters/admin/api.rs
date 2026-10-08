@@ -145,7 +145,8 @@ pub enum ErrorCode {
     InvalidRequest,
     /// `minutes` is not a whole number from 1 to 240.
     InvalidMinutes,
-    /// The display's name in the path is not a valid name (letters, digits, `-`, `_` and `.`, at most 32).
+    /// The display's name in the path is not a valid name (letters, digits, `-`, `_` and `.`, at most 32, and not
+    /// only dots).
     InvalidName,
     /// The code is not twelve letters and digits. Nothing was tried against the display.
     InvalidCode,
