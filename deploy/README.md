@@ -164,6 +164,24 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
 - **Limits on the settings.** `server_certificate_days` and `device_certificate_days` are from 1 to 3650, and
   `pairing_retry_minutes` from 1 to 1440. A figure outside that stops the server from starting, naming the setting.
 
+### Sandboxing
+
+The supplied unit confines the service: no new privileges, no capabilities, a read-only file system except the working
+directory, no access to home directories beyond reading, no kernel tunables or modules, and only Unix, IPv4, IPv6 and
+netlink sockets. It could not be run on the machine it was written on, so it is **untried**; treat the first start as
+a test. `systemd-analyze security eink-home-display` shows what is still open.
+
+If it stops working after you install it:
+
+| Symptom | Loosen |
+|---|---|
+| `Read-only file system` for a path you configured | add the path to `ReadWritePaths` |
+| Chrome fails to start, and the log mentions the sandbox or a namespace | check `sysctl kernel.unprivileged_userns_clone` (must be 1) and, on Ubuntu 23.10 and later, the AppArmor setting `kernel.apparmor_restrict_unprivileged_userns`; neither is caused by the unit, but both look like it |
+| the server won't bind its port | a port below 1024 needs `CapabilityBoundingSet=CAP_NET_BIND_SERVICE` and the same in `AmbientCapabilities` |
+| a panel on the SPI bus is not found | the unit does not set `PrivateDevices`; check the user is in the `spi` and `gpio` groups |
+
+Do not add `MemoryDenyWriteExecute`, `SystemCallFilter` or `RestrictNamespaces`: Chrome does not run under them.
+
 ### Letting a display join: `displayctl`
 
 A display that has not joined is turned away until you open the pairing window. It is done from the machine the server
