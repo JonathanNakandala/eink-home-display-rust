@@ -38,6 +38,7 @@ pub(crate) struct Harness {
     pub(crate) address: SocketAddr,
     pub(crate) enrollment: Arc<Enrollment>,
     pub(crate) authority: Arc<PrivateAuthority>,
+    pub(crate) handshakes: Arc<crate::application::handshakes::Handshakes>,
     pub(crate) server: JoinHandle<anyhow::Result<()>>,
     pub(crate) _directory: TempDir,
 }
@@ -114,12 +115,16 @@ pub(crate) async fn start_full(
     };
     tune(&mut settings);
     let display = guard.map(|access| guarded(stand_in_display(), enrollment.clone(), access));
-    let server = EstServer::bind(settings, authority.clone(), enrollment.clone(), display).unwrap();
+    let handshakes = Arc::new(crate::application::handshakes::Handshakes::default());
+    let server = EstServer::bind(settings, authority.clone(), enrollment.clone(), display)
+        .unwrap()
+        .counting(handshakes.clone());
     let address = server.local_addr().unwrap();
     Harness {
         address,
         enrollment,
         authority,
+        handshakes,
         server: tokio::spawn(server.run()),
         _directory: directory,
     }
@@ -1592,6 +1597,11 @@ async fn a_display_that_comes_back_resumes_its_session_and_is_still_known_by_its
     let (second, answer) = get_resuming(&harness, &config, "/who").await;
     assert_eq!(second, rustls::HandshakeKind::Resumed);
     assert_eq!((answer.status, answer.text().trim()), (200, "kitchen"));
+
+    // The server counted each, so the owner can see displays resuming. (`join` made full handshakes of its own.)
+    let (full, resumed) = harness.handshakes.counts();
+    assert_eq!(resumed, 1);
+    assert!(full >= 1, "{full}");
 }
 
 #[tokio::test]

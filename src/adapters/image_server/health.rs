@@ -136,7 +136,13 @@ pub(super) async fn metrics(State(published): State<Arc<Published>>) -> Response
                 (header::CONTENT_TYPE, metrics::CONTENT_TYPE),
                 (header::CACHE_CONTROL, "no-store"),
             ],
-            metrics::render(&status),
+            {
+                let mut text = metrics::render(&status);
+                if let Some(handshakes) = &published.handles.handshakes {
+                    metrics::handshakes(&mut text, handshakes.counts());
+                }
+                text
+            },
         )
             .into_response(),
         Err(e) => server_error("report", e),

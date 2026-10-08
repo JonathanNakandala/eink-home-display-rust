@@ -37,6 +37,7 @@ use self::tls::RenewingCertificate;
 use crate::adapters::certificate_authority::PrivateAuthority;
 use crate::adapters::listen::{self, Bound, Families};
 use crate::application::enrollment::Enrollment;
+use crate::application::handshakes::Handshakes;
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::PublicKey;
 use crate::domain::services::certificate_authority::CertificateAuthority;
@@ -111,6 +112,7 @@ pub struct EstServer {
     enrollment: Arc<Enrollment>,
     certificate: Arc<RenewingCertificate>,
     limits: Arc<Limits>,
+    handshakes: Arc<Handshakes>,
     acceptor: TlsAcceptor,
     app: axum::Router,
 }
@@ -167,9 +169,16 @@ impl EstServer {
             enrollment,
             certificate,
             limits,
+            handshakes: Arc::new(Handshakes::default()),
             acceptor: TlsAcceptor::from(Arc::new(config)),
             app,
         })
+    }
+
+    /// Counts the handshakes into `handshakes` (full and resumed), for whatever reports on them.
+    pub fn counting(mut self, handshakes: Arc<Handshakes>) -> Self {
+        self.handshakes = handshakes;
+        self
     }
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -191,6 +200,7 @@ impl EstServer {
             enrollment,
             certificate,
             limits,
+            handshakes,
             acceptor,
             app,
         } = self;
@@ -221,9 +231,10 @@ impl EstServer {
                         continue;
                     };
                     let (acceptor, app, settings) = (acceptor.clone(), app.clone(), settings.clone());
+                    let handshakes = handshakes.clone();
                     connections.spawn(async move {
                         let (_slot, _held) = (slot, held);
-                        if let Err(e) = serve_connection(stream, peer, acceptor, app, &settings).await {
+                        if let Err(e) = serve_connection(stream, peer, acceptor, app, &settings, &handshakes).await {
                             log::debug!("EST connection from {peer} ended: {e:#}");
                         }
                     });
@@ -263,6 +274,7 @@ async fn serve_connection(
     acceptor: TlsAcceptor,
     app: axum::Router,
     settings: &EstSettings,
+    handshakes: &Handshakes,
 ) -> anyhow::Result<()> {
     let tls = tokio::time::timeout(settings.handshake_timeout, acceptor.accept(stream))
         .await
@@ -270,6 +282,10 @@ async fn serve_connection(
         .context("The handshake failed")?;
     let connection = {
         let (_, session) = tls.get_ref();
+        handshakes.record(matches!(
+            session.handshake_kind(),
+            Some(rustls::HandshakeKind::Resumed)
+        ));
         Connection {
             peer: Some(peer),
             binding: session

@@ -77,6 +77,7 @@ pub(super) async fn start_full(
         status: Arc::clone(&status),
         devices: DeviceBoard::new(Duration::from_secs(900)),
         members,
+        handshakes: None,
     };
     tokio::spawn(async move {
         axum::serve(
