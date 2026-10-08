@@ -96,3 +96,26 @@ TEST(millivolts_round_to_the_nearest) {
   CHECK_EQ(millivolts(3.7126f), 3713u);
   CHECK_EQ(millivolts(4.2f), 4200u);
 }
+
+TEST(an_unusable_reading_is_not_known_and_changes_nothing) {
+  for (float volts : {0.0f, 2.4f, 5.1f}) {
+    Assessment a = assess(volts, true, true, LOW, EMPTY, RESUME);
+    CHECK(!a.known);
+    CHECK_EQ(a.verdict.action, 0);             // never a reason to stop
+    CHECK(a.verdict.halted && a.verdict.low);  // the latches stay as they were
+    Assessment b = assess(volts, false, false, LOW, EMPTY, RESUME);
+    CHECK(!b.known && !b.verdict.halted && !b.verdict.low);
+  }
+}
+
+TEST(a_usable_reading_gives_the_charge_the_telemetry_and_the_verdict) {
+  Assessment a = assess(3.35f, false, false, LOW, EMPTY, RESUME);
+  CHECK(a.known);
+  CHECK_EQ(a.mv, 3350u);
+  CHECK_EQ(a.pct, percent(3.35f));
+  CHECK(a.verdict.low && !a.verdict.halted);
+  CHECK_EQ(a.verdict.state, 1);
+  // The same verdict `judge` gives.
+  Verdict v = judge_(3.35f, false, false);
+  CHECK_EQ(a.verdict.action, v.action);
+}

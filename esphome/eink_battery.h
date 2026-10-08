@@ -60,4 +60,20 @@ inline Verdict judge(float volts, bool was_halted, bool was_low, float low_v, fl
 // Millivolts, rounded, for the telemetry.
 inline uint32_t millivolts(float volts) { return (uint32_t) (volts * 1000.0f + 0.5f); }
 
+// Everything a wake takes from one reading. `known` is false for a missing battery or a bad reading, which is
+// never a reason to stop: then only `known` means anything, and the latches are left as they were.
+struct Assessment {
+  bool known;
+  uint32_t mv;
+  int pct;
+  Verdict verdict;
+};
+
+inline Assessment assess(float volts, bool was_halted, bool was_low, float low_v, float empty_v, float resume_v) {
+  if (!plausible(volts))
+    return Assessment{false, 0, 0, Verdict{was_halted, was_low, 0, 0}};
+  return Assessment{true, millivolts(volts), percent(volts),
+                    judge(volts, was_halted, was_low, low_v, empty_v, resume_v)};
+}
+
 }  // namespace eink_battery
