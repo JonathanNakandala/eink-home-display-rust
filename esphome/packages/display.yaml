@@ -38,7 +38,7 @@ online_image:
     on_error:
       # /plan has just answered from this address, so the server is where it should be: looking for it
       # again would find the same thing. The log line above this says what went wrong.
-      - lambda: 'id(fail_reason) = "download";'
+      - lambda: 'eink_state::fail_reason = eink_report::Failure::DOWNLOAD;'
       - script.execute: give_up
 
 font:

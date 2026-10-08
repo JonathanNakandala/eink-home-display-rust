@@ -32,15 +32,28 @@ inline int percent(float v) {
   return 100;
 }
 
-inline const char *state_name(int state) { return state == 2 ? "empty" : state == 1 ? "low" : "ok"; }
+// How charged the battery is, as far as the display acts on it.
+enum class State : uint8_t { OK, LOW, EMPTY };
+
+// What this wake does about it.
+enum class Action : uint8_t {
+  CARRY_ON,      // nothing to do about the battery
+  STILL_HALTED,  // halted at an earlier wake and not recovered: just sleep
+  HALT_NOW,      // just went empty: say so on the panel first, then sleep
+};
+
+// The word the server is told (`battery_state`).
+inline const char *state_name(State state) {
+  return state == State::EMPTY ? "empty" : state == State::LOW ? "low" : "ok";
+}
 
 // What this wake's reading means, given the latches from the last one. Each latch sets below its own
 // threshold and clears only above `resume_v`, together, so neither flaps near its edge.
 struct Verdict {
   bool halted;
   bool low;
-  int state;   // 0 ok, 1 low, 2 empty
-  int action;  // 0 carry on, 1 still halted (just sleep), 2 halting now (say so first)
+  State state;
+  Action action;
 };
 
 inline Verdict judge(float volts, bool was_halted, bool was_low, float low_v, float empty_v, float resume_v) {
@@ -54,7 +67,11 @@ inline Verdict judge(float volts, bool was_halted, bool was_low, float low_v, fl
     if (volts < low_v)
       low = true;
   }
-  return Verdict{halted, low, halted ? 2 : low ? 1 : 0, halted ? (was_halted ? 1 : 2) : 0};
+  return Verdict{halted, low,
+                 halted ? State::EMPTY
+                 : low  ? State::LOW
+                        : State::OK,
+                 halted ? (was_halted ? Action::STILL_HALTED : Action::HALT_NOW) : Action::CARRY_ON};
 }
 
 // Millivolts, rounded, for the telemetry.
@@ -71,7 +88,7 @@ struct Assessment {
 
 inline Assessment assess(float volts, bool was_halted, bool was_low, float low_v, float empty_v, float resume_v) {
   if (!plausible(volts))
-    return Assessment{false, 0, 0, Verdict{was_halted, was_low, 0, 0}};
+    return Assessment{false, 0, 0, Verdict{was_halted, was_low, State::OK, Action::CARRY_ON}};
   return Assessment{true, millivolts(volts), percent(volts),
                     judge(volts, was_halted, was_low, low_v, empty_v, resume_v)};
 }
