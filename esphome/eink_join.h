@@ -105,7 +105,7 @@ class Joiner {
               }
               break;  // a refused renewal: next time round it is asked as a new display
             case eink_ports::Result::ISSUED:
-              if (!verifier_.chains_to(reply.certificate, root)) {
+              if (!verifier_.chains_to(reply.certificate, reply.intermediates, root)) {
                 out.failure = eink_report::Failure::CERTIFICATE;  // not signed under the root: not kept
                 return out;
               }

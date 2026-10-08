@@ -80,8 +80,13 @@ enum class Result : uint8_t {
 
 struct Reply {
   Result result = Result::UNREACHABLE;
-  Bytes certificate;           // when ISSUED
-  Lifetime lifetime;           // of that certificate
+  Bytes certificate;  // when ISSUED
+  Lifetime lifetime;  // of that certificate
+  // What the server presented in the handshake beyond its own certificate (its intermediates). An enrolment answer
+  // carries the display's certificate alone, which cannot be checked against the root without the intermediate that
+  // signed it; the connection was verified against the root, so what the server presented on it is where that comes
+  // from.
+  std::vector<Bytes> intermediates;
   uint32_t retry_after_s = 0;  // when PENDING
 };
 
@@ -100,8 +105,8 @@ class Est {
 class Verifier {
  public:
   virtual ~Verifier() = default;
-  // Whether `certificate` was issued under `root` (a path from the one to the other).
-  virtual bool chains_to(const Bytes &certificate, const Bytes &root) = 0;
+  // Whether `certificate` was issued under `root`: a path from the one to the other, through `intermediates`.
+  virtual bool chains_to(const Bytes &certificate, const std::vector<Bytes> &intermediates, const Bytes &root) = 0;
 };
 
 }  // namespace eink_ports
