@@ -12,6 +12,7 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use anyhow::Context;
 use axum::Router;
 use chrono::Duration;
 
+use crate::adapters::admin;
 use crate::adapters::certificate_authority::{self, Create, PrivateAuthority};
 use crate::adapters::est_server::{Access, EstServer, EstSettings, guarded};
 use crate::adapters::image_server::{self, SecureOffer, ServerSettings};
@@ -45,6 +47,8 @@ pub struct Listening {
     pub authority: Option<Arc<PrivateAuthority>>,
     /// The HTTPS announced over mDNS beside the service, when HTTPS is served.
     pub secure: Option<SecureOffer>,
+    /// The admin socket, when it is offered.
+    pub admin: Option<PathBuf>,
     serving: Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
 }
 
@@ -102,6 +106,7 @@ pub async fn start(
             enrollment: None,
             authority: None,
             secure: None,
+            admin: None,
             serving: Box::pin(async move { http.serve(&settings, app, format, None).await }),
         });
     }
@@ -116,6 +121,10 @@ pub async fn start(
         certificate_lifetime: Duration::days(config.tls.server_certificate_days.into()),
         ..EstSettings::default()
     };
+
+    let admin = open_admin(config, &enrollment).await?;
+    let admin_path = admin.as_ref().map(|admin| admin.path.clone());
+    let admin = admin.map(|admin| admin.serving);
 
     if config.transport.serves_http() {
         // Both. The plain side serves as always; the HTTPS side adds the certificate to who is asking.
@@ -138,10 +147,12 @@ pub async fn start(
             enrollment: Some(enrollment),
             authority: Some(authority),
             secure: Some(offer),
+            admin: admin_path,
             serving: Box::pin(async move {
                 tokio::select! {
                     result = http.serve(&settings, app, format, Some(offer)) => result,
                     result = https.run() => result,
+                    () = admin_or_never(admin) => Ok(()),
                 }
             }),
         });
@@ -169,12 +180,72 @@ pub async fn start(
         enrollment: Some(enrollment),
         authority: Some(authority),
         secure: Some(offer),
+        admin: admin_path,
         serving: Box::pin(async move {
             let _advertisement =
                 image_server::announce(&announced, port, format, families, Some(offer));
-            https.run().await
+            tokio::select! {
+                result = https.run() => result,
+                () = admin_or_never(admin) => Ok(()),
+            }
         }),
     })
+}
+
+type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// The admin interface, open and not yet serving.
+struct AdminListener {
+    path: PathBuf,
+    serving: Serving,
+}
+
+/// Opens the admin socket if it is offered (it is, unless turned off, whenever HTTPS is served). A socket that
+/// cannot be opened stops start-up and says what to change, rather than leaving the owner with a server that
+/// cannot be paired.
+async fn open_admin(
+    config: &ServerConfig,
+    enrollment: &Arc<Enrollment>,
+) -> anyhow::Result<Option<AdminListener>> {
+    if !config.admin.enabled {
+        log::info!("The admin interface is turned off; no display can be paired until it is on");
+        return Ok(None);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = enrollment;
+        log::warn!(
+            "The admin interface is not available on this platform yet, so the pairing window cannot be opened"
+        );
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    {
+        let path = config.admin_socket();
+        let listener = admin::bind(&path).await.with_context(|| {
+            "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
+        })?;
+        let app = admin::router(enrollment.clone());
+        log::info!("Admin interface on {}", path.display());
+        Ok(Some(AdminListener {
+            path,
+            serving: Box::pin(async move {
+                if let Err(e) = axum::serve(listener, app).await {
+                    log::error!("The admin interface stopped: {e}");
+                }
+                // The server carries on without it; it must not end because of it.
+                std::future::pending::<()>().await;
+            }),
+        }))
+    }
+}
+
+/// Runs the admin interface if there is one. It never finishes: the server's life is not its.
+async fn admin_or_never(admin: Option<Serving>) {
+    match admin {
+        Some(serving) => serving.await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Opens the authority and the list of displays, and the rules for joining, from `config`.
@@ -653,5 +724,108 @@ mod tests {
             key: kitchen.key,
         };
         assert_eq!(secure_get(&second, "/image", Some(&renewed)).await.0, 200);
+    }
+
+    // --- the admin interface -------------------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_window_opened_over_the_admin_socket_is_the_one_the_enrolment_endpoint_obeys() {
+        for transport in [Transport::PreferHttps, Transport::Https] {
+            let pki = tempfile::tempdir().unwrap();
+            let listening = listening(&config(transport, pki.path())).await.unwrap();
+            let socket = listening
+                .admin
+                .clone()
+                .expect("the admin interface is offered");
+            assert_eq!(socket, pki.path().join("admin.sock"));
+            let harness = harness_for(listening, pki);
+            let client = admin::AdminClient::new(&socket);
+            let key = new_key();
+            let authority = harness.authority.certificate().to_vec();
+
+            // Shut: a display that asks to join is turned away.
+            let turned_away = enroll(&harness, Trust::Authority(&authority), "kitchen", &key).await;
+            assert_eq!(
+                turned_away.status,
+                403,
+                "{transport:?}: {}",
+                turned_away.text()
+            );
+
+            // Opened over the socket: the same request now waits for the owner.
+            assert!(client.open_window(15).await.unwrap().open);
+            let waiting = enroll(&harness, Trust::Authority(&authority), "kitchen", &key).await;
+            assert_eq!(waiting.status, 202, "{transport:?}: {}", waiting.text());
+
+            // Closed over the socket: a new display is turned away again.
+            client.close_window().await.unwrap();
+            let other = enroll(&harness, Trust::Authority(&authority), "hall", &new_key()).await;
+            assert_eq!(other.status, 403, "{transport:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn plain_http_offers_no_admin_interface_and_makes_nothing() {
+        let pki = tempfile::tempdir().unwrap();
+        let listening = listening(&config(Transport::Http, &pki.path().join("state")))
+            .await
+            .unwrap();
+        assert!(listening.admin.is_none());
+        assert!(!pki.path().join("state").exists());
+    }
+
+    #[tokio::test]
+    async fn the_admin_interface_can_be_turned_off() {
+        let pki = tempfile::tempdir().unwrap();
+        let mut config = config(Transport::Https, pki.path());
+        config.admin.enabled = false;
+        let listening = listening(&config).await.unwrap();
+        assert!(listening.admin.is_none());
+        assert!(!pki.path().join("admin.sock").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_admin_socket_can_be_put_somewhere_else() {
+        use std::os::unix::fs::PermissionsExt;
+        let pki = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(elsewhere.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = config(Transport::Https, pki.path());
+        config.admin.socket = Some(elsewhere.path().join("ctl.sock"));
+        let listening = listening(&config).await.unwrap();
+        assert_eq!(listening.admin, Some(elsewhere.path().join("ctl.sock")));
+        let _server = tokio::spawn(listening.run());
+        assert!(
+            admin::AdminClient::new(elsewhere.path().join("ctl.sock"))
+                .window()
+                .await
+                .is_ok()
+        );
+        assert!(!pki.path().join("admin.sock").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_socket_that_cannot_be_opened_stops_start_up_and_says_how_to_go_on_without_it() {
+        let pki = tempfile::tempdir().unwrap();
+        // Something that is not a socket is where the socket should go.
+        std::fs::write(pki.path().join("admin.sock"), "precious").unwrap();
+        let error = format!(
+            "{:#}",
+            listening(&config(Transport::Https, pki.path()))
+                .await
+                .err()
+                .expect("should refuse")
+        );
+        assert!(
+            error.contains("enabled = false") && error.contains("not a socket"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(pki.path().join("admin.sock")).unwrap(),
+            "precious"
+        );
     }
 }

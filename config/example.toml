@@ -87,5 +87,8 @@ device_certificate_days = 90
 pairing_retry_minutes = 5
 require_channel_binding = false
 
+[server.admin]
+enabled = true
+
 [schedule]
 cron = ["*/10 * * * *"]

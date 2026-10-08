@@ -1,3 +1,6 @@
+pub mod admin;
+#[cfg(test)]
+pub(crate) mod api_doc_testing;
 pub mod authenticated;
 pub mod certificate_authority;
 pub mod clock;

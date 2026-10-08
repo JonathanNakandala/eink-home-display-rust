@@ -56,6 +56,10 @@
       "description": "Serves the rendered image to displays that fetch it, like the reTerminal E1003.",
       "$ref": "#/$defs/ServerConfig",
       "default": {
+        "admin": {
+          "enabled": true,
+          "socket": null
+        },
         "advertise": true,
         "bind": "[::]:8080",
         "device_overdue_grace_seconds": 900,
@@ -95,6 +99,25 @@
     "display"
   ],
   "$defs": {
+    "AdminConfig": {
+      "description": "The admin interface: how the owner of a running server looks at it and changes it (opening the pairing window,\nand later approving displays), from the same machine, with `displayctl`. It is a local socket, not a network\nport. It runs only when HTTPS does (`transport = \"prefer-https\"` or `\"https\"`), because pairing is what it is for.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Offer the admin interface. Turn it off and nothing can open the pairing window, so no new display can join\nuntil it is back on.",
+          "type": "boolean",
+          "default": true
+        },
+        "socket": {
+          "description": "Where the socket is. Left out, it is `admin.sock` in `[server.tls] directory`. A Unix socket path has to be\nshort (about 100 bytes), and the directory it is in has to be closed to other users; set this if either is\na problem for the default.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
     "CacheConfig": {
       "description": "Where files that can be re-created (a downloaded Chrome, for one) are kept between runs.",
       "type": "object",
@@ -417,6 +440,14 @@
       "description": "The HTTP server that hands the latest rendered image to displays that fetch it.",
       "type": "object",
       "properties": {
+        "admin": {
+          "description": "How the owner looks at the running server and changes it. See `AdminConfig`.",
+          "$ref": "#/$defs/AdminConfig",
+          "default": {
+            "enabled": true,
+            "socket": null
+          }
+        },
         "advertise": {
           "description": "Announce the server over mDNS / DNS-SD so it shows up in a scan of the network.",
           "type": "boolean",

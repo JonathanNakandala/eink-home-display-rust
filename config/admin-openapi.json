@@ -1,0 +1,251 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "E-ink home display admin API",
+    "description": "How the owner of a running server looks at it and changes it, from the same machine. Served over a local socket (a Unix domain socket in the PKI directory, mode 0600), not over the network. No endpoint returns a pairing code, a key or a certificate.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/window": {
+      "get": {
+        "tags": [
+          "pairing"
+        ],
+        "summary": "Whether displays can ask to join now, and until when.",
+        "operationId": "show_window",
+        "responses": {
+          "200": {
+            "description": "The state of the pairing window.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindowState"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "pairing"
+        ],
+        "summary": "Opens the pairing window, so a display that has not joined can ask to.",
+        "operationId": "open_window",
+        "requestBody": {
+          "description": "How long to open it for.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenWindow"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The window is open, and until when.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindowState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pairing"
+        ],
+        "summary": "Closes the pairing window. A display already waiting can still be approved.",
+        "operationId": "close_window",
+        "responses": {
+          "200": {
+            "description": "The window is closed (it may have been already).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WindowState"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "description": "The answer to a request that failed.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string",
+            "description": "For a person to read. Its wording may change; act on `code`.",
+            "examples": [
+              "minutes must be a whole number from 1 to 240"
+            ]
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Why a request failed, for a program to act on.",
+        "enum": [
+          "invalid_request",
+          "invalid_minutes",
+          "not_found",
+          "method_not_allowed",
+          "internal"
+        ]
+      },
+      "OpenWindow": {
+        "type": "object",
+        "description": "How long to open the pairing window for.",
+        "required": [
+          "minutes"
+        ],
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minutes from now, from 1 to 240. Opening an open window again sets the time afresh.",
+            "examples": [
+              15
+            ],
+            "maximum": 240,
+            "minimum": 1
+          }
+        }
+      },
+      "WindowState": {
+        "type": "object",
+        "description": "Whether displays can ask to join right now.",
+        "required": [
+          "open"
+        ],
+        "properties": {
+          "open": {
+            "type": "boolean",
+            "description": "Whether the window is open. While it is, a display that has not joined can ask to, and a display that lost\nits key can ask to take its name back. Closed, those requests are turned away; a display already waiting\ncan still be approved."
+          },
+          "closes_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the window closes by itself. Only present while it is open.",
+            "examples": [
+              "2026-10-08T12:15:00Z"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "pairing",
+      "description": "Letting displays join."
+    }
+  ]
+}
