@@ -32,6 +32,11 @@ use crate::domain::services::pairing_store::PairingStore;
 /// so what a stranger can fill is bounded; the owner clears the rest by rejecting them.
 pub const MAX_PENDING: usize = 8;
 
+/// How long a request waits for the owner before it lapses, counted from when it was first made. A display that
+/// is still asking after that asks again (with the window open) and is a new request. Without this, requests
+/// from strangers, or from a display that was given away, would fill the places for good.
+pub const REQUEST_LIFETIME: Duration = Duration::hours(24);
+
 #[derive(Debug, Clone, Copy)]
 pub struct EnrollmentPolicy {
     /// How long a display's certificate lasts. A display that is off for longer has to be paired again.
@@ -145,8 +150,41 @@ impl Enrollment {
         self.policy.require_channel_binding
     }
 
-    fn now(&self) -> DateTime<Utc> {
+    /// The time the server goes by.
+    pub fn now(&self) -> DateTime<Utc> {
         self.clock.now().to_utc()
+    }
+
+    /// Lets go of requests that have waited longer than `REQUEST_LIFETIME` for the owner: a display's request to
+    /// join is forgotten as if it had never asked, and a different key's request for a member's name is dropped
+    /// with the member left as it was. Members and approved displays never lapse. The caller holds the lock.
+    async fn sweep(&self, now: DateTime<Utc>) -> anyhow::Result<()> {
+        for mut pairing in self.store.all().await? {
+            if pairing.state == PairingState::Pending
+                && now - pairing.requested_at > REQUEST_LIFETIME
+            {
+                self.store.remove(&pairing.device).await?;
+                log::info!(
+                    "The request from {} lapsed after {} hours unanswered",
+                    pairing.device,
+                    REQUEST_LIFETIME.num_hours()
+                );
+            } else if pairing
+                .replacement
+                .as_ref()
+                .is_some_and(|replacement| now - replacement.requested_at > REQUEST_LIFETIME)
+            {
+                pairing.replacement = None;
+                self.store.put(&pairing).await?;
+                log::info!(
+                    "The request for {}'s name by another key lapsed after {} hours unanswered; {} carries on",
+                    pairing.device,
+                    REQUEST_LIFETIME.num_hours(),
+                    pairing.device
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Lets new displays ask to join until `now + duration`.
@@ -183,6 +221,7 @@ impl Enrollment {
         let request = self.read(request, connection)?;
         let _changing = self.changes.lock().await;
         let now = self.now();
+        self.sweep(now).await?;
         let Some(pairing) = self.store.get(&request.device).await? else {
             return self.begin(request, now).await;
         };
@@ -365,6 +404,7 @@ impl Enrollment {
     ) -> Result<(), ApproveError> {
         let _changing = self.changes.lock().await;
         let now = self.now();
+        self.sweep(now).await?;
         let mut pairing = self
             .store
             .get(device)
@@ -414,6 +454,7 @@ impl Enrollment {
     /// waiting, turns the replacement down and leaves the member as it was.
     pub async fn reject(&self, device: &DeviceId) -> Result<(), ApproveError> {
         let _changing = self.changes.lock().await;
+        self.sweep(self.now()).await?;
         let mut pairing = self
             .store
             .get(device)
@@ -459,8 +500,18 @@ impl Enrollment {
         Ok(())
     }
 
+    /// Every display the server knows, by name. Requests that have lapsed are let go first.
     pub async fn pairings(&self) -> anyhow::Result<Vec<Pairing>> {
+        let _changing = self.changes.lock().await;
+        self.sweep(self.now()).await?;
         self.store.all().await
+    }
+
+    /// One display, if the server knows it.
+    pub async fn pairing(&self, device: &DeviceId) -> anyhow::Result<Option<Pairing>> {
+        let _changing = self.changes.lock().await;
+        self.sweep(self.now()).await?;
+        self.store.get(device).await
     }
 
     /// Changes `pairing` to `state` if it is in one `allowed` says may change. The caller holds the lock.
@@ -2188,5 +2239,159 @@ mod tests {
             }
         }
         assert!(!digits.is_empty());
+    }
+
+    // --- requests that nobody answers ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn requests_nobody_answers_lapse_and_stop_taking_a_place() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::minutes(10));
+        for i in 0..MAX_PENDING {
+            f.enrollment
+                .enroll(&csr(&format!("stray-{i}"), "k"), None)
+                .await
+                .unwrap();
+        }
+        // Every place is taken, so a real display is turned away.
+        let full = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
+        assert_eq!(refused(full), Refusal::TooManyPending);
+
+        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        f.enrollment.open_window(Duration::minutes(10));
+        let outcome = f
+            .enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, Outcome::Pending { .. }), "{outcome:?}");
+        // And the strays are gone, not merely uncounted.
+        let names: Vec<String> = f
+            .enrollment
+            .pairings()
+            .await
+            .unwrap()
+            .iter()
+            .map(|p| p.device.to_string())
+            .collect();
+        assert_eq!(names, ["kitchen"]);
+    }
+
+    #[tokio::test]
+    async fn a_request_is_kept_for_the_whole_of_its_day() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        f.advance(REQUEST_LIFETIME - Duration::minutes(1));
+        assert_eq!(f.enrollment.pairings().await.unwrap().len(), 1);
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn approving_a_request_that_has_lapsed_is_as_if_it_never_asked() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        let result = f
+            .enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await;
+        assert!(
+            matches!(result, Err(ApproveError::Unknown(_))),
+            "{result:?}"
+        );
+        assert!(
+            f.enrollment
+                .pairing(&device("kitchen"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_display_whose_request_lapsed_must_have_the_window_open_to_ask_again() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        // The window has closed too, so it is turned away rather than quietly kept.
+        let shut = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
+        assert_eq!(refused(shut), Refusal::NotAccepting);
+        f.enrollment.open_window(Duration::minutes(10));
+        let again = f
+            .enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        assert!(matches!(again, Outcome::Pending { .. }));
+        // It has a full day from now.
+        f.advance(Duration::hours(23));
+        assert_eq!(f.enrollment.pairings().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_replacement_nobody_answers_lapses_and_the_member_carries_on() {
+        let f = Fixture::new();
+        member(&f, "kitchen", "k1").await;
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("kitchen", "k9"), None)
+            .await
+            .unwrap();
+        assert!(
+            f.enrollment
+                .pairing(&device("kitchen"))
+                .await
+                .unwrap()
+                .unwrap()
+                .replacement
+                .is_some()
+        );
+
+        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        let kitchen = f
+            .enrollment
+            .pairing(&device("kitchen"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(kitchen.replacement.is_none());
+        assert!(matches!(kitchen.state, PairingState::Enrolled { .. }));
+        assert!(
+            f.enrollment
+                .authenticate(&device("kitchen"), &held_key("k1"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn members_and_displays_the_owner_approved_never_lapse() {
+        let f = Fixture::new();
+        member(&f, "kitchen", "k1").await;
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.enroll(&csr("hall", "k2"), None).await.unwrap();
+        f.enrollment
+            .approve(&device("hall"), &f.code("hall", "k2"))
+            .await
+            .unwrap();
+        f.advance(Duration::days(400));
+        let all = f.enrollment.pairings().await.unwrap();
+        let states: Vec<&str> = all.iter().map(|p| p.state.name()).collect();
+        assert_eq!(states, ["approved", "enrolled"], "{all:?}");
     }
 }

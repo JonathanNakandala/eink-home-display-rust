@@ -9,12 +9,20 @@
 
 mod api;
 mod client;
+mod present;
 mod routes;
 #[cfg(test)]
 mod tests;
 mod transport;
 
-pub use self::api::{ApiError, ErrorBody, ErrorCode, MAX_WINDOW_MINUTES, OpenWindow, WindowState};
-pub use self::client::{AdminClient, CallError, describe, describe_window};
+pub use self::api::{
+    ApiError, ApproveRequest, DisplayEntry, DisplayList, DisplayState, ErrorBody, ErrorCode,
+    MAX_WINDOW_MINUTES, OpenWindow, WindowState,
+};
+pub use self::client::{AdminClient, CallError, describe};
+pub use self::present::{
+    age, approved, describe_entry, describe_list, describe_window, forgotten, label, rejected,
+    revoked,
+};
 pub use self::routes::{openapi_json, router};
 pub use self::transport::{LocalListener, SOCKET_FILE, bind, connect, default_path};

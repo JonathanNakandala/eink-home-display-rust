@@ -6,6 +6,510 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/displays": {
+      "get": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "Every display the server knows, by name.",
+        "operationId": "list_displays",
+        "responses": {
+          "200": {
+            "description": "The displays, with where each stands. Requests that lapsed are not listed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/displays/{name}": {
+      "get": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "One display and where it stands.",
+        "operationId": "show_display",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The display.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is known.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "Forgets a display, whatever its state, so it can ask again as if for the first time. A member that is forgotten\nis turned away at once, whatever its certificate says.",
+        "operationId": "forget_display",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The display as it was, now forgotten.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is known.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/displays/{name}/approve": {
+      "post": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "Approves a display that is waiting, because the code the owner read off its own panel matches.",
+        "operationId": "approve_display",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "requestBody": {
+          "description": "The code from the display's own panel.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Approved. The display becomes a member the next time it asks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The code does not match what the display would show. The display stays as it was.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is waiting, or its request lapsed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The display is not waiting for approval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/displays/{name}/reject": {
+      "post": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "Turns a waiting display down, until it is forgotten. For a member with another key waiting to take its name,\nturns that key down and leaves the member as it was.",
+        "operationId": "reject_display",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Turned down.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is waiting, or its request lapsed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The display is not waiting for approval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/displays/{name}/revoke": {
+      "post": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "Ends a member's membership. It is turned away on its very next request, whatever its certificate says, and\ncannot renew.",
+        "operationId": "revoke_display",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is known.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The display is not a member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/window": {
       "get": {
         "tags": [
@@ -167,6 +671,102 @@
           }
         }
       },
+      "ApproveRequest": {
+        "type": "object",
+        "description": "What the owner read off the display's own panel.",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The pairing code on the display's own panel: twelve letters and digits, in any case, with or without the\ndashes. `I` and `L` are read as `1` and `O` as `0`. Type it from the panel, never from anywhere else: the\nserver does not show it, because a code copied from the server would say nothing about the display.",
+            "examples": [
+              "B0AJ-QTW6-Y8SA"
+            ]
+          }
+        }
+      },
+      "DisplayEntry": {
+        "type": "object",
+        "description": "A display the server knows, and where it stands. Nothing here is secret: it never carries a pairing code, a key\nor a certificate.",
+        "required": [
+          "name",
+          "state",
+          "certificate_expired",
+          "changing_keys",
+          "replacement_waiting"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name the display gives itself.",
+            "examples": [
+              "reterminal-e1003-a1b2c3"
+            ],
+            "maxLength": 32,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DisplayState"
+          },
+          "waiting_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the request that is waiting was made: the display's own request to join, or (for a member) another\nkey's request to take its name. A request lapses a day after this if nobody answers it."
+          },
+          "certificate_not_after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "For a member, when the latest certificate it was given ends."
+          },
+          "certificate_expired": {
+            "type": "boolean",
+            "description": "A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one at the\nserver, the next time it is switched on."
+          },
+          "changing_keys": {
+            "type": "boolean",
+            "description": "A member that has been given a certificate for a new key and has not used it yet."
+          },
+          "replacement_waiting": {
+            "type": "boolean",
+            "description": "A different key is waiting for the owner to approve it taking this member's name, as when a display was\nreflashed and lost its key. The member carries on meanwhile."
+          }
+        }
+      },
+      "DisplayList": {
+        "type": "object",
+        "description": "Every display the server knows.",
+        "required": [
+          "displays"
+        ],
+        "properties": {
+          "displays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DisplayEntry"
+            },
+            "description": "By name."
+          }
+        }
+      },
+      "DisplayState": {
+        "type": "string",
+        "description": "Where a display stands. A name appears here as soon as it asks to join.",
+        "enum": [
+          "waiting",
+          "approved",
+          "member",
+          "rejected",
+          "revoked"
+        ]
+      },
       "ErrorBody": {
         "type": "object",
         "required": [
@@ -192,6 +792,12 @@
         "enum": [
           "invalid_request",
           "invalid_minutes",
+          "invalid_name",
+          "invalid_code",
+          "wrong_code",
+          "unknown_display",
+          "not_waiting",
+          "not_a_member",
           "not_found",
           "method_not_allowed",
           "internal"
@@ -246,6 +852,10 @@
     {
       "name": "pairing",
       "description": "Letting displays join."
+    },
+    {
+      "name": "displays",
+      "description": "The displays the server knows, and what the owner decides about them."
     }
   ]
 }
