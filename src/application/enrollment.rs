@@ -262,8 +262,11 @@ impl Enrollment {
         });
         pairing.updated_at = now;
         self.store.put(&pairing).await?;
-        log::info!(
-            "{} is a member, and another key asked for its name; the owner approves that with the code {code}",
+        // Not the code itself: the owner reads it off the display's own panel. A code copied from here would
+        // be the server's, which is what someone in the middle would have it show.
+        log::warn!(
+            "{} is a member, and another key asked for its name. To let it take over, compare the code on \
+             the display's panel with the server's and approve it; otherwise turn it down",
             pairing.device
         );
         Ok(Outcome::Pending {
@@ -387,7 +390,9 @@ impl Enrollment {
             .into();
         if !same {
             log::warn!(
-                "A pairing code typed for {device} did not match what the server worked out for it"
+                "The pairing code typed for {device} did not match. Type what the display's own panel shows; a \
+                 code that is right on the panel and wrong here can mean something is between the display and \
+                 this server"
             );
             return Err(ApproveError::WrongCode(device.clone()));
         }
@@ -529,8 +534,9 @@ impl Enrollment {
             now,
         );
         self.store.put(&pairing).await?;
+        // Not the code itself: the owner reads it off the display's own panel (see above).
         log::info!(
-            "{} asked to join; the owner approves it with the code {code}",
+            "{} asked to join. Approve it with the code shown on the display's own panel",
             pairing.device
         );
         Ok(Outcome::Pending {
@@ -915,7 +921,7 @@ mod tests {
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
-        let wrong = PairingCode::parse("0000-0000").unwrap();
+        let wrong = PairingCode::parse("0000-0000-0000").unwrap();
         let result = f.enrollment.approve(&device("kitchen"), &wrong).await;
         assert!(
             matches!(result, Err(ApproveError::WrongCode(_))),
@@ -2121,5 +2127,66 @@ mod tests {
         f.enrollment.open_window(Duration::minutes(10));
         let result = f.enrollment.enroll(&csr("newcomer", "k1"), None).await;
         assert_eq!(refused(result), Refusal::TooManyPending);
+    }
+
+    #[tokio::test]
+    async fn what_is_logged_names_the_display_and_never_gives_the_code() {
+        // The owner reads the code off the display's own panel. If the log gave it, it would be copied from
+        // there instead, and the check that the panel and the server agree would never be made.
+        crate::captured_log::install();
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("logwatch-display", "k1"), None)
+            .await
+            .unwrap();
+        let code = f.code("logwatch-display", "k1");
+        let digits = code.as_str().replace('-', "");
+
+        let asked = crate::captured_log::lines_containing("logwatch-display");
+        assert!(
+            asked.iter().any(|line| line.contains("asked to join")),
+            "{asked:?}"
+        );
+        // A wrong code is a warning, naming the display, and it does not repeat either code.
+        let wrong = f.code("logwatch-display", "k9");
+        let _ = f
+            .enrollment
+            .approve(&device("logwatch-display"), &wrong)
+            .await;
+        let warned = crate::captured_log::lines_containing("logwatch-display");
+        assert!(
+            warned
+                .iter()
+                .any(|line| line.starts_with("WARN") && line.contains("did not match")),
+            "{warned:?}"
+        );
+
+        // And a replacement asking for a member's name, which is the more worrying case.
+        f.enrollment
+            .approve(&device("logwatch-display"), &code)
+            .await
+            .unwrap();
+        f.enrollment
+            .enroll(&csr("logwatch-display", "k1"), None)
+            .await
+            .unwrap();
+        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment
+            .enroll(&csr("logwatch-display", "k8"), None)
+            .await
+            .unwrap();
+        let replacement = f.code("logwatch-display", "k8");
+
+        for line in crate::captured_log::lines_containing("logwatch-display") {
+            for secret in [&code, &wrong, &replacement] {
+                let plain = secret.as_str().replace('-', "");
+                assert!(
+                    !line.contains(secret.as_str()) && !line.contains(&plain),
+                    "a code was logged: {line}"
+                );
+            }
+        }
+        assert!(!digits.is_empty());
     }
 }

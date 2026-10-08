@@ -151,6 +151,21 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
   never set. Make sure the time service has set the clock before the server starts (the unit waits for
   `time-sync.target`).
 
+### What to watch for in the logs
+
+Pairing is protected by the code on the display's panel, so the log is where an attempt to interfere shows up.
+**The server never prints a code.** Read it off the display's own panel and type that: a code copied from
+anywhere else is the server's own, which is exactly what someone in the middle would have it show.
+
+| Log line (level) | What it means |
+|---|---|
+| `<name> asked to join` (info) | A display is waiting. Check the code on its panel, then approve. |
+| `The pairing code typed for <name> did not match` (warn) | A typo, or the code on the panel is not the one the server worked out. If you typed it carefully from the panel, **do not approve**: something may be between the display and the server. |
+| `<name> is a member, and another key asked for its name` (warn) | A display with an existing name asked again with a new key: a reflashed display, or someone trying to take its place. The member keeps working. Approve only if you meant to re-pair it. |
+| `EST request from <address> refused: …` (warn) | Someone at that address was turned away (window shut, wrong key, not a member). A few are a display retrying; a stream from an address that is not a display is worth a look. |
+| `Turned away <name> (<address>): … not a member` (warn) | A certificate that is valid but whose display was revoked, forgotten or replaced. |
+| `The intermediate certificate ends in N days …` (warn) | The root's key is not on the machine to replace it. Put it back before then. |
+
 ### Seeing trouble before it is one
 
 `/status` lists every display's standing under `members`: its state (`pending`, `approved`, `member`, `rejected`,

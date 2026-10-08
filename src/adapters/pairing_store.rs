@@ -636,9 +636,9 @@ mod tests {
     async fn a_file_that_can_not_be_read_is_an_error_and_is_left_alone() {
         for contents in [
             "not json".to_owned(),
-            r#"{"version":1,"pairings":[{"device":"bad name!","key":"","code":"0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
+            r#"{"version":1,"pairings":[{"device":"bad name!","key":"","code":"0000-0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
             r#"{"version":2,"pairings":[]}"#.to_owned(),
-            r#"{"version":1,"pairings":[{"device":"kitchen","key":"!!!","code":"0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
+            r#"{"version":1,"pairings":[{"device":"kitchen","key":"!!!","code":"0000-0000-0000","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
             r#"{"version":1,"pairings":[{"device":"kitchen","key":"AA==","code":"12","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#.to_owned(),
         ] {
             let directory = tempfile::tempdir().unwrap();

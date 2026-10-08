@@ -44,6 +44,8 @@ pub struct ClientIdentity {
 /// What the server knows about the connection a request arrived on, from the TLS layer.
 #[derive(Debug, Clone)]
 pub struct Connection {
+    /// Where the connection came from, for the log: who asked to join, and who was turned away.
+    pub peer: Option<std::net::SocketAddr>,
     /// The connection's channel binding (RFC 9266 `tls-exporter`), which a request can carry to prove
     /// it was signed on this very connection.
     pub binding: Option<Vec<u8>>,
@@ -157,16 +159,19 @@ async fn simple_enroll(
         .await
     {
         Ok(Outcome::Issued(certificate)) => issued(&certificate),
-        Ok(Outcome::Pending { retry_after, .. }) => (
-            StatusCode::ACCEPTED,
-            [
-                (RETRY_AFTER, retry_after.num_seconds().max(1).to_string()),
-                (CONTENT_TYPE, "text/plain; charset=utf-8".to_owned()),
-            ],
-            "Waiting for the owner to approve this display. Ask again later.\n",
-        )
-            .into_response(),
-        Err(e) => failure(e),
+        Ok(Outcome::Pending { retry_after, .. }) => {
+            log::debug!("{} is waiting to be approved", from(&connection));
+            (
+                StatusCode::ACCEPTED,
+                [
+                    (RETRY_AFTER, retry_after.num_seconds().max(1).to_string()),
+                    (CONTENT_TYPE, "text/plain; charset=utf-8".to_owned()),
+                ],
+                "Waiting for the owner to approve this display. Ask again later.\n",
+            )
+                .into_response()
+        }
+        Err(e) => failure(e, &connection),
     }
 }
 
@@ -199,8 +204,16 @@ async fn simple_reenroll(
         .await
     {
         Ok(certificate) => issued(&certificate),
-        Err(e) => failure(e),
+        Err(e) => failure(e, &connection),
     }
+}
+
+/// Where a request came from, for the log.
+fn from(connection: &Connection) -> String {
+    connection.peer.map_or_else(
+        || "an unknown address".to_owned(),
+        |peer| peer.ip().to_string(),
+    )
 }
 
 fn issued(certificate: &IssuedCertificate) -> Response {
@@ -209,10 +222,10 @@ fn issued(certificate: &IssuedCertificate) -> Response {
 
 /// How a refusal reads to the display. The text says why, for whoever reads the display's log; the
 /// status says whether to try again (a 4xx means the request itself must change).
-fn failure(error: EnrollError) -> Response {
+fn failure(error: EnrollError, connection: &Connection) -> Response {
     match error {
         EnrollError::Refused(refusal) => {
-            log::warn!("EST request refused: {refusal}");
+            log::warn!("EST request from {} refused: {refusal}", from(connection));
             let status = match &refusal {
                 Refusal::BadRequest(_)
                 | Refusal::ChannelBindingMissing
@@ -236,7 +249,7 @@ fn failure(error: EnrollError) -> Response {
             response
         }
         EnrollError::Failed(e) => {
-            log::error!("EST request failed: {e:#}");
+            log::error!("EST request from {} failed: {e:#}", from(connection));
             text(StatusCode::INTERNAL_SERVER_ERROR, "The server failed")
         }
     }

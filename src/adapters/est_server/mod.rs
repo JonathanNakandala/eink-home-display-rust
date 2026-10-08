@@ -182,7 +182,7 @@ impl EstServer {
                     let (acceptor, app, settings) = (acceptor.clone(), app.clone(), settings.clone());
                     connections.spawn(async move {
                         let _slot = slot;
-                        if let Err(e) = serve_connection(stream, acceptor, app, &settings).await {
+                        if let Err(e) = serve_connection(stream, peer, acceptor, app, &settings).await {
                             log::debug!("EST connection from {peer} ended: {e:#}");
                         }
                     });
@@ -208,6 +208,7 @@ impl EstServer {
 
 async fn serve_connection(
     stream: tokio::net::TcpStream,
+    peer: SocketAddr,
     acceptor: TlsAcceptor,
     app: axum::Router,
     settings: &EstSettings,
@@ -219,6 +220,7 @@ async fn serve_connection(
     let connection = {
         let (_, session) = tls.get_ref();
         Connection {
+            peer: Some(peer),
             binding: session
                 .export_keying_material([0u8; BINDING_LEN], BINDING_LABEL, Some(&[]))
                 .ok()
