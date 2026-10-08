@@ -72,72 +72,72 @@ TEST(nothing_is_tried_until_the_clock_is_usable) {
   for (Answer answer : {Answer::NONE, Answer::PENDING, Answer::REFUSED}) {
     const Next n = next(joined(), START + DAY, false, answer);
     CHECK(n.standing == Standing::CLOCK_NOT_SET);
-    CHECK(n.action == Action::NOTHING);
+    CHECK(n.action == Step::NOTHING);
   }
   // Not even fetching the root: that is a TLS connection too.
   const Next fresh = next(with_certificate_only_for(RootSource::NONE, false, false), START, false, Answer::NONE);
-  CHECK(fresh.action == Action::NOTHING);
+  CHECK(fresh.action == Step::NOTHING);
 }
 
 TEST(a_display_with_nothing_fetches_the_root_then_makes_a_key_then_asks) {
   Next n = next(with_certificate_only_for(RootSource::NONE, false, false), START, true, Answer::NONE);
-  CHECK(n.standing == Standing::NO_ROOT && n.action == Action::FETCH_ROOT);
+  CHECK(n.standing == Standing::NO_ROOT && n.action == Step::FETCH_ROOT);
   n = next(with_certificate_only_for(RootSource::STORED, false, false), START, true, Answer::NONE);
-  CHECK(n.standing == Standing::ASKING && n.action == Action::MAKE_KEY);
+  CHECK(n.standing == Standing::ASKING && n.action == Step::MAKE_KEY);
   n = next(with_certificate_only_for(RootSource::STORED, true, false), START, true, Answer::NONE);
-  CHECK(n.standing == Standing::ASKING && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::ASKING && n.action == Step::ENROLL);
 }
 
 TEST(a_compiled_in_root_skips_fetching_it) {
   const Next n = next(with_certificate_only_for(RootSource::COMPILED, false, false), START, true, Answer::NONE);
-  CHECK(n.action == Action::MAKE_KEY);
+  CHECK(n.action == Step::MAKE_KEY);
 }
 
 TEST(while_the_owner_has_not_approved_it_keeps_asking_and_shows_the_code) {
   const Next n = next(with_certificate_only_for(RootSource::STORED, true, false), START, true, Answer::PENDING);
-  CHECK(n.standing == Standing::WAITING && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::WAITING && n.action == Step::ENROLL);
 }
 
 TEST(a_refusal_to_a_display_with_no_certificate_is_not_being_recognised_and_it_keeps_asking) {
   const Next n = next(with_certificate_only_for(RootSource::STORED, true, false), START, true, Answer::REFUSED);
-  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Step::ENROLL);
 }
 
 TEST(a_paired_display_carries_on_until_a_third_of_the_certificate_is_left) {
   Next n = next(joined(), START + DAY, true, Answer::NONE);
-  CHECK(n.standing == Standing::PAIRED && n.action == Action::USE);
+  CHECK(n.standing == Standing::PAIRED && n.action == Step::USE);
   n = next(joined(), START + 59 * DAY, true, Answer::NONE);
   CHECK(n.standing == Standing::PAIRED);
   n = next(joined(), START + 60 * DAY, true, Answer::NONE);
-  CHECK(n.standing == Standing::RENEWING && n.action == Action::RENEW);
+  CHECK(n.standing == Standing::RENEWING && n.action == Step::RENEW);
 }
 
 TEST(a_certificate_that_ended_is_asked_for_again_with_the_same_key_and_no_owner) {
   const Next n = next(joined(), END + 30 * DAY, true, Answer::NONE);
-  CHECK(n.standing == Standing::EXPIRED && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::EXPIRED && n.action == Step::ENROLL);
 }
 
 TEST(an_expired_display_the_server_does_not_know_waits_for_the_owner_like_a_new_one) {
   Next n = next(joined(), END + DAY, true, Answer::REFUSED);
-  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Step::ENROLL);
   n = next(joined(), END + DAY, true, Answer::PENDING);
-  CHECK(n.standing == Standing::WAITING && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::WAITING && n.action == Step::ENROLL);
 }
 
 TEST(a_renewal_the_server_refuses_means_it_no_longer_knows_the_display) {
   const Next n = next(joined(), START + 70 * DAY, true, Answer::REFUSED);
-  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Step::ENROLL);
 }
 
 TEST(a_display_refused_while_paired_asks_again_and_keeps_what_it_holds) {
   // The standing and action are all that is decided; nothing here deletes the key, certificate or root.
   const Next n = next(joined(), START + DAY, true, Answer::REFUSED);
-  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Action::ENROLL);
+  CHECK(n.standing == Standing::NOT_RECOGNISED && n.action == Step::ENROLL);
 }
 
 TEST(a_certificate_from_the_future_means_the_clock_is_behind) {
   const Next n = next(joined(), START - DAY, true, Answer::NONE);
-  CHECK(n.standing == Standing::CLOCK_NOT_SET && n.action == Action::NOTHING);
+  CHECK(n.standing == Standing::CLOCK_NOT_SET && n.action == Step::NOTHING);
 }
 
 TEST(a_standing_is_reported_to_the_server_as_the_failure_it_is) {

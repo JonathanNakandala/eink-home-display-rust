@@ -291,6 +291,8 @@ thin and does as little deciding as it can.
 | Pure logic | [eink_pairing.h](eink_pairing.h) (**built**) | the pairing code (hash, Crockford encoding), and which step comes next from what is stored, the clock and the answer last received | on the host, against the pinned test vector `B0AJ-QTW6-Y8SA`, the same one the server pins |
 | Pure logic | [eink_trust.h](eink_trust.h) (**built**) | which root to trust (compiled in, stored, or none yet), whether a certificate has expired or is due to renew | on the host |
 | Pure logic | [eink_sha256.h](eink_sha256.h) (**built**) | SHA-256 for the code, the same on the chip and in the tests; checked against the standard's examples | on the host |
+| Pure logic | [eink_join.h](eink_join.h) (**built**) | one wake's joining: decide ([eink_pairing.h](eink_pairing.h)), do it through the interfaces below, say where it got to. Keeps the root only once a certificate has been issued under it | on the host, against fakes |
+| Interfaces | [eink_ports.h](eink_ports.h) (**built**) | what joining needs from outside: `Clock`, `Identity` (key, certificate, root, the last answer), `Est` (the network) and `Verifier` (a certificate chains to a root). The chip implements them; the tests use [fakes](tests/fakes.h) | n/a |
 | Storage | `eink_credentials.h` | the key, the certificate and the stored root, in their own storage area, written to a spare slot and switched only when complete | on the device |
 | Transport | `eink_secure_http` (a `http_request` subclass) | TLS 1.3 with the fixed name, the pinned root and the client certificate; classifies a failure (clock, certificate, refused, unreachable) | on the device |
 | Discovery | `eink_discovery.h` (extended) | `_https._tcp` or `_http._tcp`, `tlsport`, `secure` | on the device |
@@ -450,6 +452,7 @@ make -C esphome test
 | [eink_format.h](eink_format.h) | the server's URL from an address, an age in words, the notices | yes |
 | [eink_service.h](eink_service.h) | which of the servers a scan found to use, and its HTTP and HTTPS ports | yes |
 | [eink_pairing.h](eink_pairing.h), [eink_trust.h](eink_trust.h), [eink_sha256.h](eink_sha256.h) | the pairing code, what to do next in joining, which root to trust, where a certificate is in its life | yes |
+| [eink_join.h](eink_join.h), [eink_ports.h](eink_ports.h) | one wake's joining over interfaces (the clock, the key store, the network, the chain check), run against fakes | yes |
 | [eink_plan.h](eink_plan.h), [eink_clock.h](eink_clock.h) | whether to redraw after a plan; whether the clock can be believed | yes |
 | [eink_state.h](eink_state.h) | the typed state one wake keeps between its scripts | no: nothing to test but the types |
 | [eink_telemetry.h](eink_telemetry.h) | the radio signal and RTC memory behind the report | no: needs the chip |

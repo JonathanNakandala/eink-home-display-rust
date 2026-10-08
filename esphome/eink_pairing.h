@@ -86,7 +86,7 @@ enum class Standing : uint8_t {
 };
 
 // The one thing to do this wake.
-enum class Action : uint8_t {
+enum class Step : uint8_t {
   NOTHING,     // wait for the clock
   FETCH_ROOT,  // GET cacerts, unverified, and keep only the self-signed root
   MAKE_KEY,    // make the ECDSA P-256 key, once
@@ -97,40 +97,40 @@ enum class Action : uint8_t {
 
 struct Next {
   Standing standing;
-  Action action;
+  Step action;
 };
 
 // Decides from what is stored, the clock and the server's last answer. `clock_usable` is eink_clock::usable.
 // A certificate from the future means the clock is behind, not that the certificate is bad.
 inline Next next(const Stored &stored, int64_t now, bool clock_usable, Answer last) {
   if (!clock_usable)
-    return {Standing::CLOCK_NOT_SET, Action::NOTHING};
+    return {Standing::CLOCK_NOT_SET, Step::NOTHING};
   if (eink_trust::needs_root_fetched(stored.root))
-    return {Standing::NO_ROOT, Action::FETCH_ROOT};
+    return {Standing::NO_ROOT, Step::FETCH_ROOT};
   if (!stored.has_key)
-    return {Standing::ASKING, Action::MAKE_KEY};
+    return {Standing::ASKING, Step::MAKE_KEY};
 
   // Asking without a certificate to show: the first time, after it ended, or after the server stopped knowing it.
   const auto ask = [&](Standing otherwise) -> Next {
     if (last == Answer::PENDING)
-      return {Standing::WAITING, Action::ENROLL};
+      return {Standing::WAITING, Step::ENROLL};
     if (last == Answer::REFUSED)
-      return {Standing::NOT_RECOGNISED, Action::ENROLL};
-    return {otherwise, Action::ENROLL};
+      return {Standing::NOT_RECOGNISED, Step::ENROLL};
+    return {otherwise, Step::ENROLL};
   };
 
   if (!stored.has_certificate)
     return ask(Standing::ASKING);
   switch (eink_trust::standing(now, stored.not_before, stored.not_after)) {
-    case eink_trust::Standing::NOT_YET: return {Standing::CLOCK_NOT_SET, Action::NOTHING};
+    case eink_trust::Standing::NOT_YET: return {Standing::CLOCK_NOT_SET, Step::NOTHING};
     case eink_trust::Standing::EXPIRED: return ask(Standing::EXPIRED);
     case eink_trust::Standing::DUE:
       // A renewal the server refuses means it no longer knows this display (revoked or forgotten): ask as a new one.
-      return last == Answer::REFUSED ? ask(Standing::NOT_RECOGNISED) : Next{Standing::RENEWING, Action::RENEW};
+      return last == Answer::REFUSED ? ask(Standing::NOT_RECOGNISED) : Next{Standing::RENEWING, Step::RENEW};
     case eink_trust::Standing::VALID:
-      return last == Answer::REFUSED ? ask(Standing::NOT_RECOGNISED) : Next{Standing::PAIRED, Action::USE};
+      return last == Answer::REFUSED ? ask(Standing::NOT_RECOGNISED) : Next{Standing::PAIRED, Step::USE};
   }
-  return {Standing::PAIRED, Action::USE};
+  return {Standing::PAIRED, Step::USE};
 }
 
 // What to report to the server, as the next wake that gets through. A paired or renewing display reports nothing: its

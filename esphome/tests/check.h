@@ -41,6 +41,16 @@ template <typename T> std::enable_if_t<std::is_enum_v<T>, std::string> show(cons
 }
 inline std::string show(const char *value) { return value == nullptr ? "(null)" : std::string("\"") + value + "\""; }
 inline std::string show(const std::string &value) { return "\"" + value + "\""; }
+// Bytes, as hex.
+inline std::string show(const std::vector<uint8_t> &value) {
+  static const char digits[] = "0123456789abcdef";
+  std::string out = "bytes[";
+  for (uint8_t byte : value) {
+    out += digits[byte >> 4];
+    out += digits[byte & 15];
+  }
+  return out + "]";
+}
 inline std::string show(bool value) { return value ? "true" : "false"; }
 inline std::string show(uint8_t value) { return std::to_string((unsigned) value); }
 
