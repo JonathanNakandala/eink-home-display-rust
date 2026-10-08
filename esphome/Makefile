@@ -49,6 +49,13 @@ lint:
 format:
 	$(POETRY) run clang-format -i $(CPP)
 
+# Writes .vscode/c_cpp_properties.json from the compiler command the last `compile` recorded, so the editor finds
+# ESPHome's and ESP-IDF's headers. The file holds paths on this machine and is git-ignored. Pick the configuration
+# in VS Code's status bar: "ESPHome firmware" for the device headers, "Host tests" for tests/.
+.PHONY: vscode
+vscode:
+	$(POETRY) run python scripts/vscode_intellisense.py
+
 .PHONY: clean
 clean:
 	rm -rf build
