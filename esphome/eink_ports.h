@@ -37,6 +37,10 @@ class Identity {
  public:
   virtual ~Identity() = default;
 
+  // False when what is kept cannot be read (a failing flash, a record this firmware does not know): it is left alone,
+  // nothing is written over it, and nothing is tried until that is put right, since a key made now could not be kept.
+  virtual bool readable() = 0;
+
   // The owner's root built into the firmware (`server_root`), or empty. When there is one, nothing is fetched.
   virtual Bytes compiled_root() = 0;
   // The root kept after a certificate was issued under it, or empty.

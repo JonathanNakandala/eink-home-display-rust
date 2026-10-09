@@ -253,6 +253,17 @@ TEST(a_root_built_in_is_not_saved_when_a_certificate_comes) {
   CHECK_EQ(w.identity.roots_saved, 0);
 }
 
+TEST(what_is_kept_but_cannot_be_read_is_left_alone_and_nothing_is_tried) {
+  World w;
+  w.identity.readable_ = false;
+  const Outcome out = w.run();
+  CHECK(out.failure == Failure::MEMORY);
+  CHECK(!out.paired);
+  CHECK_EQ(w.est.requests(), 0);
+  CHECK_EQ(w.identity.keys_made, 0);
+  CHECK_EQ(w.identity.roots_saved + w.identity.certificates_saved, 0);
+}
+
 TEST(a_flash_that_cannot_be_written_is_reported_and_is_not_taken_for_success) {
   World w;
   w.identity.can_make_key = false;
