@@ -9,12 +9,40 @@ SOURCES := tests/support/main.cpp $(wildcard tests/core/*_test.cpp)
 HEADERS := $(wildcard eink/core/*.h) $(wildcard tests/support/*.h)
 
 .PHONY: test
-test: build/tests
+test: build/tests fuzz-replay
 	./build/tests
 
 build/tests: $(SOURCES) $(HEADERS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES)
+
+# Fuzzing the parsers that read bytes from the network or from memory a past firmware left (tests/fuzz/). Each harness is
+# libFuzzer's entry point, so it also builds with `clang++ -fsanitize=fuzzer,address,undefined` where that exists; here a
+# small driver (tests/fuzz/driver.cpp) does the job, coverage-guided, under the address and undefined-behaviour sanitizers.
+#   make fuzz-replay        runs the corpora and the regressions once each: seconds, and part of `make test`
+#   make fuzz               fuzzes each target for FUZZ_SECONDS (default 20); a crash is saved in build/fuzz-out/
+FUZZ_TARGETS := body http der base64 credentials memory service
+FUZZ_SECONDS ?= 20
+FUZZ_FLAGS := -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -I. -Itests/support -Itests/fuzz
+FUZZ_HEADERS := $(wildcard eink/core/*.h) tests/support/fake_store.h tests/fuzz/fuzz.h
+
+build/fuzz/driver.o: tests/fuzz/driver.cpp
+	@mkdir -p build/fuzz
+	$(CXX) -std=c++17 -O1 -g -fsanitize=address -c -o $@ $<
+
+build/fuzz/%_fuzz: tests/fuzz/%_fuzz.cpp build/fuzz/driver.o $(FUZZ_HEADERS)
+	$(CXX) $(FUZZ_FLAGS) -fsanitize-coverage=inline-8bit-counters -o $@ $< build/fuzz/driver.o
+
+.PHONY: fuzz-build fuzz-replay fuzz
+fuzz-build: $(FUZZ_TARGETS:%=build/fuzz/%_fuzz)
+
+fuzz-replay: fuzz-build
+	@for t in $(FUZZ_TARGETS); do build/fuzz/$${t}_fuzz tests/fuzz/corpus/$$t tests/fuzz/regressions/$$t || exit 1; done
+
+fuzz: fuzz-build
+	@for t in $(FUZZ_TARGETS); do \
+		build/fuzz/$${t}_fuzz -seconds=$(FUZZ_SECONDS) -out=build/fuzz-out tests/fuzz/corpus/$$t tests/fuzz/regressions/$$t || exit 1; \
+	done
 
 # The firmware build tools are pinned in ../pyproject.toml and installed into ../.venv by Poetry (`poetry install` at
 # the repository root). This is not a Python project: Poetry is only how ESPHome gets installed.
@@ -39,7 +67,7 @@ compile: secrets.yaml
 
 # The C++ is held to .clang-format, and the helper script to ruff (configured in ../pyproject.toml), which is the style it is already written in. `lint` fails on a difference and
 # `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
-CPP := $(shell find eink -name '*.h') $(wildcard tests/core/*.cpp) $(wildcard tests/tls/*.cpp) $(wildcard tests/support/*.h)
+CPP := $(shell find eink -name '*.h') $(wildcard tests/core/*.cpp) $(wildcard tests/tls/*.cpp) $(wildcard tests/support/*.h) $(wildcard tests/fuzz/*.cpp) tests/fuzz/fuzz.h
 
 .PHONY: lint
 lint:

@@ -71,3 +71,24 @@ TEST(only_the_path_and_query_of_a_url_are_sent) {
   CHECK_EQ(path_of(""), "/");
   CHECK_EQ(path_of("https://host/a/b/c.png"), "/a/b/c.png");
 }
+
+// Found by fuzzing (tests/fuzz/regressions/http): a chunk size too big to add to a position wrapped it, so the check
+// that it fitted passed, and the rest of the reply was appended over and over, making a body many times the reply.
+TEST(a_chunk_size_too_big_to_be_a_size_ends_the_body_and_makes_nothing) {
+  using eink_http::unchunk;
+  CHECK_EQ(unchunk("ffffffffffffffff\r\nx\r\n0\r\n\r\n"), "");
+  CHECK_EQ(unchunk("5\r\nhello\r\nffffffffffffffff\r\nx\r\n0\r\n\r\n"), "hello");  // what came before is kept
+  CHECK_EQ(unchunk("100000000\r\nx"), "");  // nine digits: more than a 32-bit size
+  CHECK_EQ(unchunk("7fffffff\r\nx"), "");   // a size that fits and is not there
+  CHECK_EQ(unchunk("-1\r\nx\r\n"), "");     // no sign, which strtoul would have read as the largest number
+  CHECK_EQ(unchunk(" 5\r\nhello\r\n"), "");
+  CHECK_EQ(unchunk("5;ext=1\r\nhello\r\n0\r\n\r\n"), "hello");  // an extension is allowed
+  CHECK_EQ(unchunk("A\r\n0123456789\r\n0\r\n\r\n"), "0123456789");
+}
+
+TEST(a_body_that_unchunks_is_never_longer_than_what_it_came_from) {
+  std::string raw = "1\r\na\r\n";
+  for (int i = 0; i < 50; i++)
+    raw += "ffffffffffffffff\r\nline\r\n";
+  CHECK(eink_http::unchunk(raw).size() <= raw.size());
+}

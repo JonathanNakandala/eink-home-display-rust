@@ -60,7 +60,10 @@ inline std::string header(const std::string &headers, const std::string &name) {
   return value;
 }
 
-// Chunked transfer coding undone. A body cut short gives what arrived of it whole.
+// Chunked transfer coding undone. A body cut short gives what arrived of it whole. A chunk size is hex digits (at most
+// eight, which is as much as the chip's 32-bit size can hold), then perhaps an extension after a ";"; anything else, or
+// a size that goes past the end of what arrived, ends it there. The sizes are never added to a position before they
+// have been checked against what is left, so that no size, however large, can wrap one.
 inline std::string unchunk(const std::string &raw) {
   std::string out;
   size_t at = 0;
@@ -68,11 +71,26 @@ inline std::string unchunk(const std::string &raw) {
     const size_t eol = raw.find("\r\n", at);
     if (eol == std::string::npos)
       break;
-    const size_t size = std::strtoul(raw.substr(at, eol - at).c_str(), nullptr, 16);
-    if (size == 0 || eol + 2 + size > raw.size())
+    size_t size = 0, digits = 0;
+    bool well_formed = true;
+    for (size_t i = at; i < eol && raw[i] != ';'; i++) {
+      const char c = raw[i];
+      const int value = c >= '0' && c <= '9'   ? c - '0'
+                        : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                        : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                               : -1;
+      if (value < 0 || digits == 8) {
+        well_formed = false;
+        break;
+      }
+      size = size * 16 + static_cast<size_t>(value);
+      digits++;
+    }
+    const size_t start = eol + 2;  // never past the end: the "\r\n" is there
+    if (!well_formed || digits == 0 || size == 0 || size > raw.size() - start)
       break;
-    out += raw.substr(eol + 2, size);
-    at = eol + 2 + size + 2;
+    out.append(raw, start, size);
+    at = start + size + 2;
   }
   return out;
 }
