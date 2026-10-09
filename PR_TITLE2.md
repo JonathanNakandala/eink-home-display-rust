@@ -1,0 +1,48 @@
+- 129730c: feat: Set the display's clock from an ordered list of NTP servers
+  - The server's own time comes first, then public pools; the clock is believed only if it is plausible against the newest render.
+- 1c63986: build: Pin the ESPHome tools with Poetry and check the firmware with make
+  - Python is only a build tool here: `pyproject.toml` has no package, and the virtualenv is `.venv`.
+- 7392dc1: build: Hold the C++ to a clang-format style, with make lint and make format
+- ba48010: chore: script to configure vscode intellisense
+- 6c1f5ce: refactor: Move the firmware's decisions out of the YAML lambdas and into tested headers
+- 95fa695: refactor: Split the firmware YAML into packages by concern
+- 6d42245: build: Add git hooks that check the Rust and the firmware before a commit or push
+  - Instead of CI: `git config core.hooksPath .githooks` turns them on.
+- 9276d9e: refactor: Use enums for the battery state and for why a wake failed
+  - Per-wake state is now typed inline variables in `eink_state.h`, since globals are declared before the headers are included.
+- 3b3ac5f: feat: Add the four ways a secure display can fail to the failure reasons
+  - Server side as well: `FailureReason` has nine values, and the OpenAPI document lists them.
+- 3aec127: feat: Let the firmware find a server that serves HTTPS
+  - Adds `server_transport` (`http` default, `prefer-https`, `https`) and reads the TLS port from mDNS.
+- 149900d: feat: Add the firmware's pairing decisions as headers tested on a computer
+  - The 12-character pairing code is worked out on both sides; the example `B0AJ-QTW6-Y8SA` is pinned in both test suites.
+- aa183ac: feat: Run a wake's joining against interfaces, so it is tested on a computer
+- d9083a5: build: Turn on TLS 1.3 and the channel-binding exporter in the firmware's mbedTLS
+  - Needs a rebuild of the firmware; the default ESP-IDF build has neither.
+- ff45511: feat: Run the display's TLS against the real server on a computer
+  - A host spike with the same mbedTLS as the chip, against `examples/est_fixture.rs`, which is the program's own server code.
+- 2c117d8: fix: Check an issued certificate through the intermediate the server presented
+- 4f1f7e1: feat: Add the pure parts of the display's EST client, tested on a computer
+- ff173c9: feat: Add the display's TLS and EST client on mbedTLS
+  - The CSR's challengePassword (the RFC 9266 channel binding) is built by hand in `eink_der.h`, since mbedTLS cannot add one.
+- be5d05b: feat: Run the firmware's joining against the real server on a computer
+- d8d5c89: feat: Keep the display's key, root and certificate in flash that survives a power cut
+  - Two slots with a checksum, tested with a store that loses power in every write.
+- 19a01fc: feat: Add the display's identity over that record, and over NVS on the chip
+- 45a84a5: test: Run the flash-backed identity against the real server
+- b392e62: chore: add vscode workspace settings and recommended extensions
+- 2c23c7e: chore: add esphome vscode recommendation
+- fd75800: feat: Read an HTTP response as it arrives, whatever the pieces
+- c8921b5: feat: Add a streaming TLS client, and the picture's download through it
+  - The picture still goes through `online_image`: a subclass of ESPHome's HTTP component stands in for the stock one.
+- 9d6dec0: feat: Choose how a wake reaches the server, and join at its start
+- f19506e: feat: Join and speak TLS in the wake script
+  - Needs a reflash. `server_transport` stays `http` unless set, so nothing changes until it is.
+- d6b2920: build: Give CMake Tools presets, and point Makefile Tools at the Makefile
+- ce9a6fc: feat: Keep a TLS session between connections and wakes
+  - The session (about 700 bytes) sits in RTC memory with a magic, a CRC and a key; its age comes from the wall clock, because mbedTLS's own clock restarts after deep sleep.
+- 9e3a3c6: feat: Resume the TLS session on the display's data connections
+  - A resumption that fails is forgotten and the connection made again in full, once.
+- aa009a8: test: Run session resumption against the real server
+- 6d8bbd1: fix: Find the host test programs where cargo put them
+  - `with_fixture.sh` asks cargo for the paths, so `CARGO_TARGET_DIR` works.
