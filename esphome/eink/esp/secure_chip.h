@@ -41,12 +41,16 @@ class SntpClock : public eink_ports::Clock {
   uint32_t newest_render_;
 };
 
+// The variables kept in RTC memory below are `inline`, not `static`: a static one would be a copy of its own in every
+// file that includes this header, and a second file would silently see an empty answer and session after every sleep.
+// Inline ones are one object whatever includes them.
+
 // What the server last said to this display (waiting, turned away): kept in RTC memory, which stays powered through
 // deep sleep and is lost with the power, so a flat battery only means the display asks again. Checked before it is
 // believed, since an update over the air leaves whatever the last firmware put there.
 constexpr uint32_t RTC_MAGIC = 0xE1B70002;
-static RTC_DATA_ATTR uint32_t rtc_magic = 0;
-static RTC_DATA_ATTR eink_pairing::Answer rtc_answer = eink_pairing::Answer::NONE;
+inline RTC_DATA_ATTR uint32_t rtc_magic = 0;
+inline RTC_DATA_ATTR eink_pairing::Answer rtc_answer = eink_pairing::Answer::NONE;
 
 inline eink_pairing::Answer &last_answer() {
   if (rtc_magic != RTC_MAGIC ||
@@ -60,7 +64,7 @@ inline eink_pairing::Answer &last_answer() {
 // The TLS session kept between connections and wakes (core/session_cache.h), in RTC memory: it survives deep sleep and
 // is lost with the power, which is right for something that only saves a handshake. What is in it is checked before it
 // is believed, since an update over the air leaves whatever the last firmware put there.
-static RTC_DATA_ATTR eink_session_cache::Slot rtc_session;
+inline RTC_DATA_ATTR eink_session_cache::Slot rtc_session;
 
 // The wall clock, if SNTP has set it: a session's age is worked out from it, because the clock mbedTLS uses starts
 // again after deep sleep. -1 when it cannot be believed, and then nothing is kept or offered.
