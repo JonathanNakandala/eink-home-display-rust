@@ -156,6 +156,43 @@ class Session {
     return eink_http::parse(raw);
   }
 
+  // Sends a request and does not read the answer, for a body that is read as it comes (`read_some`). False if it could
+  // not be sent.
+  bool send_request(const std::string &method, const std::string &path, const std::string &content_type,
+                    const std::string &body, const std::vector<std::pair<std::string, std::string>> &headers = {}) {
+    const std::string out = eink_http::request(method, path, SERVER_NAME, content_type, body, headers);
+    size_t sent = 0;
+    while (sent < out.size()) {
+      const int r =
+          mbedtls_ssl_write(&ssl_, reinterpret_cast<const unsigned char *>(out.data()) + sent, out.size() - sent);
+      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
+        continue;
+      if (r < 0) {
+        error_ = r;
+        return false;
+      }
+      sent += static_cast<size_t>(r);
+    }
+    return true;
+  }
+
+  // Up to `length` bytes of the answer, waiting for them for as long as the socket's timeout. A positive number is
+  // bytes read, 0 is the server closing the connection cleanly, and a negative one is an error (a timeout, a reset, an
+  // alert).
+  int read_some(uint8_t *out, size_t length) {
+    for (;;) {
+      const int r = mbedtls_ssl_read(&ssl_, out, length);
+      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE ||
+          r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+        continue;
+      if (r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
+        return 0;
+      if (r < 0)
+        error_ = r;
+      return r;
+    }
+  }
+
   // The 32 bytes RFC 9266 binds a request to its connection with (tls-exporter): empty if the library cannot make them.
   Bytes channel_binding() {
     Bytes out(32);

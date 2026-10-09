@@ -68,7 +68,7 @@ MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/framewo
 host-tls:
 	@test -n "$(MBEDTLS_SRC)" || { echo "mbedTLS source not found: run 'make compile' first, or set MBEDTLS_SRC" >&2; exit 1; }
 	cmake -S host -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
-	cmake --build build/host --target spike_tls join_host_test
+	cmake --build build/host --target spike_tls join_host_test stream_host_test
 
 .PHONY: spike
 spike: host-tls
@@ -77,14 +77,15 @@ spike: host-tls
 # The firmware's joining code over its own TLS and EST code, run against a real server (needs cmake and cargo).
 .PHONY: host-test
 host-test: host-tls
-	cmake --build build/host --target join_host_test
 	@failed=0; \
-	for test in $$(build/host/join_host_test --list); do \
-		if host/with_fixture.sh build/host/join_host_test $$test > build/host/$$test.log 2>&1; then \
-			echo "ok   $$test"; \
-		else \
-			echo "FAIL $$test"; cat build/host/$$test.log; failed=1; \
-		fi; \
+	for binary in join_host_test stream_host_test; do \
+		for test in $$(build/host/$$binary --list); do \
+			if host/with_fixture.sh build/host/$$binary $$test > build/host/$$test.log 2>&1; then \
+				echo "ok   $$test"; \
+			else \
+				echo "FAIL $$test"; cat build/host/$$test.log; failed=1; \
+			fi; \
+		done; \
 	done; \
 	exit $$failed
 

@@ -64,6 +64,11 @@ esphome:
     - eink_credentials.h
     - eink_flash_identity.h
     - eink_nvs.h
+    - eink_body.h
+    - eink_link.h
+    - eink_stream.h
+    - eink_secure.h
+    - eink_secure_http.h
     - eink_state.h
     - eink_telemetry.h
   on_boot:

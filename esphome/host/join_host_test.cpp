@@ -3,21 +3,9 @@
 // renews, or is turned away, as it would on the chip but for the flash, the radio and the clock being the computer's.
 //
 // Run through with_fixture.sh, which starts the server and says where it is.
-#include <arpa/inet.h>
-#include <cstdlib>
-#include <ctime>
 #include <string>
 
-#include "mbedtls/x509_crt.h"
-#include "mbedtls/x509_csr.h"
-
-#include "check.h"
-#include "fake_store.h"
-#include "memory_identity.h"
-#include "eink_flash_identity.h"
-#include "eink_est_client.h"
-#include "eink_join.h"
-#include "eink_verifier.h"
+#include "host_support.h"
 
 using eink_join::Joiner;
 using eink_join::Outcome;
@@ -25,133 +13,7 @@ using eink_pairing::Standing;
 using eink_report::Failure;
 using host::MemoryIdentity;
 
-namespace {
-
-constexpr int64_t DAY = 86400;
-
-std::string environment(const char *name) {
-  const char *value = std::getenv(name);
-  if (value == nullptr) {
-    std::fprintf(stderr, "%s is not set: run through host/with_fixture.sh\n", name);
-    std::exit(2);
-  }
-  return value;
-}
-
-uint16_t server_port() { return static_cast<uint16_t>(std::atoi(environment("FIXTURE_PORT").c_str())); }
-uint32_t server_ip() { return inet_addr("127.0.0.1"); }  // network order: the first octet in the lowest byte, as lwIP
-
-// The computer's clock, which a test can move forward to be at a certificate's third, or past its end.
-struct HostClock : eink_ports::Clock {
-  int64_t offset = 0;
-  int64_t now() override { return static_cast<int64_t>(std::time(nullptr)) + offset; }
-  bool usable() override { return true; }
-};
-
-// The real client, counted.
-struct CountingEst : eink_ports::Est {
-  eink_est::EstClient inner;
-  int roots = 0, enrolled = 0, renewed = 0;
-  CountingEst(uint32_t ip, uint16_t port, eink_tls::TlsIdentity &identity) : inner(ip, port, identity) {}
-  eink_ports::RootReply fetch_root() override {
-    roots++;
-    return inner.fetch_root();
-  }
-  eink_ports::Reply enroll(const std::string &n, eink_ports::Identity &i, const eink_ports::Bytes &r) override {
-    enrolled++;
-    return inner.enroll(n, i, r);
-  }
-  eink_ports::Reply renew(const std::string &n, eink_ports::Identity &i, const eink_ports::Bytes &r) override {
-    renewed++;
-    return inner.renew(n, i, r);
-  }
-  int requests() const { return roots + enrolled + renewed; }
-};
-
-// A display: its identity, the clock it goes by, the real client and the real check.
-struct Display {
-  std::string name;
-  MemoryIdentity identity;
-  HostClock clock;
-  CountingEst est;
-  eink_verifier::MbedVerifier verifier;
-
-  explicit Display(const std::string &n, uint16_t port = server_port()) : name(n), est(server_ip(), port, identity) {}
-  Outcome wake() { return Joiner(clock, identity, est, verifier, name).run(); }
-};
-
-// A display that keeps what it holds in "flash" and starts afresh at every wake, as the chip does after deep sleep:
-// nothing lives in memory between wakes but the flash and the one value RTC memory keeps. This is what shows the record
-// is enough.
-struct Rebooting {
-  std::string name;
-  fakes::MemoryStore flash;
-  eink_pairing::Answer rtc = eink_pairing::Answer::NONE;  // survives sleep, not a power loss
-  HostClock clock;
-  int roots = 0, enrolled = 0, renewed = 0;
-  eink_ports::Bytes compiled;
-
-  explicit Rebooting(const std::string &n) : name(n) {}
-
-  Outcome wake() {
-    flash.restore_power();
-    eink_flash::FlashIdentity identity(flash, rtc, compiled);
-    CountingEst est(server_ip(), server_port(), identity);
-    eink_verifier::MbedVerifier verifier;
-    const Outcome out = Joiner(clock, identity, est, verifier, name).run();
-    roots += est.roots;
-    enrolled += est.enrolled;
-    renewed += est.renewed;
-    return out;
-  }
-  // What is held, as a fresh start reads it.
-  eink_credentials::Record held() {
-    eink_credentials::Credentials c(flash);
-    return c.record();
-  }
-};
-
-int ctl(const std::string &arguments) {
-  const std::string command =
-      environment("DISPLAYCTL") + " --socket " + environment("FIXTURE_ADMIN") + " " + arguments + " > /dev/null 2>&1";
-  return std::system(command.c_str());
-}
-
-// A certificate that names itself and nobody else vouches for: someone in the middle's root.
-eink_ports::Bytes someone_elses_root() {
-  mbedtls_pk_context key;
-  mbedtls_pk_init(&key);
-  mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
-  mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key), eink_tls::Random::generate, nullptr);
-  mbedtls_x509write_cert crt;
-  mbedtls_x509write_crt_init(&crt);
-  mbedtls_x509write_crt_set_subject_key(&crt, &key);
-  mbedtls_x509write_crt_set_issuer_key(&crt, &key);
-  mbedtls_x509write_crt_set_subject_name(&crt, "CN=someone else");
-  mbedtls_x509write_crt_set_issuer_name(&crt, "CN=someone else");
-  mbedtls_x509write_crt_set_version(&crt, MBEDTLS_X509_CRT_VERSION_3);
-  mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
-  mbedtls_x509write_crt_set_validity(&crt, "20250101000000", "20350101000000");
-  mbedtls_x509write_crt_set_basic_constraints(&crt, 1, -1);
-  unsigned char serial[] = {1};
-  mbedtls_x509write_crt_set_serial_raw(&crt, serial, sizeof serial);
-  unsigned char buffer[1024];
-  const int n = mbedtls_x509write_crt_der(&crt, buffer, sizeof buffer, eink_tls::Random::generate, nullptr);
-  mbedtls_x509write_crt_free(&crt);
-  mbedtls_pk_free(&key);
-  return n > 0 ? eink_ports::Bytes(buffer + sizeof buffer - n, buffer + sizeof buffer) : eink_ports::Bytes();
-}
-
-// Takes a display from nothing to a certificate, with the owner approving by the code on the panel.
-void join(Display &d) {
-  const Outcome waiting = d.wake();
-  CHECK(waiting.standing == Standing::WAITING);
-  CHECK_EQ(ctl("approve " + d.name + " " + waiting.code), 0);
-  const Outcome paired = d.wake();
-  CHECK(paired.paired);
-}
-
-}  // namespace
+using namespace support;
 
 TEST(a_new_display_waits_shows_the_code_the_server_approves_and_is_then_paired) {
   Display d("host-new");

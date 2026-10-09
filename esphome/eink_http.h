@@ -6,6 +6,8 @@
 
 #include <cstdlib>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace eink_http {
 
@@ -24,12 +26,24 @@ inline std::string lower(std::string text) {
 
 // A request with the body. `host` is the name the server is asked for (not the address connected to).
 inline std::string request(const std::string &method, const std::string &path, const std::string &host,
-                           const std::string &content_type, const std::string &body) {
+                           const std::string &content_type, const std::string &body,
+                           const std::vector<std::pair<std::string, std::string>> &headers = {}) {
   std::string out = method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n";
   if (!content_type.empty())
     out += "Content-Type: " + content_type + "\r\n";
+  for (const auto &header : headers)
+    out += header.first + ": " + header.second + "\r\n";
   out += "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n";
   return out + body;
+}
+
+// The path and query of a URL, which is all that is sent to the server whatever its scheme and host say: the address is
+// the one mDNS found and the name checked is the fixed one. "https://anything/image?x=1" is "/image?x=1"; a URL with no
+// path is "/".
+inline std::string path_of(const std::string &url) {
+  const size_t scheme = url.find("://");
+  const size_t start = url.find('/', scheme == std::string::npos ? 0 : scheme + 3);
+  return start == std::string::npos ? "/" : url.substr(start);
 }
 
 // The value of a header (the name in any case), or "" if it is absent. `headers` is Response::headers.
