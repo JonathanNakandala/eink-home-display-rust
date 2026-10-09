@@ -6,19 +6,22 @@ which needs `make -C esphome compile` to have fetched it once) and runs the disp
 server against a **real** server, so the questions that would otherwise wait for a device are answered here.
 
 ```sh
-make -C esphome spike      # needs cmake and cargo
+make -C esphome host-test      # needs cmake and cargo
 ```
 
 The same from VS Code: the CMake panel uses `tests/tls/CMakePresets.json`, so it needs no kit. Choose the `host` preset, then
 configure, build, and run the `host-tests` entry in the test panel (it runs `make host-test`). The mbedTLS source is found by
 itself in ESPHome's cache, so the firmware has to have been compiled once.
 
-`spike_tls.cpp` is the client. `run_spike.sh` starts `examples/est_fixture.rs` (the program's own server code: the
-authority, EST, the admin socket, with stand-in display routes) in a fresh directory, runs the client against it, and
-stops it. The client approves its own pairing with the real `displayctl`, with the code the firmware's `core/pairing.h`
-works out, so a code that differs from the server's fails the spike.
+`with_fixture.sh` starts `examples/est_fixture.rs` (the program's own server code: the authority, EST, the admin socket,
+with stand-in display routes) in a fresh directory, runs a test against it, and stops it. The tests approve their own
+pairing with the real `displayctl`, with the code the firmware's `core/pairing.h` works out, so a code that differs from the
+server's fails them.
 
-## What it shows works
+## What it established
+
+First shown by a one-off program that did each step by hand, since removed: the host tests below run the same steps through
+the firmware's own code and so cover the paths that work. What it showed:
 
 | Step | Result |
 |---|---|
@@ -42,7 +45,7 @@ works out, so a code that differs from the server's fails the spike.
    (984,779 to 1,025,151 bytes, 53.7% to 55.9%) and **+0.7 KB of RAM**. Heap during a handshake is not measured by this.
 2. **A TLS 1.3 client must ask to be told about tickets.** With `mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets`,
    `mbedtls_ssl_read` returns `MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET`, and the session has to be taken then
-   (`mbedtls_ssl_get_session`); without it the ticket is thrown away and nothing resumes. The first spike run had
+   (`mbedtls_ssl_get_session`); without it the ticket is thrown away and nothing resumes. The first run had
    no tickets for this reason.
 3. **An enrolment answer carries the display's certificate alone.** It does not chain to the root by itself; it needs the
    intermediate, which the server presents in the TLS handshake (`mbedtls_ssl_get_peer_cert`, its `next`). So the display
