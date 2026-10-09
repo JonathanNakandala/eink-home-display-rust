@@ -1,35 +1,29 @@
 #!/bin/sh
-# Runs a command against a real server: builds the fixture and displayctl, starts the fixture with a fresh authority that
+# Runs a command against a real server: stages the fixture and displayctl (stage_programs.sh), starts the fixture with a fresh authority that
 # requires the RFC 9266 channel binding, runs the command with where things are in its environment, and stops the
 # fixture. The command's exit status is the result.
 #
 #   tests/tls/with_fixture.sh <command> [arguments]
 #
 # In the command's environment: FIXTURE_PORT (HTTPS), FIXTURE_ADMIN (the admin socket) and DISPLAYCTL (the program).
+# Set FIXTURE_PROGRAM and DISPLAYCTL_PROGRAM to use programs already built (see below).
 #
-# Cargo decides where the programs go (CARGO_TARGET_DIR, `build.target-dir` in a config file, a default target), so this asks it
-# where it put them and does not assume `target/` in the repository.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 port=${FIXTURE_PORT:-18443}
 
-# The artifacts, as JSON on standard output; the compiler's own messages, rendered for a person, still go to standard error, so a
-# build that fails says why. A build that fails stops here (set -e).
-built=$(cargo build -q --message-format=json-render-diagnostics --manifest-path "$root/Cargo.toml" \
-    --example est_fixture --bin displayctl)
-
-# The path of the program called `$1` that was just built (or found up to date).
-built_program() {
-    path=$(printf '%s\n' "$built" | grep -o '"executable":"[^"]*/'"$1"'"' | head -n 1 | sed 's/^"executable":"//; s/"$//')
-    if [ -z "$path" ] || [ ! -x "$path" ]; then
-        echo "cargo did not build $1, or it is not where cargo says (${path:-no path})" >&2
-        exit 1
-    fi
-    printf '%s\n' "$path"
-}
-fixture_program=$(built_program est_fixture)
-displayctl_program=$(built_program displayctl)
+# The programs come from stage_programs.sh, which `make host-test` runs once and says where with FIXTURE_PROGRAM and
+# DISPLAYCTL_PROGRAM. Run on its own this stages them itself: cargo checks for a change (a moment), and the copies are only
+# replaced when they differ, so the system does not verify the server's signature again for nothing.
+if [ -z "${FIXTURE_PROGRAM:-}" ] || [ -z "${DISPLAYCTL_PROGRAM:-}" ]; then
+    staged=$here/../../build/host/bin
+    "$here/stage_programs.sh" "$staged"
+    FIXTURE_PROGRAM=$(cd "$staged" && pwd)/est_fixture
+    DISPLAYCTL_PROGRAM=$(cd "$staged" && pwd)/displayctl
+fi
+fixture_program=$FIXTURE_PROGRAM
+displayctl_program=$DISPLAYCTL_PROGRAM
 
 # mktemp, and not a directory in the repository: a Unix socket's path is limited to about a hundred bytes.
 work=$(mktemp -d)/pki

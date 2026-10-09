@@ -66,7 +66,7 @@ works out, so a code that differs from the server's fails the spike.
 firmware's own TLS and EST code (`tls/est_client.h`, `tls/tls.h`, `tls/csr.h`, `tls/verifier.h`) against the real
 server**, with a display's identity held in memory (`memory_identity.h`) and a clock a test can move. Only the flash
 and the radio differ from the chip. Each test starts its own server, since the server limits how many different names
-one address may ask to join with in a day.
+one address may ask to join with in a day (see "Why it is fast" below).
 
 | Test | Shows |
 |---|---|
@@ -117,6 +117,14 @@ hour ahead, shows that mbedTLS would see it as from the future, and shows that i
 cache needs SNTP: with no clock that can be believed, nothing is kept and nothing is offered.
 
 Run one test with `tests/tls/with_fixture.sh build/host/join_host_test <name>`; `--list` prints the names.
+
+**Why it is fast.** `make host-test` takes about 10 s for 54 tests, each with a fresh server, because of two things.
+- *The programs are staged once* (`stage_programs.sh`, into `build/host/bin`). Cargo replaces the executable it builds on every call,
+  even when nothing changed, and macOS then verifies the new file's signature before it first runs, which for the 40 MB
+  server is about half a second. The server itself is up in about 70 ms. A copy that is only replaced when it differs is
+  verified once. Run on its own, `with_fixture.sh` stages them itself, so a single test still works.
+- *The four programs run side by side* (`run_host_tests.sh`), each with its own port, so the whole takes about as long as the
+  longest, `resume_host_test`. Within a program the tests are one after the other, each with its own server.
 
 One thing these cannot do is move the server's clock, so a test that puts the display's clock ahead sees the
 server's real-time certificates as already over by it. The expired-certificate test holds the display's dates
