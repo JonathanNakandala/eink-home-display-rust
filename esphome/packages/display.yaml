@@ -33,13 +33,24 @@ online_image:
       - lambda: |-
           id(shown_version) = id(plan_version);
           id(notice_on_panel) = false;
+          id(prompt_on_panel) = false;
           id(low_label_on_panel) = id(battery_low);
       - script.execute: after_image
     on_error:
       # /plan has just answered from this address, so the server is where it should be: looking for it
       # again would find the same thing. The log line above this says what went wrong.
-      - lambda: 'eink_state::fail_reason = eink_report::Failure::DOWNLOAD;'
-      - script.execute: give_up
+      - lambda: |-
+          eink_state::fail_reason =
+              eink_secure_wake::download_failure(eink_state::secure_active, eink_secure::context().last);
+      - if:
+          condition:
+            # A display that prefers HTTPS tries the download once more over plain HTTP before it gives up.
+            lambda: 'return eink_state::secure_active && eink_secure_wake::falls_back(eink_service::transport_from("${server_transport}"));'
+          then:
+            - script.execute: use_plain_http
+            - script.execute: fetch_image
+          else:
+            - script.execute: give_up
 
 font:
   # The dashboard's own font, from the Rust app's templates; only the glyphs the notice needs.

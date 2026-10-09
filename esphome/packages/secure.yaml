@@ -1,0 +1,129 @@
+# =============================================================================
+# The secure transport: joining the server's authority, and speaking TLS to it.
+# =============================================================================
+# `server_transport` (packages/server.yaml) chooses:
+#   http          none of this runs; the wake is as it always was.
+#   prefer-https  joins, and speaks TLS once it has. On any failure it goes on over plain HTTP (someone who can break the TLS
+#                 can strip it too, so refusing would add no protection, only a display that stops). While the owner has yet
+#                 to approve it, the panel shows the code to type in at the server.
+#   https         TLS only, never plain HTTP. Waits for the owner without counting a failure; any other failure is a failed
+#                 wake like any other.
+# What it does is eink_join.h (joining), eink_secure_wake.h (the choices), eink_stream.h (TLS and the body) and
+# eink_secure_chip.h (the chip's flash, clock and watchdog), all but the last tested against a real server (host/).
+substitutions:
+  # The owner's root built into the firmware, as base64 of its DER (`openssl x509 -in root.pem -outform der | base64 -w0`),
+  # for an owner who would rather not rely on the pairing code for the first contact: nothing is then fetched, and a server
+  # that shows another root is refused. Left empty, the root is fetched and confirmed by the code.
+  server_root: ""
+
+globals:
+  # The pairing code is on the panel as a notice, because the owner has to type it in at the server. Kept across sleep so it
+  # is drawn once, not every wake. Cleared whenever the picture or another notice is drawn over it.
+  - id: prompt_on_panel
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+script:
+  # The start of a wake's dealings with the server: plain, or after joining.
+  - id: begin_server
+    then:
+      - if:
+          condition:
+            lambda: 'return eink_service::transport_from("${server_transport}") != eink_service::Transport::HTTP;'
+          then:
+            - script.execute: secure_session
+          else:
+            - script.execute: check_plan
+
+  # Gets the clock, finds the server, joins if need be, and goes on by the route eink_secure_wake.h chooses.
+  - id: secure_session
+    then:
+      - script.execute: ensure_clock
+      - if:
+          condition:
+            lambda: 'return id(server_ip) == 0 || id(server_tls_port) == 0;'
+          then:
+            - script.execute: discover
+      - lambda: |-
+          constexpr auto transport = eink_service::transport_from("${server_transport}");
+          const auto begun = eink_secure_chip::begin(transport, id(server_ip), id(server_tls_port), App.get_name().str(),
+                                                     id(shown_version), "${server_root}");
+          eink_state::route = begun.verdict.route;
+          eink_state::secure_failure = begun.verdict.failure;
+          eink_state::prompt_wanted = begun.verdict.prompt;
+          eink_state::prompt_text = begun.prompt;
+          eink_state::wait_retry_s = begun.retry_after_s;
+          if (begun.verdict.failure != eink_report::Failure::NONE)
+            ESP_LOGW("secure", "Not secure: %s", eink_report::failure_label(begun.verdict.failure));
+      - if:
+          condition:
+            lambda: 'return eink_state::route == eink_secure_wake::Route::SECURE;'
+          then:
+            - script.execute: use_tls
+            - script.execute: check_plan
+          else:
+            - if:
+                condition:
+                  lambda: 'return eink_state::route == eink_secure_wake::Route::WAIT_FOR_OWNER;'
+                then:
+                  - script.execute: wait_for_owner
+                else:
+                  - if:
+                      condition:
+                        lambda: 'return eink_state::route == eink_secure_wake::Route::FAIL;'
+                      then:
+                        - lambda: 'eink_state::fail_reason = eink_state::secure_failure;'
+                        - script.execute: give_up
+                      else:
+                        # Plain HTTP: the transport prefers HTTPS and it did not work out. The server hears why at the next wake
+                        # that gets through.
+                        - lambda: |-
+                            if (eink_state::secure_failure != eink_report::Failure::NONE)
+                              eink_telemetry::set_failure(eink_state::secure_failure);
+                        - script.execute: check_plan
+
+  # This wake speaks TLS: the picture comes through eink_secure_http.h.
+  - id: use_tls
+    then:
+      - lambda: |-
+          eink_state::secure_active = true;
+          id(dashboard).set_parent(&eink_secure::http());
+
+  # Back to the stock component and plain HTTP, for the rest of this wake.
+  - id: use_plain_http
+    then:
+      - lambda: |-
+          ESP_LOGW("secure", "Falling back to plain HTTP");
+          eink_telemetry::set_failure(eink_state::fail_reason);
+          eink_state::secure_active = false;
+          id(dashboard).set_parent(id(stock_http));
+
+  # The pairing code in the corner, for the owner to type in at the server.
+  - id: show_prompt
+    then:
+      - lambda: |-
+          id(notice_text) = eink_state::prompt_text;
+          id(show_notice) = true;
+          id(notice_on_panel) = true;
+          id(prompt_on_panel) = true;
+      - component.update: epaper_display
+      - delay: ${refresh_settle}
+
+  # https only, and nothing can be done until the owner approves the display: show the code, and sleep for as long as the server
+  # said before asking again. Not a failure, so it does not count towards the backoff and the owner is not kept waiting.
+  - id: wait_for_owner
+    then:
+      - script.stop: wake_watchdog
+      - lambda: |-
+          eink_telemetry::set_failure(eink_state::secure_failure);
+          id(plan_sleep_ms) = eink_secure_wake::wait_sleep_ms(eink_state::wait_retry_s);
+          id(plan_received_ms) = 0;  // not the plan's sleep, so not shortened by the time the wake took
+          ESP_LOGI("secure", "Waiting for the owner to approve this display; asking again in %u s",
+                   (unsigned) (id(plan_sleep_ms) / 1000));
+      - if:
+          condition:
+            lambda: 'return !id(prompt_on_panel);'
+          then:
+            - script.execute: show_prompt
+      - script.execute: sleep_now

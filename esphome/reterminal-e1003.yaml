@@ -23,6 +23,7 @@
 #   clock.yaml    SNTP, and whether the clock can be believed
 #   server.yaml   finding the server, asking it for the plan, fetching the image
 #   display.yaml  the e-paper panel, the picture, the notice in the corner
+#   secure.yaml   joining the server's authority and speaking TLS to it (when server_transport is not http)
 #   wake.yaml     how a wake ends: sleeping, backoff, the watchdog, the maintenance button
 # =============================================================================
 substitutions:
@@ -65,10 +66,10 @@ esphome:
     - eink_flash_identity.h
     - eink_nvs.h
     - eink_body.h
-    - eink_link.h
     - eink_stream.h
     - eink_secure.h
     - eink_secure_http.h
+    - eink_link.h
     - eink_secure_wake.h
     - eink_secure_begin.h
     - eink_secure_chip.h
@@ -100,4 +101,5 @@ packages:
   clock: !include packages/clock.yaml
   server: !include packages/server.yaml
   display: !include packages/display.yaml
+  secure: !include packages/secure.yaml
   wake: !include packages/wake.yaml

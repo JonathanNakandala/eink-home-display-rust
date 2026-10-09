@@ -89,7 +89,7 @@ script:
                 id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
                 if (id(force_refresh))
                   ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
-            - script.execute: check_plan
+            - script.execute: begin_server
           else:
             # Without Wi-Fi there is no point asking the server, or looking for it.
             - lambda: 'eink_state::fail_reason = eink_report::Failure::WIFI;'
@@ -105,6 +105,12 @@ script:
           eink_telemetry::clear_failure();
       - if:
           condition:
+            # The owner still has to type the code in at the server (a display that prefers HTTPS goes on without it).
+            lambda: 'return eink_state::prompt_wanted && !id(prompt_on_panel);'
+          then:
+            - script.execute: show_prompt
+      - if:
+          condition:
             # Once per spell: the text has an age in it, which would otherwise redraw every wake.
             lambda: 'return id(plan_stale) && !id(notice_on_panel);'
           then:
@@ -112,6 +118,7 @@ script:
                 id(notice_text) = eink_format::stale_notice(id(plan_age_seconds));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
+                id(prompt_on_panel) = false;
             - component.update: epaper_display
             - delay: ${refresh_settle}
       - script.execute: sleep_now
@@ -195,6 +202,7 @@ script:
                                                               id(utc_offset_known), id(utc_offset_s));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
+                id(prompt_on_panel) = false;
             - component.update: epaper_display
             - delay: ${refresh_settle}
       - script.execute: sleep_now
