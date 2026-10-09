@@ -105,7 +105,7 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
             .pairings()
             .await?
             .iter()
-            .map(|pairing| MemberStatus::of(pairing, now))
+            .map(|pairing| MemberStatus::of(pairing, now, enrollment.certificate_lifetime()))
             .collect();
     }
     Ok(status)

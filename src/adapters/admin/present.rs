@@ -75,6 +75,11 @@ where
                 "certificate ran out {} ago. It gets a new one by itself when it is next switched on",
                 age(now - end)
             ),
+            Some(end) if entry.renewal_overdue => format!(
+                "certificate until {} ({} left), and it should have been renewed by now. Check that the display is on and can reach the server",
+                end.with_timezone(zone).format("%Y-%m-%d"),
+                age(end - now)
+            ),
             Some(end) => format!(
                 "certificate until {} ({} left)",
                 end.with_timezone(zone).format("%Y-%m-%d"),

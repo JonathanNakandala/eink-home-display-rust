@@ -400,7 +400,7 @@ fn the_description_lists_exactly_the_routes_there_are() {
         (
             "POST",
             "/v1/displays/{name}/approve",
-            &["200", "400", "403", "404", "409", "500"],
+            &["200", "400", "403", "404", "409", "429", "500"],
         ),
         (
             "POST",
@@ -759,6 +759,7 @@ async fn nothing_that_comes_back_from_the_api_is_a_code_a_key_or_a_certificate()
             "certificate_not_after",
             "changing_keys",
             "name",
+            "renewal_overdue",
             "replacement_waiting",
             "state",
             "waiting_since"
@@ -784,6 +785,47 @@ async fn the_right_code_approves_and_the_display_then_collects_its_certificate()
     assert_eq!(
         f.client.display("kitchen").await.unwrap().state,
         DisplayState::Member
+    );
+}
+
+#[tokio::test]
+async fn wrong_codes_in_a_row_are_refused_with_429_and_say_for_how_long() {
+    let f = start().await;
+    let kitchen = waiting(&f, "kitchen").await;
+    let wrong = Display::new("kitchen").code(&f);
+    for _ in 1..crate::application::enrollment::MAX_WRONG_CODES {
+        match f.client.approve("kitchen", &wrong).await {
+            Err(CallError::Refused { status, error }) => {
+                assert_eq!(status, 403);
+                assert_eq!(error.error.code, ErrorCode::WrongCode);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // The one that makes the run: refused for good measure, and told why and for how long.
+    match f.client.approve("kitchen", &wrong).await {
+        Err(CallError::Refused { status, error }) => {
+            assert_eq!(status, 429);
+            assert_eq!(error.error.code, ErrorCode::TooManyAttempts);
+            assert!(
+                error.error.message.contains("15 more minute"),
+                "{}",
+                error.error.message
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    // Locked: even the right code waits.
+    match f.client.approve("kitchen", &kitchen.code(&f)).await {
+        Err(CallError::Refused { status, error }) => {
+            assert_eq!(status, 429);
+            assert_eq!(error.error.code, ErrorCode::TooManyAttempts);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        f.client.display("kitchen").await.unwrap().state,
+        DisplayState::Waiting
     );
 }
 
@@ -1086,6 +1128,25 @@ async fn displays_are_listed_by_name_with_each_ones_standing() {
 }
 
 #[tokio::test]
+async fn a_member_that_has_not_renewed_when_it_should_have_is_listed_as_overdue_until_its_certificate_ends()
+ {
+    let f = start().await;
+    member(&f, "kitchen").await;
+    // The display renews with 30 of the 90 days left, so a member 50 days in is fine, and 70 days in it has not.
+    f.clock.advance(Duration::days(50));
+    assert!(!f.client.display("kitchen").await.unwrap().renewal_overdue);
+    f.clock.advance(Duration::days(20));
+    let late = f.client.display("kitchen").await.unwrap();
+    assert!(late.renewal_overdue);
+    assert!(!late.certificate_expired, "still has a certificate");
+    // Out: the louder state replaces it.
+    f.clock.advance(Duration::days(21));
+    let out = f.client.display("kitchen").await.unwrap();
+    assert!(out.certificate_expired);
+    assert!(!out.renewal_overdue);
+}
+
+#[tokio::test]
 async fn a_member_whose_certificate_has_run_out_is_listed_as_one_that_has() {
     let f = start().await;
     member(&f, "kitchen").await;
@@ -1258,6 +1319,7 @@ fn entry(state: DisplayState) -> DisplayEntry {
         waiting_since: None,
         certificate_not_after: None,
         certificate_expired: false,
+        renewal_overdue: false,
         changing_keys: false,
         replacement_waiting: false,
     }
@@ -1305,6 +1367,15 @@ fn each_state_says_what_to_do_about_it() {
         text.contains("certificate until") && text.contains("20 days 3 h left"),
         "{text}"
     );
+
+    member.certificate_not_after = Some(now + Duration::days(20));
+    member.renewal_overdue = true;
+    let text = say(&member);
+    assert!(
+        text.contains("20 days") && text.contains("should have been renewed by now"),
+        "{text}"
+    );
+    member.renewal_overdue = false;
 
     member.certificate_not_after = Some(now - Duration::days(2));
     member.certificate_expired = true;

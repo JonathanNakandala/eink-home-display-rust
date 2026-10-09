@@ -38,6 +38,7 @@ use crate::adapters::certificate_authority::PrivateAuthority;
 use crate::adapters::listen::{self, Bound, Families};
 use crate::application::enrollment::Enrollment;
 use crate::application::handshakes::Handshakes;
+use crate::application::renewal_watch::RenewalWatch;
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::PublicKey;
 use crate::domain::services::certificate_authority::CertificateAuthority;
@@ -101,6 +102,10 @@ const MAX_HEADERS: usize = 32;
 /// How often the server's own certificate is looked at. Only a comparison of two dates, so it is cheap, and it
 /// is short so that a clock set to the right time is noticed within a minute, not an hour (see `is_due`).
 const RENEWAL_CHECK: Duration = Duration::from_secs(60);
+
+/// How often the displays' certificates are looked at for ones that have not been renewed in time. It is days that
+/// matter, so an hour is plenty.
+const DISPLAYS_CHECK: Duration = Duration::from_secs(60 * 60);
 
 pub struct EstServer {
     listener: TcpListener,
@@ -208,6 +213,9 @@ impl EstServer {
         let slots = Arc::new(Semaphore::new(settings.max_connections));
         let mut connections = JoinSet::new();
         let mut renewal = tokio::time::interval(RENEWAL_CHECK);
+        // The displays that have fallen behind in renewing theirs, looked at on a slower clock and named once a day.
+        let mut watch_displays = tokio::time::interval(DISPLAYS_CHECK);
+        let mut watch = RenewalWatch::new();
         // Whether the last attempt to renew failed, so a lasting fault is said once and not every minute.
         let mut renewal_failing = false;
         loop {
@@ -242,6 +250,22 @@ impl EstServer {
                 }
                 // Finished connections are collected as they end, so the set doesn't grow.
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
+                _ = watch_displays.tick() => {
+                    match enrollment.overdue_renewals().await {
+                        Ok(overdue) => {
+                            for (device, left) in watch.to_report(overdue, enrollment.now()) {
+                                log::warn!(
+                                    "{device} has not renewed its certificate, which ends in {} day(s). A display \
+                                     renews with a third of its life left, so it is off, cannot reach this server, or \
+                                     has a wrong clock; one that is switched on gets a new certificate by itself \
+                                     once the old one has ended",
+                                    left.num_days().max(0)
+                                );
+                            }
+                        }
+                        Err(e) => log::warn!("Could not check the displays' certificates: {e:#}"),
+                    }
+                }
                 _ = renewal.tick() => {
                     match certificate.renew_if_due(
                         &authority,

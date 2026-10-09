@@ -5,6 +5,7 @@ pub mod handshakes;
 pub mod launch;
 pub mod plan;
 pub mod refresh;
+pub mod renewal_watch;
 pub mod status;
 
 use std::any::Any;

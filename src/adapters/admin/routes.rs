@@ -212,6 +212,18 @@ fn refused(error: ApproveError, revoking: bool) -> ApiError {
                  right on the panel and still not accepted, something may be between the display and this server"
             ),
         ),
+        ApproveError::TooManyAttempts {
+            device,
+            retry_after,
+        } => ApiError::new(
+            ErrorCode::TooManyAttempts,
+            format!(
+                "Too many wrong codes for {device} in a row, so none is accepted for {} more minute(s). Compare \
+                 the code on its panel with the one the server shows: if they differ, the display may be \
+                 talking to something else",
+                retry_after.num_minutes().max(1)
+            ),
+        ),
         ApproveError::Failed(e) => ApiError::internal("carry that out", e),
     }
 }
@@ -219,7 +231,11 @@ fn refused(error: ApproveError, revoking: bool) -> ApiError {
 /// `device` as it stands now.
 async fn entry_of(admin: &Admin, device: &DeviceId) -> Result<DisplayEntry, ApiError> {
     match admin.enrollment.pairing(device).await {
-        Ok(Some(pairing)) => Ok(DisplayEntry::of(&pairing, admin.enrollment.now())),
+        Ok(Some(pairing)) => Ok(DisplayEntry::of(
+            &pairing,
+            admin.enrollment.now(),
+            admin.enrollment.certificate_lifetime(),
+        )),
         Ok(None) => Err(unknown(device)),
         Err(e) => Err(ApiError::internal("look the display up", e)),
     }
@@ -245,7 +261,7 @@ async fn list_displays(State(admin): State<Arc<Admin>>) -> Result<Json<DisplayLi
     Ok(Json(DisplayList {
         displays: pairings
             .iter()
-            .map(|pairing| DisplayEntry::of(pairing, now))
+            .map(|pairing| DisplayEntry::of(pairing, now, admin.enrollment.certificate_lifetime()))
             .collect(),
     }))
 }
@@ -310,6 +326,7 @@ async fn forget_display(
         (status = 403, description = "The code does not match what the display would show. The display stays as it was.", body = ApiError),
         (status = 404, description = "No display of that name is waiting, or its request lapsed.", body = ApiError),
         (status = 409, description = "The display is not waiting for approval.", body = ApiError),
+        (status = 429, description = "Too many wrong codes were typed for the display in a row, so none is looked at for 15 minutes, the right one included. The message says for how long.", body = ApiError),
         BadRequest,
         ServerFailure
     )
