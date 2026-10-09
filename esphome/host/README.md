@@ -9,6 +9,10 @@ server against a **real** server, so the questions that would otherwise wait for
 make -C esphome spike      # needs cmake and cargo
 ```
 
+The same from VS Code: the CMake panel uses `host/CMakePresets.json`, so it needs no kit. Choose the `host` preset, then
+configure, build, and run the `host-tests` entry in the test panel (it runs `make host-test`). The mbedTLS source is found by
+itself in ESPHome's cache, so the firmware has to have been compiled once.
+
 `spike_tls.cpp` is the client. `run_spike.sh` starts `examples/est_fixture.rs` (the program's own server code: the
 authority, EST, the admin socket, with stand-in display routes) in a fresh directory, runs the client against it, and
 stops it. The client approves its own pairing with the real `displayctl`, with the code the firmware's `eink_pairing.h`

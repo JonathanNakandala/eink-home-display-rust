@@ -49,7 +49,10 @@ def standard(command: list[str], default: str) -> str:
 
 def main() -> None:
     command = main_command()
-    compiler = portable(command[0])
+    # The compiler is the one thing IntelliSense must find to know where the C++ library's headers are (<cstdint>, <string>), so it
+    # is written in full: a variable it did not expand would leave every header in the firmware with "#include errors detected".
+    # The include paths below are portable; this file is made on this machine and not kept in git, so a full path costs nothing.
+    compiler = command[0]
     # A compiler ignores an -I directory that is not there, and ESP-IDF names a few that do not exist for this
     # chip; VS Code warns "Cannot find" for each, so they are left out.
     includes = [portable(path) for path in flag_values(command, "-I") if Path(path).is_dir()]
@@ -77,7 +80,7 @@ def main() -> None:
     }
     OUTPUT.parent.mkdir(exist_ok=True)
     OUTPUT.write_text(json.dumps({"configurations": [firmware, host], "version": 4}, indent=4) + "\n")
-    print(f"Wrote {OUTPUT.relative_to(ROOT)}: {len(includes)} include paths, compiler {compiler}")
+    print(f"Wrote {OUTPUT.relative_to(ROOT)}: {len(includes)} include paths, compiler {Path(compiler).name}")
 
 
 if __name__ == "__main__":
