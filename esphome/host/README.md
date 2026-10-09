@@ -76,6 +76,16 @@ one address may ask to join with in a day.
 | a display the owner has revoked is not kept but loses nothing | the renewal is refused, it asks as a new display and is refused that too: not recognised, with the code to give the owner; key, certificate and root all still held |
 | once the owner approves it again a revoked display is back | revoke, forget, ask, approve the new code, paired |
 
+Four more use `eink_flash_identity.h` over a flash stand-in, with a display that starts afresh at every wake (as after
+deep sleep) and keeps nothing between wakes but its flash and the one value RTC memory holds:
+
+| Test | Shows |
+|---|---|
+| a display that starts afresh at every wake joins and renews from what flash holds | the key made at the first wake is the one used at the second; an ordinary wake asks nothing; renewal keeps the key |
+| a display that lost what the server last said just asks again | RTC memory is lost on a power cut; the same key gives the same code and the server says wait again |
+| a power cut while the certificate is written leaves the display as it was | the next write is cut short and the power goes: on the next start the record before it is read, whole, and the display renews |
+| flash that cannot be read is left alone and the server is not asked | both slots fail to read: reported as memory, nothing written, no request; when the flash comes back it is the same display |
+
 Run one test with `host/with_fixture.sh build/host/join_host_test <name>`; `--list` prints the names.
 
 One thing these cannot do is move the server's clock, so a test that puts the display's clock ahead sees the
