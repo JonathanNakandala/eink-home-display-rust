@@ -34,3 +34,4 @@ host_target(spike_tls spike_tls.cpp)
 # The firmware's own code (eink_join.h over eink_est_client.h and the rest), against a real server.
 host_target(join_host_test join_host_test.cpp ${FIRMWARE}/tests/main.cpp)
 host_target(stream_host_test stream_host_test.cpp ${FIRMWARE}/tests/main.cpp)
+host_target(begin_host_test begin_host_test.cpp ${FIRMWARE}/tests/main.cpp)

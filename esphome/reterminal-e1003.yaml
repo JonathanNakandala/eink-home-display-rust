@@ -69,6 +69,9 @@ esphome:
     - eink_stream.h
     - eink_secure.h
     - eink_secure_http.h
+    - eink_secure_wake.h
+    - eink_secure_begin.h
+    - eink_secure_chip.h
     - eink_state.h
     - eink_telemetry.h
   on_boot:

@@ -8,6 +8,8 @@
 
 #include "eink_battery.h"
 #include "eink_report.h"
+#include "eink_secure_wake.h"
+#include <string>
 
 namespace eink_state {
 
@@ -20,5 +22,21 @@ inline eink_battery::State battery_state = eink_battery::State::OK;
 
 // What this wake does about the battery: carry on, sleep (still halted), or halt now and say so first.
 inline eink_battery::Action battery_action = eink_battery::Action::CARRY_ON;
+
+// ---- the secure transport (eink_secure_wake.h)
+// ----------------------------------------------------------------------------
+
+// Whether this wake speaks TLS to the server: the display has joined and the transport is set to use it.
+inline bool secure_active = false;
+
+// How this wake reaches the server, and why not by TLS when it does not.
+inline eink_secure_wake::Route route = eink_secure_wake::Route::PLAIN;
+inline eink_report::Failure secure_failure = eink_report::Failure::NONE;
+
+// The owner has to type the pairing code in at the server, so the panel shows it: what it says, and how long the server
+// asked the display to wait before asking again.
+inline bool prompt_wanted = false;
+inline std::string prompt_text;
+inline uint32_t wait_retry_s = 0;
 
 }  // namespace eink_state
