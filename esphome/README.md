@@ -377,6 +377,28 @@ The states, so each has one meaning on the panel and in `last_failure`: *no root
 (asking again with the same key), *not recognised* (the server doesn't know this key: the owner must approve), and
 *clock not set* (nothing else can be tried until it is).
 
+### A new render of the same picture
+
+The plan's `version` is when the server rendered, so a render that comes out the same (a dashboard that did not change
+overnight) still has a new version. The display would download it and refresh the panel for nothing, which is most of what a
+wake costs. The server names a picture's bytes with an `ETag` (a hash of the file) and answers `304` with no body to a client
+that sends it back as `If-None-Match`, so over TLS the display does:
+
+- keeps the ETag of the picture it drew in RTC memory ([core/etag.h](eink/core/etag.h), [esp/shown_etag.h](eink/esp/shown_etag.h));
+- asks for the next picture with it, but **only if the panel shows just that picture**: not under a notice or the pairing
+  code, and not if the battery label has to appear or go (`eink_plan::shows_only_the_picture`). A 304 means the panel is right
+  as it is, which it is not then;
+- on a `304` records the new version and goes on to sleep: no download, no refresh, no wait for the panel to settle.
+
+`online_image` has an ETag of its own but keeps it in RAM, which is empty after every sleep, so it never asks; and on a 304 it
+calls `on_download_finished` with `cached`, which the handler in `display.yaml` must not draw (the image buffer is empty
+after a sleep and a draw would blank the panel). RTC memory is lost with the power, which costs one download. The plain HTTP
+path does not do this: the stock component hides the response headers.
+
+On a 304 the server does not note an image as sent to the display, so `/status` shows `last_image` from the last full
+download and its age keeps growing while the display keeps getting 304s. That is information, not an alarm: a display
+is `overdue` by its check-ins, which a 304 does not affect.
+
 ### Which image format: content negotiation
 
 The server publishes every format it can send (BMP and PNG) on each render, and `GET /image` picks one

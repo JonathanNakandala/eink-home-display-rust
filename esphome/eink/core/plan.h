@@ -31,6 +31,13 @@ inline bool needs_draw(bool changed, bool stale, const Screen &screen) {
          screen.low_label_on_panel != screen.battery_low;
 }
 
+// Whether the panel shows the server's picture and nothing else: no notice over it, and the battery label as it should
+// be. Only then is the panel what the server's picture would make it, so a server that says it has the same picture
+// (304) means there is nothing to draw.
+inline bool shows_only_the_picture(const Screen &screen) {
+  return !screen.notice_on_panel && screen.low_label_on_panel == screen.battery_low;
+}
+
 // Whether the offset a reply carried is one to keep: it was a number, and a real zone's offset. Otherwise the last
 // one stays.
 inline bool keeps_offset(bool was_a_number, int64_t utc_offset_s) {
