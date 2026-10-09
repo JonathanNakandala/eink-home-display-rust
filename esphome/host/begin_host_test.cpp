@@ -146,3 +146,45 @@ TEST(after_the_owner_revokes_it_a_display_is_asked_for_the_code_again) {
   CHECK(again.prompt.find("Not recognised") == 0);
   eink_secure::forget();
 }
+
+TEST(a_wake_that_begins_with_a_session_store_leaves_the_plan_and_the_picture_to_resume) {
+  Wakes w("host-begin-resume");
+  const Begin first = w.begin(Transport::HTTPS);
+  CHECK_EQ(ctl("approve host-begin-resume " + first.prompt.substr(std::string("Waiting for approval: ").size())), 0);
+
+  eink_session_cache::Slot slot;
+  eink_session_cache::clear(slot);
+  int64_t wall = 1791463200;
+  auto holder = eink_session_cache::make_store(slot, eink_session_cache::Key{}, [&wall] { return wall; });
+
+  w.identity.reset(new eink_flash::FlashIdentity(w.flash, w.rtc, w.compiled));
+  const Begin secure =
+      eink_secure_begin::begin(Transport::HTTPS, server_ip(), server_port(), w.name, w.clock, *w.identity, &holder);
+  CHECK(secure.verdict.route == Route::SECURE);
+  const eink_secure::Fetched plan = eink_secure::fetch("GET", "/plan");
+  CHECK(plan.ok());
+  CHECK(slot.length > 0);  // the plan's connection left a ticket
+  const eink_secure::Fetched who = eink_secure::fetch("GET", "/who");
+  CHECK_EQ(who.body, "host-begin-resume");
+
+  // A wake later, after a sleep: a new begin picks the store of the same server and identity, and the slot is still
+  // good.
+  wall += 600;
+  w.identity.reset(new eink_flash::FlashIdentity(w.flash, w.rtc, w.compiled));
+  const Begin again =
+      eink_secure_begin::begin(Transport::HTTPS, server_ip(), server_port(), w.name, w.clock, *w.identity, &holder);
+  CHECK(again.verdict.route == Route::SECURE);
+  const uint32_t length = slot.length;
+  CHECK(length > 0);
+  CHECK(eink_secure::fetch("GET", "/who").ok());
+
+  // The server's own count, from a server this test has to itself: the enrolment connections (never resumed) and the
+  // plan were in full; the request for who it is, the same request a wake later, and this one all resumed.
+  const eink_secure::Fetched counts = eink_secure::fetch("GET", "/handshakes");
+  CHECK(counts.ok());
+  int full = 0, resumed = 0;
+  std::sscanf(counts.body.c_str(), "full=%d resumed=%d", &full, &resumed);
+  CHECK_EQ(resumed, 3);
+  CHECK(full >= 4);  // the enrolment ones and the plan
+  eink_secure::forget();
+}

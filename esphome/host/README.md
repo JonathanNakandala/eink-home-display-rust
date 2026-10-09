@@ -90,6 +90,32 @@ deep sleep) and keeps nothing between wakes but its flash and the one value RTC 
 | a power cut while the certificate is written leaves the display as it was | the next write is cut short and the power goes: on the next start the record before it is read, whole, and the display renews |
 | flash that cannot be read is left alone and the server is not asked | both slots fail to read: reported as memory, nothing written, no request; when the flash comes back it is the same display |
 
+Eleven more are about resuming a TLS session on the data connections (`resume_host_test.cpp`, and one in
+`begin_host_test.cpp`), which saves a handshake's certificates, signatures and about two thirds of its bytes:
+
+| Test | Shows |
+|---|---|
+| the second connection of a wake resumes the first | the plan leaves a ticket, the picture and the next request resume it, and the server still names the display by the certificate of the first (the server counts `resumed`) |
+| a session survives being written out and read back as after deep sleep | the slot (RTC memory on the chip) and the wall clock are all a woken program has, and that is enough |
+| a ticket whose clock started again is still accepted because its age is put right | **see below**: without the fix the ticket is refused without a word |
+| a ticket the server does not know is a full handshake, not a failed request | a damaged ticket, as after the server was restarted with other keys: the connection is made in full, and the next one resumes the new ticket |
+| a session the library cannot read is forgotten | a slot from another build: forgotten, connection in full |
+| a renewed certificate does not use the session of the one before | the cache key includes the certificate, the root, the address and the port |
+| sessions are not shared between displays | another display handed this one's memory is offered nothing |
+| a display the owner revoked is still turned away on a resumed connection | the connection resumes, the request is a 403: membership is checked on every request |
+| with no store every connection is in full; with the clock not believed nothing is kept or offered | the two off switches |
+| what a session costs | **698 bytes** saved, in a slot of 3 KB |
+| a wake that begins with a session store | the plan and the picture of a wake, and the wake after a sleep, resume (the server counts three) |
+
+**The clock mbedTLS dates a ticket by restarts at deep sleep.** A TLS 1.3 client works out how old a ticket is from
+`mbedtls_ms_time()`, which on the chip is `CLOCK_MONOTONIC` (`esp_platform_time.c`): it starts again from nothing when the chip
+wakes. A session saved before a sleep and loaded after one would have a reception time that is in the future, or far in the
+past, and `ssl_prepare_client_hello` drops it with "ticket expired, disable session resumption": the connection is made in
+full, and nothing says why. So the cache keeps the **wall-clock** time the session was saved at, and `Session::restore` sets
+the ticket's reception time to `now - (wall now - saved at)` after loading it. The test above makes a session as if from a clock an
+hour ahead, shows that mbedTLS would see it as from the future, and shows that it resumes through the cache. This is why the
+cache needs SNTP: with no clock that can be believed, nothing is kept and nothing is offered.
+
 Run one test with `host/with_fixture.sh build/host/join_host_test <name>`; `--list` prints the names.
 
 One thing these cannot do is move the server's clock, so a test that puts the display's clock ahead sees the
