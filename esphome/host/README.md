@@ -56,8 +56,28 @@ works out, so a code that differs from the server's fails the spike.
 - That the chip's configuration (`sdkconfig`) and this directory's (`mbedtls_host_config.h`) agree on every option: the
   host one starts from upstream's defaults and adds only the exporter.
 
-## The next step this makes possible
+## The firmware's own code, against the real server
 
-The mbedTLS-based `Est`, `Identity` and `Verifier` the chip needs can be written against this library and tested
-here against the real server, with `eink_join.h` driving them, before they run on a device. The spike's functions
-(`certificates_in`, `csr`, `channel_binding`, the connection) are where they start.
+`make -C esphome host-test` runs `join_host_test.cpp`: **the firmware's joining logic (`eink_join.h`) driving the
+firmware's own TLS and EST code (`eink_est_client.h`, `eink_tls.h`, `eink_csr.h`, `eink_verifier.h`) against the real
+server**, with a display's identity held in memory (`memory_identity.h`) and a clock a test can move. Only the flash
+and the radio differ from the chip. Each test starts its own server, since the server limits how many different names
+one address may ask to join with in a day.
+
+| Test | Shows |
+|---|---|
+| a new display waits, shows the code the server approves, and is then paired | the whole first join; the root is kept only after the certificate; the certificate is dated an hour back and 90 days on |
+| a wrong code is not approved | the server refuses a code that is not the one worked out from the display's own root and key |
+| a paired display goes on without asking the network anything | no request at all on an ordinary wake |
+| with a third of the certificate left it renews with no owner | `simplereenroll` over a connection that shows the certificate; a new certificate |
+| a certificate that ended is asked for again with the same key and no owner | `simpleenroll` with the key it holds, no root fetched |
+| a server that does not chain to the pinned root is refused | a root of someone else's: refused at the handshake, reported as `certificate`, nothing sent |
+| a server that is not there is reported as the server | nothing listening: `server`, no key made, nothing remembered |
+| a display the owner has revoked is not kept but loses nothing | the renewal is refused, it asks as a new display and is refused that too: not recognised, with the code to give the owner; key, certificate and root all still held |
+| once the owner approves it again a revoked display is back | revoke, forget, ask, approve the new code, paired |
+
+Run one test with `host/with_fixture.sh build/host/join_host_test <name>`; `--list` prints the names.
+
+One thing these cannot do is move the server's clock, so a test that puts the display's clock ahead sees the
+server's real-time certificates as already over by it. The expired-certificate test holds the display's dates
+back instead.

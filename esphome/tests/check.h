@@ -54,13 +54,28 @@ inline std::string show(const std::vector<uint8_t> &value) {
 inline std::string show(bool value) { return value ? "true" : "false"; }
 inline std::string show(uint8_t value) { return std::to_string((unsigned) value); }
 
-inline int run_all() {
+// With no arguments, runs every test. `--list` prints their names, one to a line, and a name runs just that test: for
+// tests that each need a fresh server (host/).
+inline int run_all(int argc = 0, char **argv = nullptr) {
+  if (argc > 1 && std::string(argv[1]) == "--list") {
+    for (const Case &c : cases())
+      std::printf("%s\n", c.name);
+    return 0;
+  }
+  size_t ran = 0;
   for (const Case &c : cases()) {
+    if (argc > 1 && std::string(argv[1]) != c.name)
+      continue;
     const int before = failures();
     c.body();
+    ran++;
     std::printf("%s %s\n", failures() == before ? "ok  " : "FAIL", c.name);
   }
-  std::printf("%zu tests, %d failed checks\n", cases().size(), failures());
+  if (argc > 1 && ran == 0) {
+    std::printf("no test is called %s\n", argv[1]);
+    return 2;
+  }
+  std::printf("%zu tests, %d failed checks\n", ran, failures());
   return failures() == 0 ? 0 : 1;
 }
 
