@@ -1,0 +1,83 @@
+- 812e7fd: feat: Keep a cache folder and extract Chrome into it
+- 66701eb: feat: Keep Chrome running between renders
+- cf02bee: feat: Add a periodic mode that refreshes on a cron or interval
+- bc394ac: fix: Create the image save folder when it is missing
+- e4bd7ea: feat: Add --bundled-chrome to always render with the pinned Chrome
+- 234cbe5: feat: Serve the rendered image to the reTerminal E1003
+- 82a0add: feat: Advertise the image server over mDNS so a scan finds it
+- 74b91aa: fix: Flush the saved image so it is complete when store returns
+- 0902c9d: feat: Let the reTerminal find the image server itself
+- 9ac1760: feat: Show when the last update failed on the reTerminal's panel
+- 1fc2661: feat: Tell the display what is rendered, when to return and if it is stale
+- 7ce1351: feat: Keep a crash loop from hammering the weather and rail APIs
+- 4039f11: feat: Let the display ask the server to render right now
+- 704a313: feat: Make the reTerminal sleep on the server's schedule and survive outages
+  - Adds `/plan: the display asks what is current and sleeps until the next scheduled render, so an unchanged image is neither downloaded nor drawn.
+- d80c348: feat: Time out and retry provider API calls so a flaky upstream can't hang a render
+- 0b4e4a6: feat: Keep showing a failed source's last good data, labelled with its age
+- 5602a00: feat: Stop a hung source or render from holding up the dashboard
+- d962f94: feat: Tell apart why a reTerminal wake failed and act on each cause
+- 9520344: feat: Say why a weather or departures source failed, not just that it did
+- 0c11624: feat: Wait out a server's Retry-After before retrying a request
+- 652748c: feat: Let a monitor see whether the server is rendering and why not
+- f83bc38: fix: Only record the shown version once the reTerminal has drawn it
+- 96344d0: feat: Stop the reTerminal at a low battery and report its health to the server
+- 060da8e: feat: Negotiate the image format from the Accept header
+- fa60ee7: refactor: Put render reporting and image storage behind ports
+- 8592b0e: refactor: Build adapters from config in a composition root
+- eac83ac: refactor: Move launch under application and test the layering
+- 774cf89: refactor: Split the image server's routes into one file per concern
+- dab15a9: refactor: Share the binaries' wiring through bootstrap
+- ff02020: refactor: Keep config derives out of the domain
+- 7688080: refactor: Read the time through a Clock port
+- 957ead0: fix: Record a render's outcome before waking a waiting button press
+- bf390a6: test: Check the code after an early #[cfg(test)] item for layering
+- b8f7063: fix: Keep serving /image when one format's file can't be read
+- 0f5d8b1: refactor: Tidy the launch marker, plan query and leftovers
+- ff23370: fix: Only enforce a config rule where its component is in use
+- bbddb80: fix: Read the battery at its real voltage in the wake gate
+- e9b6c57: fix: Add the percent sign to the notice font
+- 8065e4a: fix: Read the battery before Wi-Fi starts
+- b9655b8: fix: Download the image once, and keep maintenance mode after the button is released
+  - Maintenance mode is latched at boot, because `deep_sleep.enter` ignores `deep_sleep.prevent`.
+- 849dec9: fix: Back off after a hung wake, and wake when the server planned
+  - Adds the `wake_watchdog` script (110 s); `run_duration` is raised to 180 s as a last resort.
+- 9a67904: feat: Listen on IPv4 and IPv6 and announce both over mDNS
+  - server.bind` now defaults to `[::]:8080` (one dual-stack socket); a host without IPv6 falls back to IPv4 and says so.
+- 782d834: fix: Don't let a future restart marker stall rendering, and wait for the clock
+  - A restart marker dated in the future no longer holds off the first render; it is counted from now.
+- a57bb70: fix: Drop a service that left before midnight when it is read after it
+- 38e3f33: fix: Keep the server up when a render panics
+- e7009ed: fix: Recover when the clock is set back
+- bc27902: fix: Stop a stuck Chrome when its render is given up on, and bound what a long run leaves behind
+  - Needs the new `PrivateTmp`, `MemoryHigh`, `MemoryMax` and `OOMPolicy` lines in the systemd unit; adds `libc` as a unix dependency. Untested on a real host.
+- 29e23b7: feat: Accept several --cron schedules, and say in words what they do
+  - --cron` can now be given more than once; a refresh is due whenever any of them is. A single `--cron` behaves as before.
+- 46444cd: fix: Never tell a display to sleep longer than it will
+  - next_seconds` in `/plan` is capped at 24 hours, matching the longest the device sleeps.
+- 99cbe05: feat: Read the refresh schedule from the config, and show it in /status
+  - A `[schedule]` section makes the program run continuously; command-line flags win over it, and `--once` renders once.
+- 7009247: fix: Keep API keys and passwords out of logs
+  - API keys and the Rail Data password are now `secrecy::SecretString`, so the start-up config log shows `[REDACTED]`. Keys that appeared in earlier logs should be rotated.
+- e06c6e5: feat: Report why a display's wake failed, and its signal and wake time
+  - Server half only: nothing sends the new fields until the firmware commit that follows.
+- 52e0e50: feat(esphome): Send the signal, the last wake's time, and why a wake failed
+  - Needs a reflash. Failure reason and wake time are kept in RTC memory (no flash writes) and describe the previous wake.
+- 7f42666: feat: Serve QOI as a third image format
+  - The default format stays BMP; QOI is used only when the device asks for it or `display.image_format = "Qoi"`.
+- 1487881: feat: Identify the display on every request, and record what each was sent
+  - Displays are identified by `?device=` on `/plan`, `/refresh` and `/image`; a missing or bad name is still served, just not recorded.
+- ee63ad2: feat(esphome): Name each display from its MAC address and send it on every request
+  - Needs a reflash. The device's network name gains a MAC suffix (`reterminal-e1003-a1b2c3`), so flash the first time over USB or by the new name.
+- 01f751b: feat: Log an image download that the display drops part way
+  - Logging only; the response body is now streamed with an explicit `Content-Length`.
+- 96ed8d6: refactor(esphome): Separate the calculations from the hardware, and test them
+  - No intended behaviour change; the sleep calculation is now safe against overflow and clock wrap. Run the tests with `make -C esphome test`.
+- c69a57f: chore: add vscode recommendations
+  - Unrelated to the rest of the branch.
+- 94511a8: refactor: Carry the timezone explicitly instead of using the process's
+  - No behaviour change. The zone is still the host's; tests now run in a fixed zone and pass under any host timezone.
+- 9109183: feat: Configure the timezone, and warn when falling back to the host's
+  - Adds `[location] timezone`. Without it the host's zone is used and a warning is logged at every start.
+- 51b027f: test: Cover the schedule across clock changes in several zones
+  - Tests only. `croner` already handles the repeated hour once times carry a `chrono-tz` zone, so no production code changed.
