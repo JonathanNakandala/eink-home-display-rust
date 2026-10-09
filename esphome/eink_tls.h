@@ -174,6 +174,9 @@ class Session {
     error_ = r;
     if (r == 0)
       return Open::OK;
+    // A wait that ran out says nothing about certificates, though the verify result reads as bad until one is checked.
+    if (network_failed())
+      return Open::UNREACHABLE;
     return mbedtls_ssl_get_verify_result(&ssl_) != 0 || r == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED ||
                    r == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE
                ? Open::REFUSED
@@ -183,16 +186,21 @@ class Session {
   // One request and everything the server answers, which it then closes the connection on. In TLS 1.3 the server tells
   // a client whose certificate it does not accept only after the handshake, as an alert on the first read: then
   // `refused_by_peer()` is true and the response has no status.
+  // `limit` is the most the answer may hold: the server is not always one that has been checked (first contact), and
+  // what it sends is held in memory. Over it there is no answer.
   eink_http::Response request(const std::string &method, const std::string &path, const std::string &content_type,
-                              const std::string &body) {
+                              const std::string &body, size_t limit = 16 * 1024) {
     if (!send_request(method, path, content_type, body))
       return {};
     std::string raw;
     unsigned char buffer[1024];
     int n;
     // Until the server closes, cleanly or not: what arrived is the answer.
-    while ((n = read_some(buffer, sizeof buffer)) > 0)
+    while ((n = read_some(buffer, sizeof buffer)) > 0) {
+      if (raw.size() + static_cast<size_t>(n) > limit)
+        return {};
       raw.append(reinterpret_cast<char *>(buffer), static_cast<size_t>(n));
+    }
     return eink_http::parse(raw);
   }
 
@@ -258,6 +266,9 @@ class Session {
   // The server turned our certificate down (TLS 1.3 says so after the handshake, as an alert).
   bool refused_by_peer() const { return error_ == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE; }
   int error() const { return error_; }
+  // The attempt failed on the network (a wait that ran out, a socket that broke), which says nothing about the session
+  // that was offered on it.
+  bool network_failed() const { return error_ == MBEDTLS_ERR_SSL_TIMEOUT || error_ == MBEDTLS_ERR_SSL_INTERNAL_ERROR; }
 
  private:
   int socket_ = -1;

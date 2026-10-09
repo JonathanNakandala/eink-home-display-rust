@@ -209,3 +209,20 @@ TEST(the_server_can_be_moved_without_losing_what_the_display_holds) {
   CHECK(!eink_secure::context().ready);
   eink_secure::forget();
 }
+
+TEST(a_small_request_refuses_a_reply_bigger_than_its_limit) {
+  Display d("host-stream-limit");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+  const auto parsed = eink_stream::parse(peer);
+  const auto ask = [&](size_t limit, const char *path) {
+    eink_tls::Session session;
+    CHECK(session.open(peer.ip, peer.port, &parsed->trust, &parsed->own, peer.key) == eink_tls::Open::OK);
+    return session.request("GET", path, "", "", limit);
+  };
+  // Within the limit it is the answer; over it there is none, rather than a heap filled by whatever the server sends.
+  const eink_http::Response fits = ask(64 * 1024, "/big/20000");
+  CHECK_EQ(fits.status, 200);
+  CHECK_EQ(fits.body.size(), 20000u);
+  CHECK_EQ(ask(4 * 1024, "/big/20000").status, 0);
+}

@@ -91,16 +91,19 @@ class Stream {
     if (!parsed_->trust_ok)
       return Start::UNREACHABLE;
     const bool showing = parsed_->own_ok;
-    // A saved session is tried first. If the handshake with it fails (the server forgot the ticket, was restarted with
-    // other keys, or the session is from another build), it is forgotten and the connection is made again in full,
-    // once. Whatever happens, the tickets the server sends are kept for the next time.
+    // A saved session is tried first. If the handshake with it fails because the server would not have it (the session
+    // is from another build, or the server turned it away), it is forgotten and the connection is made again in full,
+    // once. A handshake that fails on the network is not tried again, nor is the session forgotten: the ticket is no
+    // worse for the network being down, and a second wait would only cost more radio time. Whatever happens, the
+    // tickets the server sends are kept for the next time.
     eink_tls::Open opened = eink_tls::Open::UNREACHABLE;
     for (int attempt = 0; attempt < 2; attempt++) {
       session_.reset(new eink_tls::Session());
       session_->use_sessions(peer.sessions, attempt == 0);
       opened = session_->open(peer.ip, peer.port, &parsed_->trust, showing ? &parsed_->own : nullptr,
                               showing ? peer.key : nullptr, timeout_ms > 0 ? timeout_ms : peer.timeout_ms);
-      if (opened == eink_tls::Open::OK || attempt == 1 || peer.sessions == nullptr || !session_->offered())
+      if (opened == eink_tls::Open::OK || attempt == 1 || peer.sessions == nullptr || !session_->offered() ||
+          session_->network_failed())
         break;
       peer.sessions->forget();
     }
