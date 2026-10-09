@@ -28,9 +28,11 @@ struct FakeIdentity : Identity {
   Bytes certificate_der;
   eink_pairing::Answer last = eink_pairing::Answer::NONE;
   // What to refuse, to see how a failing flash is handled.
+  bool readable_ = true;
   bool can_make_key = true, can_save_root = true, can_save_certificate = true;
   int keys_made = 0, roots_saved = 0, certificates_saved = 0;
 
+  bool readable() override { return readable_; }
   Bytes compiled_root() override { return compiled; }
   Bytes stored_root() override { return stored; }
   bool save_root(const Bytes &der) override {

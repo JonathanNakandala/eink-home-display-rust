@@ -24,6 +24,7 @@ class MemoryIdentity : public eink_tls::TlsIdentity {
   bool has_the_key = false;
   eink_pairing::Answer last = eink_pairing::Answer::NONE;
 
+  bool readable() override { return true; }
   eink_ports::Bytes compiled_root() override { return compiled; }
   eink_ports::Bytes stored_root() override { return stored; }
   bool save_root(const eink_ports::Bytes &der) override {

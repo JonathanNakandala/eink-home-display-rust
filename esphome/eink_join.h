@@ -48,6 +48,11 @@ class Joiner {
     using eink_pairing::Stored;
     Outcome out;
     eink_ports::Bytes provisional;  // fetched this wake and not yet confirmed by a certificate
+    if (!identity_.readable()) {
+      // What is kept cannot be read, so it is not touched and nothing is tried: not even asking the server.
+      out.failure = eink_report::Failure::MEMORY;
+      return out;
+    }
     // Each step settles one thing, so a few is enough; the bound is only against a loop that cannot end.
     for (int step = 0; step < 8; step++) {
       const eink_ports::Bytes compiled = identity_.compiled_root();
