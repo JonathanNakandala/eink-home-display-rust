@@ -3,5 +3,57 @@
         "editor.defaultFormatter": "rust-lang.rust-analyzer",
         "editor.formatOnSave": true
     },
-    "rust-analyzer.rustfmt.extraArgs": []
+    "rust-analyzer.rustfmt.extraArgs": [],
+
+    // The firmware's C++ (esphome/): formatted with the clang-format the Poetry environment pins, not the one the C/C++
+    // extension bundles, which is another version and would format differently from `make -C esphome lint`. The style is
+    // esphome/.clang-format.
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true
+    },
+    "C_Cpp.clang_format_path": "${workspaceFolder}/.venv/bin/clang-format",
+    "C_Cpp.clang_format_style": "file",
+    "files.associations": {
+        "**/esphome/**/*.h": "cpp"
+    },
+    "editor.rulers": [120],
+
+    // The host tests against a real server (esphome/host/). The Makefile does the configuring, since the mbedTLS source is
+    // in ESPHome's cache and has to be found: `make -C esphome host-tls`. Building into the same place keeps it out of git.
+    "cmake.sourceDirectory": "${workspaceFolder}/esphome/host",
+    "cmake.buildDirectory": "${workspaceFolder}/esphome/build/host",
+    "cmake.configureOnOpen": false,
+    "makefile.makefilePath": "esphome/Makefile",
+
+    // The one Python file (esphome/scripts/) and the tools: the environment Poetry makes in .venv.
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true
+    },
+
+    // ESPHome's YAML has tags of its own, which the YAML extension would flag as errors.
+    "yaml.customTags": [
+        "!secret scalar",
+        "!lambda scalar",
+        "!include scalar",
+        "!include mapping",
+        "!extend scalar",
+        "!remove scalar"
+    ],
+
+    // Not worth indexing or searching: build products and fetched toolchains.
+    "files.watcherExclude": {
+        "**/target/**": true,
+        "**/.venv/**": true,
+        "**/esphome/.esphome/**": true,
+        "**/esphome/build/**": true
+    },
+    "search.exclude": {
+        "**/target": true,
+        "**/.venv": true,
+        "**/esphome/.esphome": true,
+        "**/esphome/build": true
+    }
 }
