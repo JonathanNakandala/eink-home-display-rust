@@ -57,8 +57,9 @@ host_target(begin_host_test begin_host_test.cpp ${FIRMWARE}/tests/support/main.c
 host_target(resume_host_test resume_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)
 
 # The tests against a real server, for ctest and the editor's test panel. Each test is run by itself against its own server
-# (with_fixture.sh), since the server limits how many different display names one address may join with in a day, so this is
-# one entry that runs them all through the same Makefile target a person would, and reports what failed.
+# (with_fixture.sh), since the server limits how many different display names one address may join with in a day, and the
+# programs run side by side (run_host_tests.sh). This is one entry that runs them all through the same Makefile target a
+# person would, and reports what failed.
 enable_testing()
 add_test(NAME host-tests COMMAND make -C ${FIRMWARE} host-test)
-set_tests_properties(host-tests PROPERTIES TIMEOUT 900)
+set_tests_properties(host-tests PROPERTIES TIMEOUT 300)

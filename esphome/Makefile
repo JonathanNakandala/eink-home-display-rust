@@ -77,18 +77,14 @@ spike: host-tls
 
 # The firmware's joining code over its own TLS and EST code, run against a real server (needs cmake and cargo).
 .PHONY: host-test
-host-test: host-tls
-	@failed=0; \
-	for binary in join_host_test stream_host_test begin_host_test resume_host_test; do \
-		for test in $$(build/host/$$binary --list); do \
-			if tests/tls/with_fixture.sh build/host/$$binary $$test > build/host/$$test.log 2>&1; then \
-				echo "ok   $$test"; \
-			else \
-				echo "FAIL $$test"; cat build/host/$$test.log; failed=1; \
-			fi; \
-		done; \
-	done; \
-	exit $$failed
+host-test: host-tls host-programs
+	FIXTURE_PROGRAM=$(abspath build/host/bin/est_fixture) DISPLAYCTL_PROGRAM=$(abspath build/host/bin/displayctl) \
+		tests/tls/run_host_tests.sh build/host join_host_test stream_host_test begin_host_test resume_host_test
+
+# The test server and displayctl, built once and kept where cargo does not replace them (tests/tls/stage_programs.sh says why).
+.PHONY: host-programs
+host-programs:
+	tests/tls/stage_programs.sh build/host/bin
 
 .PHONY: clean
 clean:
