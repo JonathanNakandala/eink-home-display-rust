@@ -18,6 +18,7 @@
 #include "esphome/core/application.h"
 
 #include "eink/core/http.h"
+#include "eink/esp/state.h"
 #include "eink/tls/secure.h"
 
 namespace eink_secure {
@@ -74,6 +75,15 @@ class Http final : public esphome::http_request::HttpRequestComponent {
     eink_stream::Headers headers;
     for (const auto &h : request_headers)
       headers.push_back({h.name, h.value});
+    // The ETag of the picture on the panel, if it shows just that: a server with the same bytes answers 304, with no
+    // body. Not added if the caller sent its own.
+    if (!eink_state::image_condition.empty()) {
+      bool has_one = false;
+      for (const auto &h : headers)
+        has_one = has_one || eink_http::lower(h.first) == "if-none-match";
+      if (!has_one)
+        headers.push_back({"If-None-Match", eink_state::image_condition});
+    }
     App.feed_wdt();
     c.last = container->stream.start(c.peer, method, eink_http::path_of(url), headers,
                                      body.empty() ? "" : "application/octet-stream", body,
@@ -83,6 +93,7 @@ class Http final : public esphome::http_request::HttpRequestComponent {
       return nullptr;
 
     container->status_code = container->stream.status();
+    eink_state::downloaded_etag = container->stream.header("etag");
     container->content_length = container->stream.content_length();
     container->set_chunked(!container->stream.has_length());
     container->collect(lower_case_collect_headers);

@@ -22,20 +22,31 @@ online_image:
     update_interval: never
     # The panel is 1872x1404 and the image is rendered at that size, so no resize.
     on_download_finished:
-      # Downloaded: what is left (the draw and the settle) takes a known time, and must not be cut short.
+      # Downloaded, or not needed: either way what is left takes a known time, and must not be cut short.
       - script.stop: wake_watchdog
-      - logger.log: "Image downloaded, drawing"
-      - component.update: epaper_display
-      - delay: ${refresh_settle}
-      # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
-      # refresh would leave the device believing it shows an image it doesn't, and the next wake would
-      # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.
-      - lambda: |-
-          id(shown_version) = id(plan_version);
-          id(notice_on_panel) = false;
-          id(prompt_on_panel) = false;
-          id(low_label_on_panel) = id(battery_low);
-      - script.execute: after_image
+      - if:
+          condition:
+            lambda: 'return cached;'
+          then:
+            # The server has the picture the panel already shows (304, see eink_shown): the panel is right as it is. It is not
+            # drawn, since the image buffer is empty after a sleep and a draw would blank it, nor waited on.
+            - logger.log: "Same picture, keeping the panel"
+            - lambda: 'id(shown_version) = id(plan_version);'
+            - script.execute: after_image
+          else:
+            - logger.log: "Image downloaded, drawing"
+            - component.update: epaper_display
+            - delay: ${refresh_settle}
+            # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
+            # refresh would leave the device believing it shows an image it doesn't, and the next wake would
+            # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.
+            - lambda: |-
+                id(shown_version) = id(plan_version);
+                eink_shown::keep(eink_state::downloaded_etag);
+                id(notice_on_panel) = false;
+                id(prompt_on_panel) = false;
+                id(low_label_on_panel) = id(battery_low);
+            - script.execute: after_image
     on_error:
       # /plan has just answered from this address, so the server is where it should be: looking for it
       # again would find the same thing. The log line above this says what went wrong.

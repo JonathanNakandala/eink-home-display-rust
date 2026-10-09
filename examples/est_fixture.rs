@@ -16,6 +16,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Path;
+use axum::response::IntoResponse;
 use axum::routing::get;
 use chrono::Duration;
 use chrono_tz::Tz;
@@ -98,6 +99,21 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
                 Body::from_stream(stream)
+            }),
+        )
+        // `etagged` is a picture with an ETag, answered 304 with no body to a client that already has it, as /image does.
+        .route(
+            "/etagged",
+            get(|headers: axum::http::HeaderMap| async move {
+                let has_it = headers
+                    .get("if-none-match")
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.contains("\"v1\""));
+                if has_it {
+                    (axum::http::StatusCode::NOT_MODIFIED, [("etag", "\"v1\"")], "").into_response()
+                } else {
+                    ([("etag", "\"v1\"")], "picture").into_response()
+                }
             }),
         )
         // `trickle` sends one byte every 100 ms, so every wait for data is short and the whole takes `n` tenths of a second:

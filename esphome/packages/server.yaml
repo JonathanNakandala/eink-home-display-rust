@@ -200,6 +200,15 @@ script:
           condition:
             lambda: 'return eink_health::image_buffer_fits(${image_width}, ${image_height});'
           then:
+            # Over TLS the picture is asked for with the ETag of the one on the panel, if the panel shows just that (a notice
+            # or a label that has to change is not): a server with the same bytes says 304, and nothing is downloaded or drawn.
+            - lambda: |-
+                eink_state::downloaded_etag.clear();
+                eink_state::image_condition =
+                    eink_state::secure_active
+                        ? eink_shown::condition(eink_plan::shows_only_the_picture(
+                              {id(notice_on_panel), id(low_label_on_panel), id(battery_low)}))
+                        : "";
             - online_image.set_url:
                 id: dashboard
                 # The download is started by the component.update below, once; set_url would otherwise start

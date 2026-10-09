@@ -272,3 +272,32 @@ TEST(a_request_within_its_deadline_is_unaffected) {
   CHECK_EQ(body.size(), 50000u);
   CHECK(stream.finished());
 }
+
+TEST(a_picture_the_server_says_the_display_has_is_a_304_with_no_body) {
+  Display d("host-stream-304");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+
+  // Asked without, it is sent whole, with the name of its bytes.
+  Stream first;
+  CHECK(first.start(peer, "GET", "/etagged") == Stream::Start::OK);
+  CHECK_EQ(first.status(), 200);
+  CHECK_EQ(first.header("ETag"), "\"v1\"");
+  std::string body;
+  CHECK(first.read_all(body, 100));
+  CHECK_EQ(body, "picture");
+
+  // Asked with that name, there is nothing to read, and it is over at once.
+  Stream second;
+  CHECK(second.start(peer, "GET", "/etagged", {{"If-None-Match", first.header("etag")}}) == Stream::Start::OK);
+  CHECK_EQ(second.status(), 304);
+  CHECK_EQ(second.header("etag"), "\"v1\"");
+  uint8_t byte;
+  CHECK_EQ(second.read(&byte, 1), 0);
+  CHECK(second.finished());
+
+  // Another name is a picture again.
+  Stream third;
+  CHECK(third.start(peer, "GET", "/etagged", {{"If-None-Match", "\"v0\""}}) == Stream::Start::OK);
+  CHECK_EQ(third.status(), 200);
+}

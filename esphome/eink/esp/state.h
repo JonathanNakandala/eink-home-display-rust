@@ -26,6 +26,12 @@ inline eink_battery::Action battery_action = eink_battery::Action::CARRY_ON;
 // used by whichever route sends it.
 inline std::string plan_target;
 
+// The picture: what the display asks the server with, if the panel shows just the last picture (esp/shown_etag.h), as
+// `If-None-Match`; and the ETag of the one this wake downloaded, for the panel to keep once it is drawn. Both "" when
+// there is none.
+inline std::string image_condition;
+inline std::string downloaded_etag;
+
 // ---- the secure transport (core/secure_wake.h) ----------------------------------------------------------------------
 
 // Whether this wake speaks TLS to the server: the display has joined and the transport is set to use it.
