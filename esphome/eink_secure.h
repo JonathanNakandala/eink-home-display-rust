@@ -47,6 +47,7 @@ inline void use(uint32_t ip, uint16_t port, const std::vector<uint8_t> &root, co
   c.peer.key = key;
   c.peer.timeout_ms = timeout_ms;
   c.peer.sessions = sessions;
+  c.peer.parsed = root.empty() ? nullptr : eink_stream::parse(c.peer);  // once for the wake's requests
   c.ready = ip != 0 && port != 0 && !root.empty();
   c.last = eink_stream::Stream::Start::OK;
 }
