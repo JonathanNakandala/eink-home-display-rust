@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let display = Router::new()
         .route("/image", get(|| async { "image-bytes" }))
         // Bodies for the firmware's streaming tests: byte i is i % 251, so a lost or repeated byte shows. `big` has a
-        // Content-Length; `chunked` has none, so it is sent in chunks; `stall` sends a little and then goes quiet.
+        // Content-Length; `chunked` has none, so it is sent in chunks; `stall` sends a little and then goes quiet; `trickle` never does.
         .route(
             "/big/{n}",
             get(|Path(n): Path<usize>| async move { pattern(n) }),
@@ -96,6 +96,21 @@ async fn main() -> anyhow::Result<()> {
                         tokio::time::sleep(std::time::Duration::from_secs(600)).await;
                         None
                     }
+                });
+                Body::from_stream(stream)
+            }),
+        )
+        // `trickle` sends one byte every 100 ms, so every wait for data is short and the whole takes `n` tenths of a second:
+        // a server that never goes quiet for long, and never finishes.
+        .route(
+            "/trickle/{n}",
+            get(|Path(n): Path<usize>| async move {
+                let stream = futures_util::stream::unfold(0, move |sent| async move {
+                    if sent == n {
+                        return None;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"x")), sent + 1))
                 });
                 Body::from_stream(stream)
             }),

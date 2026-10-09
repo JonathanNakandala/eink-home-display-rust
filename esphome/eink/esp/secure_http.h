@@ -77,7 +77,7 @@ class Http final : public esphome::http_request::HttpRequestComponent {
     App.feed_wdt();
     c.last = container->stream.start(c.peer, method, eink_http::path_of(url), headers,
                                      body.empty() ? "" : "application/octet-stream", body,
-                                     static_cast<int>(this->get_timeout()));
+                                     {static_cast<int>(this->get_timeout()), IMAGE_DEADLINE_MS});
     App.feed_wdt();
     if (c.last != eink_stream::Stream::Start::OK)
       return nullptr;

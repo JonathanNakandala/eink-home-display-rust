@@ -3,6 +3,7 @@
 // away.
 //
 // Run through with_fixture.sh, which starts the server and says where it is.
+#include <chrono>
 #include <string>
 
 #include "host_support.h"
@@ -225,4 +226,49 @@ TEST(a_small_request_refuses_a_reply_bigger_than_its_limit) {
   CHECK_EQ(fits.status, 200);
   CHECK_EQ(fits.body.size(), 20000u);
   CHECK_EQ(ask(4 * 1024, "/big/20000").status, 0);
+}
+
+TEST(a_server_that_never_stops_trickling_is_given_up_on_at_the_deadline) {
+  Display d("host-stream-trickle");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+  peer.timeout_ms = 1500;  // every wait is far shorter than this: a byte comes every 100 ms
+  peer.deadline_ms = 1000;
+  Stream stream;
+  const auto began = std::chrono::steady_clock::now();
+  CHECK(stream.start(peer, "GET", "/trickle/100") == Stream::Start::OK);  // 10 s of body
+  std::string body;
+  CHECK(!stream.read_all(body, 1000));
+  const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+  CHECK(took.count() >= 900);
+  CHECK(took.count() < 3000);
+  CHECK(!body.empty() && body.size() < 100);  // what arrived before it ended
+  CHECK(!stream.finished());
+}
+
+TEST(a_deadline_given_for_one_request_replaces_the_peers) {
+  Display d("host-stream-timing");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+  peer.deadline_ms = 60000;
+  Stream stream;
+  const auto began = std::chrono::steady_clock::now();
+  CHECK(stream.start(peer, "GET", "/trickle/100", {}, "", "", {1500, 700}) == Stream::Start::OK);
+  std::string body;
+  CHECK(!stream.read_all(body, 1000));
+  const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+  CHECK(took.count() < 2500);
+}
+
+TEST(a_request_within_its_deadline_is_unaffected) {
+  Display d("host-stream-inside");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+  peer.deadline_ms = 30000;
+  Stream stream;
+  CHECK(stream.start(peer, "GET", "/big/50000") == Stream::Start::OK);
+  std::string body;
+  CHECK(stream.read_all(body, 1 << 20));
+  CHECK_EQ(body.size(), 50000u);
+  CHECK(stream.finished());
 }

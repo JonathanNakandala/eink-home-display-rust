@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -32,6 +33,12 @@
 namespace eink_tls {
 
 using Bytes = eink_ports::Bytes;
+
+// How long to wait for the next bytes of an exchange (a connect, a handshake, a read), and the most a small exchange
+// (the enrolment) may take from the connect to its last byte. A server that answers a little at a time never lets a
+// wait run out, so the wait alone cannot end it.
+constexpr int WAIT_MS = 15000;
+constexpr int EXCHANGE_MS = 30000;
 
 // The name the server's certificate always has, and the only one a display checks, whatever address mDNS found.
 constexpr const char *SERVER_NAME = "eink-home-display.internal";
@@ -127,11 +134,18 @@ class Session {
   }
 
   // Connects to `ip` (IPv4 as lwIP stores it: the first octet in the lowest byte) and shakes hands, TLS 1.3 only.
-  // `trust` null verifies nothing (first contact, to fetch the root, which the pairing code confirms later); otherwise
-  // the server must chain to it and be named SERVER_NAME. `own_certificate` and `own_key` are shown if both are given.
+  // `timeout_ms` is the longest to wait for anything; `total_ms`, if more than 0, is the most the whole exchange may
+  // take from here to the last byte read from this session. Past it every wait ends as a timeout, whatever is still
+  // arriving. `trust` null verifies nothing (first contact, to fetch the root, which the pairing code confirms later);
+  // otherwise the server must chain to it and be named SERVER_NAME. `own_certificate` and `own_key` are shown if both
+  // are given.
   Open open(uint32_t ip, uint16_t port, const mbedtls_x509_crt *trust, const mbedtls_x509_crt *own_certificate,
-            mbedtls_pk_context *own_key, int timeout_ms = 15000) {
-    if (!connect_socket(ip, port, timeout_ms))
+            mbedtls_pk_context *own_key, int timeout_ms = WAIT_MS, int total_ms = 0) {
+    timeout_ms_ = timeout_ms;
+    has_deadline_ = total_ms > 0;
+    if (has_deadline_)
+      deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(total_ms);
+    if (!connect_socket(ip, port))
       return Open::UNREACHABLE;
     if (mbedtls_ssl_config_defaults(&conf_, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
                                     MBEDTLS_SSL_PRESET_DEFAULT) != 0)
@@ -272,7 +286,9 @@ class Session {
 
  private:
   int socket_ = -1;
-  int timeout_ms_ = 15000;
+  int timeout_ms_ = WAIT_MS;
+  bool has_deadline_ = false;
+  std::chrono::steady_clock::time_point deadline_;
   int error_ = 0;
   mbedtls_ssl_context ssl_;
   mbedtls_ssl_config conf_;
@@ -296,8 +312,26 @@ class Session {
     mbedtls_ssl_session_free(&session);
   }
 
-  bool connect_socket(uint32_t ip, uint16_t port, int timeout_ms) {
-    timeout_ms_ = timeout_ms;
+  // How long the next wait may be: the timeout, or what is left of the exchange if that is less. 0 when it is over.
+  int next_wait_ms() const {
+    if (!has_deadline_)
+      return timeout_ms_;
+    const auto left =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline_ - std::chrono::steady_clock::now());
+    return left.count() <= 0 ? 0 : (left.count() < timeout_ms_ ? static_cast<int>(left.count()) : timeout_ms_);
+  }
+
+  static void limit_wait(int socket, int option, int ms) {
+    struct timeval limit;
+    limit.tv_sec = ms / 1000;
+    limit.tv_usec = (ms % 1000) * 1000;
+    ::setsockopt(socket, SOL_SOCKET, option, &limit, sizeof limit);
+  }
+
+  bool connect_socket(uint32_t ip, uint16_t port) {
+    const int timeout_ms = next_wait_ms();
+    if (timeout_ms <= 0)
+      return false;
     socket_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (socket_ < 0)
       return false;
@@ -328,25 +362,34 @@ class Session {
     if (r < 0)
       return false;
     ::fcntl(socket_, F_SETFL, flags);
-    struct timeval limit;
-    limit.tv_sec = timeout_ms / 1000;
-    limit.tv_usec = (timeout_ms % 1000) * 1000;
-    ::setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, &limit, sizeof limit);
-    ::setsockopt(socket_, SOL_SOCKET, SO_SNDTIMEO, &limit, sizeof limit);
+    limit_wait(socket_, SO_RCVTIMEO, timeout_ms);
+    limit_wait(socket_, SO_SNDTIMEO, timeout_ms);
     return true;
   }
 
   static int send_bytes(void *context, const unsigned char *data, size_t length) {
     const Session *self = static_cast<const Session *>(context);
+    const int wait = self->next_wait_ms();
+    if (wait <= 0)
+      return MBEDTLS_ERR_SSL_TIMEOUT;
+    if (self->has_deadline_)
+      limit_wait(self->socket_, SO_SNDTIMEO, wait);
     const ssize_t n = ::send(self->socket_, data, length, 0);
     if (n >= 0)
       return static_cast<int>(n);
-    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? MBEDTLS_ERR_SSL_WANT_WRITE
-                                                                     : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    if (errno == EINTR)
+      return MBEDTLS_ERR_SSL_WANT_WRITE;
+    // SO_SNDTIMEO has already waited the whole time when this is EAGAIN, as for a read: a timeout, not "try again".
+    return errno == EAGAIN || errno == EWOULDBLOCK ? MBEDTLS_ERR_SSL_TIMEOUT : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
   }
 
   static int receive_bytes(void *context, unsigned char *data, size_t length) {
     const Session *self = static_cast<const Session *>(context);
+    const int wait = self->next_wait_ms();
+    if (wait <= 0)
+      return MBEDTLS_ERR_SSL_TIMEOUT;
+    if (self->has_deadline_)
+      limit_wait(self->socket_, SO_RCVTIMEO, wait);
     const ssize_t n = ::recv(self->socket_, data, length, 0);
     if (n >= 0)
       return static_cast<int>(n);  // 0 is the other end closing
