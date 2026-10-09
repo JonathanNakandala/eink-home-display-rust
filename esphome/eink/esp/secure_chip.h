@@ -19,6 +19,7 @@
 #include "eink/tls/flash_identity.h"
 #include "eink/core/join.h"
 #include "eink/esp/nvs.h"
+#include "eink/esp/shown_etag.h"
 #include "eink/core/pairing.h"
 #include "eink/tls/secure.h"
 #include "eink/tls/secure_begin.h"
@@ -96,6 +97,22 @@ inline Bytes compiled_root(const char *server_root) {
 inline eink_flash::FlashIdentity &identity(const char *server_root) {
   static eink_flash::FlashIdentity instance(store(), last_answer(), compiled_root(server_root));
   return instance;
+}
+
+// Erases the display's pairing, because the owner held the button for it: the key, the certificate and the root in
+// flash, and what is kept in RTC memory beside them (the server's last answer, the TLS session, the picture's ETag).
+// The built-in root (`server_root`) is part of the firmware and stays. Whatever state the flash record is in, it goes;
+// nothing else removes pairing. True if it is all gone.
+//
+// Before anything has used the identity (`identity()` below keeps the key in memory for the wake), which is where the
+// wake calls it: at the start, before it has joined or asked for anything.
+inline bool erase_pairing() {
+  eink_credentials::Credentials credentials(store());
+  const bool erased = credentials.erase();
+  last_answer() = eink_pairing::Answer::NONE;
+  eink_session_cache::clear(rtc_session);
+  eink_shown::forget();
+  return erased;
 }
 
 // Joins if it is to, and decides how this wake reaches the server (tls/secure_begin.h), on the chip's clock and flash.

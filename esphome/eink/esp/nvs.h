@@ -51,6 +51,13 @@ class NvsStore : public eink_credentials::BlobStore {
     return eink_credentials::Read::OK;
   }
 
+  bool erase(const char *name) override {
+    if (!open())
+      return false;
+    const esp_err_t r = nvs_erase_key(handle_, name);
+    return (r == ESP_OK || r == ESP_ERR_NVS_NOT_FOUND) && nvs_commit(handle_) == ESP_OK;
+  }
+
   bool write(const char *name, const eink_credentials::Bytes &data) override {
     if (!open())
       return false;

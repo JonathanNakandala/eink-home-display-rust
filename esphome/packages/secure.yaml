@@ -21,6 +21,42 @@ globals:
     initial_value: 'false'
 
 script:
+  # Holding KEY0 for ten seconds at the start of a wake resets the pairing (core/hold.h): at five the panel says to keep
+  # holding, and letting go before ten leaves everything as it was. The wake waits here while the button is down, so it is
+  # run before anything has used the identity (the boot sequence in reterminal-e1003.yaml). Only for a display that pairs.
+  - id: reset_gate
+    then:
+      - lambda: 'eink_state::reset_hold.begin(millis(), eink_button::key0_down());'
+      - while:
+          condition:
+            lambda: 'return eink_state::reset_hold.active();'
+          then:
+            - lambda: 'eink_state::hold_action = eink_state::reset_hold.update(millis(), eink_button::key0_down());'
+            - if:
+                condition:
+                  lambda: 'return eink_state::hold_action == eink_hold::Action::WARN;'
+                then:
+                  - lambda: |-
+                      id(notice_text) = eink_hold::warning_notice();
+                      id(show_notice) = true;
+                      id(notice_on_panel) = true;
+                      id(prompt_on_panel) = false;
+                  - component.update: epaper_display
+            - if:
+                condition:
+                  lambda: 'return eink_state::hold_action == eink_hold::Action::RESET;'
+                then:
+                  - lambda: |-
+                      const bool erased = eink_secure_chip::erase_pairing();
+                      ESP_LOGW("reset", "Pairing %s", erased ? "erased" : "NOT erased");
+                      id(notice_text) = eink_hold::done_notice(erased);
+                      id(show_notice) = true;
+                      id(notice_on_panel) = true;
+                      id(prompt_on_panel) = false;
+                  - component.update: epaper_display
+                  - delay: ${refresh_settle}
+            - delay: 100ms
+
   # The start of a wake's dealings with the server: plain, or after joining.
   - id: begin_server
     then:

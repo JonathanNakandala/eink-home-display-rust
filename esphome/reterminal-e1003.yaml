@@ -58,6 +58,13 @@ esphome:
             # Wi-Fi is normally left off until the battery has been checked; an update over the air
             # needs it whatever the battery says.
             - wifi.enable
+      # Holding KEY0 resets the pairing; the wake waits here while it is held (packages/secure.yaml).
+      - if:
+          condition:
+            lambda: 'return eink_service::transport_from("${server_transport}") != eink_service::Transport::HTTP;'
+          then:
+            - script.execute: reset_gate
+            - script.wait: reset_gate
       - script.execute: wake_watchdog
       - script.execute: battery_gate
 

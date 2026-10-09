@@ -4,6 +4,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include "eink/core/credentials.h"
 
@@ -44,6 +45,26 @@ struct MemoryStore : eink_credentials::BlobStore {
     if (fail_write > 0 && --fail_write == 0)
       return false;
     blobs[name] = data;
+    return true;
+  }
+
+  // Erases fail the same ways writes do: the Nth from now loses the power before it (leaving the blob), or fails
+  // outright.
+  int cut_erase = 0;
+  int fail_erase = 0;
+  std::vector<std::string> erased;  // in order, for tests of what goes first
+
+  bool erase(const char *name) override {
+    if (power_off)
+      return false;
+    if (cut_erase > 0 && --cut_erase == 0) {
+      power_off = true;
+      return false;
+    }
+    if (fail_erase > 0 && --fail_erase == 0)
+      return false;
+    erased.push_back(name);
+    blobs.erase(name);
     return true;
   }
 

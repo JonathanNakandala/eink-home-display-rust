@@ -221,3 +221,34 @@ TEST(flash_that_cannot_be_read_is_left_alone_and_the_server_is_not_asked) {
   CHECK(d.wake().paired);
   CHECK(d.held().key == before.key);
 }
+
+TEST(a_display_whose_pairing_is_erased_asks_again_with_a_new_key_and_the_owner_approves_it_by_the_new_code) {
+  // What holding the button for ten seconds does (core/hold.h): the record is erased, whatever else is in the flash.
+  Rebooting d("host-erase");
+  const Outcome waiting = d.wake();
+  CHECK_EQ(ctl("approve host-erase " + waiting.code), 0);
+  CHECK(d.wake().paired);
+  const eink_credentials::Record before = d.held();
+  CHECK(!before.key.empty());
+
+  {
+    eink_credentials::Credentials credentials(d.flash);
+    CHECK(credentials.erase());
+    d.rtc = eink_pairing::Answer::NONE;  // the chip clears what RTC memory kept of the server's last answer too
+  }
+  CHECK(d.held().empty());
+
+  // It starts as a new display: fetches the root, makes a key, and asks. The name belongs to a member with another
+  // key, so the server holds the request for the owner, who has to approve it with the code on the panel.
+  const Outcome again = d.wake();
+  CHECK(again.standing == Standing::WAITING);
+  CHECK(again.code != waiting.code);  // another key, another code
+  CHECK_EQ(d.roots, 3);  // fetched at each wake until a certificate is issued under it: twice before, and again
+
+  // The old code is the old key's: not accepted. The new one is.
+  CHECK(ctl("approve host-erase " + waiting.code) != 0);
+  CHECK_EQ(ctl("approve host-erase " + again.code), 0);
+  CHECK(d.wake().paired);
+  CHECK(d.held().key != before.key);
+  CHECK(d.held().certificate != before.certificate);
+}
