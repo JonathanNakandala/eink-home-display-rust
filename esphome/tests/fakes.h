@@ -51,6 +51,7 @@ struct FakeIdentity : Identity {
   Bytes spki() override { return key_spki; }
   Bytes csr(const std::string &, const Bytes &) override { return {0xC5}; }
   bool has_certificate() override { return certificate; }
+  Bytes held_certificate() override { return certificate_der; }
   Lifetime lifetime() override { return life; }
   bool save_certificate(const Bytes &der, const Lifetime &lifetime) override {
     if (!can_save_certificate)
