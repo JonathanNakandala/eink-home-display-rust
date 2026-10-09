@@ -47,9 +47,6 @@ function(host_target name)
   target_link_libraries(${name} PRIVATE mbedtls mbedx509 mbedcrypto)
 endfunction()
 
-# The first probe, kept: the whole conversation written out step by step.
-host_target(spike_tls spike_tls.cpp)
-
 # The firmware's own code (core/join.h over tls/est_client.h and the rest), against a real server.
 host_target(join_host_test join_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)
 host_target(stream_host_test stream_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)

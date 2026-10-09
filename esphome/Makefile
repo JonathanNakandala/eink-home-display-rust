@@ -61,7 +61,7 @@ vscode:
 	$(POETRY) run python scripts/vscode_intellisense.py
 
 # mbedTLS built for the computer, from the very source ESPHome builds the chip's with (the ESP-IDF in its cache, so
-# `compile` has to have run once), and the spike that runs the display's whole TLS conversation against the real server.
+# `compile` has to have run once), for the host tests that run the display's TLS against the real server.
 # Needs cmake and cargo. See tests/tls/README.md.
 MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/frameworks/*/components/mbedtls/mbedtls $(HOME)/.cache/esphome/idf/frameworks/*/components/mbedtls/mbedtls))
 
@@ -69,11 +69,7 @@ MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/framewo
 host-tls:
 	@test -n "$(MBEDTLS_SRC)" || { echo "mbedTLS source not found: run 'make compile' first, or set MBEDTLS_SRC" >&2; exit 1; }
 	cmake -S tests/tls -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
-	cmake --build build/host --target spike_tls join_host_test stream_host_test begin_host_test resume_host_test
-
-.PHONY: spike
-spike: host-tls
-	tests/tls/run_spike.sh
+	cmake --build build/host --target join_host_test stream_host_test begin_host_test resume_host_test
 
 # The firmware's joining code over its own TLS and EST code, run against a real server (needs cmake and cargo).
 .PHONY: host-test
