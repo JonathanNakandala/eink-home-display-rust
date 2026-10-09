@@ -3,6 +3,9 @@
 #pragma once
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <cstdlib>
 #include <ctime>
 #include <string>
@@ -153,6 +156,30 @@ inline void join(Display &d) {
 }
 
 // What a stream needs to speak to the server as a display that has joined.
+// A listening socket that takes connections and never answers: a server that is there and says nothing.
+class QuietServer {
+ public:
+  QuietServer() {
+    fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in address = {};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = server_ip();
+    CHECK(::bind(fd_, reinterpret_cast<struct sockaddr *>(&address), sizeof address) == 0);
+    CHECK(::listen(fd_, 4) == 0);
+    socklen_t size = sizeof address;
+    ::getsockname(fd_, reinterpret_cast<struct sockaddr *>(&address), &size);
+    port_ = ntohs(address.sin_port);
+  }
+  ~QuietServer() { ::close(fd_); }
+  QuietServer(const QuietServer &) = delete;
+  QuietServer &operator=(const QuietServer &) = delete;
+  uint16_t port() const { return port_; }
+
+ private:
+  int fd_ = -1;
+  uint16_t port_ = 0;
+};
+
 inline eink_stream::Peer peer_of(Display &d) {
   eink_stream::Peer peer;
   peer.ip = server_ip();

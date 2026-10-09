@@ -26,6 +26,13 @@ struct Context {
   eink_stream::Stream::Start last = eink_stream::Stream::Start::OK;
 };
 
+// The most a request through here may take, from connecting to the last byte. The plan is the longer, since the server
+// waits up to 40 s to render when the button asks for it; the picture is the one the wake's watchdog (wake.yaml) is
+// behind. Both leave the watchdog's time for the rest of the wake, so a server that keeps answering a little at a time
+// ends as a failed request with its reason, and not as a hung wake.
+constexpr int PLAN_DEADLINE_MS = 50000;
+constexpr int IMAGE_DEADLINE_MS = 45000;
+
 inline Context &context() {
   static Context instance;
   return instance;
@@ -38,7 +45,8 @@ inline Context &context() {
 // wakes after, resume it instead of shaking hands in full. It must be for this server and this identity
 // (core/session_cache.h makes the key), and outlive the requests; null shakes hands in full every time.
 inline void use(uint32_t ip, uint16_t port, const std::vector<uint8_t> &root, const std::vector<uint8_t> &certificate,
-                mbedtls_pk_context *key, int timeout_ms = 15000, eink_session_cache::Store *sessions = nullptr) {
+                mbedtls_pk_context *key, int timeout_ms = eink_tls::WAIT_MS,
+                eink_session_cache::Store *sessions = nullptr) {
   Context &c = context();
   c.peer.ip = ip;
   c.peer.port = port;
@@ -46,6 +54,7 @@ inline void use(uint32_t ip, uint16_t port, const std::vector<uint8_t> &root, co
   c.peer.certificate = certificate;
   c.peer.key = key;
   c.peer.timeout_ms = timeout_ms;
+  c.peer.deadline_ms = PLAN_DEADLINE_MS;
   c.peer.sessions = sessions;
   c.peer.parsed = root.empty() ? nullptr : eink_stream::parse(c.peer);  // once for the wake's requests
   c.ready = ip != 0 && port != 0 && !root.empty();

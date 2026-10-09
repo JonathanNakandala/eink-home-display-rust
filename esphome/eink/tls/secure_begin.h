@@ -50,7 +50,7 @@ inline Begin begin(eink_service::Transport transport, uint32_t ip, uint16_t tls_
       const eink_ports::Bytes compiled = identity.compiled_root();
       const eink_ports::Bytes root = compiled.empty() ? identity.stored_root() : compiled;
       const eink_ports::Bytes certificate = identity.held_certificate();
-      eink_secure::use(ip, tls_port, root, certificate, &identity.private_key(), 15000,
+      eink_secure::use(ip, tls_port, root, certificate, &identity.private_key(), eink_tls::WAIT_MS,
                        sessions == nullptr
                            ? nullptr
                            : sessions->select(eink_session_cache::make_key(ip, tls_port, root, certificate)));

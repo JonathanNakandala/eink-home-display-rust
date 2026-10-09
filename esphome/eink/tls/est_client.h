@@ -35,7 +35,8 @@ class EstClient : public eink_ports::Est {
   eink_ports::RootReply fetch_root() override {
     eink_ports::RootReply reply;
     eink_tls::Session session;
-    if (session.open(ip_, port_, nullptr, nullptr, nullptr) != eink_tls::Open::OK)
+    if (session.open(ip_, port_, nullptr, nullptr, nullptr, eink_tls::WAIT_MS, eink_tls::EXCHANGE_MS) !=
+        eink_tls::Open::OK)
       return reply;  // unreachable
     const eink_http::Response response = session.request("GET", path("cacerts"), "", "");
     if (response.status != 200)
@@ -99,7 +100,8 @@ class EstClient : public eink_ports::Est {
     {
       eink_tls::Session session;
       const eink_tls::Open opened =
-          session.open(ip_, port_, &trust, showing ? &own : nullptr, showing ? &identity_.private_key() : nullptr);
+          session.open(ip_, port_, &trust, showing ? &own : nullptr, showing ? &identity_.private_key() : nullptr,
+                       eink_tls::WAIT_MS, eink_tls::EXCHANGE_MS);
       if (opened == eink_tls::Open::REFUSED) {
         reply.result = eink_ports::Result::TLS_REFUSED;
       } else if (opened == eink_tls::Open::OK) {

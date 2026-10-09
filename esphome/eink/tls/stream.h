@@ -34,7 +34,10 @@ struct Peer {
   Bytes root;
   Bytes certificate;  // empty: connect without showing one
   mbedtls_pk_context *key = nullptr;
-  int timeout_ms = 15000;  // for the connection, and for every wait for data after it
+  int timeout_ms = eink_tls::WAIT_MS;  // for the connection, and for every wait for data after it
+  // The most a request may take from connecting to the last byte of the answer, or 0 for no limit. The waits above end
+  // only when the server goes quiet; this ends a server that never does.
+  int deadline_ms = 0;
   // Where to find a session to resume and keep the next one (core/session_cache.h), or null to shake hands in full
   // every time. Not owned: it outlives the stream, since what it keeps is for the next connection.
   eink_session_cache::Store *sessions = nullptr;
@@ -71,6 +74,12 @@ inline std::shared_ptr<const Parsed> parse(const Peer &peer) {
   return out;
 }
 
+// Limits for one request that differ from the peer's (0 keeps the peer's), which saves copying the peer to change them.
+struct Timing {
+  int wait_ms = 0;
+  int deadline_ms = 0;
+};
+
 class Stream {
  public:
   Stream() = default;
@@ -82,10 +91,10 @@ class Stream {
   using Start = eink_link::Start;
 
   // Connects, shows the display's certificate if the peer has one, sends the request and reads as far as the end of the
-  // head. The body is still to be read. `timeout_ms` of 0 is the peer's own; another one is for this request only,
-  // which saves copying the peer (its root and certificate) to change it.
+  // head. The body is still to be read. `timing` is for this request only. Each of the two attempts to connect (the
+  // second is when a saved session is turned away) has the whole deadline.
   Start start(const Peer &peer, const std::string &method, const std::string &path, const Headers &headers = {},
-              const std::string &content_type = "", const std::string &body = "", int timeout_ms = 0) {
+              const std::string &content_type = "", const std::string &body = "", const Timing &timing = {}) {
     close();
     parsed_ = peer.parsed ? peer.parsed : parse(peer);
     if (!parsed_->trust_ok)
@@ -101,7 +110,8 @@ class Stream {
       session_.reset(new eink_tls::Session());
       session_->use_sessions(peer.sessions, attempt == 0);
       opened = session_->open(peer.ip, peer.port, &parsed_->trust, showing ? &parsed_->own : nullptr,
-                              showing ? peer.key : nullptr, timeout_ms > 0 ? timeout_ms : peer.timeout_ms);
+                              showing ? peer.key : nullptr, timing.wait_ms > 0 ? timing.wait_ms : peer.timeout_ms,
+                              timing.deadline_ms > 0 ? timing.deadline_ms : peer.deadline_ms);
       if (opened == eink_tls::Open::OK || attempt == 1 || peer.sessions == nullptr || !session_->offered() ||
           session_->network_failed())
         break;

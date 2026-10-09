@@ -480,6 +480,13 @@ where `/plan` answered):
 | 3rd | unchanged | 40 min |
 | 4th and later | unchanged | `max_backoff_ms` (1 h) |
 
+Over TLS a request is also held to a **deadline** from the connect to the last byte: 50 s for the plan (the server waits up
+to 40 s to render when the button asks), 45 s for the picture, 30 s for the enrolment. The waits inside it
+(`timeout`, 15 s) end only when the server goes quiet; a server that answers a little at a time never lets one run out, and
+without a deadline would hold the wake until the watchdog (`wake_timeout`, 110 s) cut it off and counted it as a timeout. A
+deadline that runs out is a failed request with its own reason, and a saved TLS session is kept, since the network is what
+failed.
+
 So a server that is down for a day costs one panel refresh and a handful of short wakes, not 144.
 When the server comes back, the next wake redraws the picture even if it is the version the device
 thinks it shows, so the label doesn't stay up. The `Out of date` notice is also drawn once per stale
