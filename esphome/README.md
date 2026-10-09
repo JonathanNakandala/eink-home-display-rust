@@ -402,6 +402,34 @@ The states, so each has one meaning on the panel and in `last_failure`: *no root
 (asking again with the same key), *not recognised* (the server doesn't know this key: the owner must approve), and
 *clock not set* (nothing else can be tried until it is).
 
+### Fuzzing the parsers
+
+The display reads bytes from places it cannot trust: the reply to its first request (on a connection that verifies nothing),
+the scan of the network, and RTC memory and flash after an update or a power cut. The code that reads them is in
+`core/` and is pure, so it is fuzzed: `tests/fuzz/` has a harness for each of the HTTP head and body parsers
+(`core/body.h`, `core/http.h`), the DER reader (`core/der.h`), base64, the record in flash (`core/credentials.h`), the
+session and ETag slots in RTC memory, and the scan (`core/service.h`). Each checks properties and not just that it does not
+crash: how the network cuts a reply up makes no difference to what is read, a decoded record encodes back to itself, what the
+DER reader returns is a piece of its input.
+
+```sh
+make -C esphome fuzz            # each target for 20 s (FUZZ_SECONDS=300 for longer); a failing input is saved in build/fuzz-out/
+make -C esphome fuzz-replay     # the corpora and the regressions, once each; part of `make test`
+```
+
+Apple's clang has no libFuzzer, so `tests/fuzz/driver.cpp` is a small coverage-guided fuzzer (clang's edge counters, under
+the address and undefined-behaviour sanitizers) around harnesses written for libFuzzer's entry point; on a machine that has
+it, `clang++ -fsanitize=fuzzer,address,undefined tests/fuzz/<target>_fuzz.cpp -I. -Itests/support` uses the same harness
+as it is. An input that broke something is copied to `tests/fuzz/regressions/<target>/` and is run by `make test` from then
+on. The seeds are in `tests/fuzz/corpus/<target>/`.
+
+**What it found:** within seconds, `eink_http::unchunk` read a chunk size of `ffffffffffffffff` with `strtoul`, added it to a
+position (which wrapped, so the check that the chunk fitted passed), and then appended the rest of the reply once for every
+line break in it: a 16 KB reply could make a body of hundreds of megabytes. That reply is the answer to the first request, from
+anyone on the network. Fixed (sizes are at most eight hex digits and are checked against what is left before they are added
+to anything), with the input kept as a regression and a unit test. About 31 million runs of the seven targets since have found
+nothing more; that is evidence, not proof, and `make fuzz FUZZ_SECONDS=600` is cheap to leave running.
+
 ### A new render of the same picture
 
 The plan's `version` is when the server rendered, so a render that comes out the same (a dashboard that did not change
@@ -568,6 +596,8 @@ default), run each for a day, and compare `eink_device_last_wake_seconds` in `/m
 | `tests/core/` | the calculations, with fakes for the interfaces, built with a bare C++17 compiler and sanitizers | `make -C esphome test` |
 | `tests/tls/` | the TLS, EST, stream and join code, with the same mbedTLS the chip is built with, against the real Rust server ([tests/tls/README.md](tests/tls/README.md) says what that shows and what it does not) | `make -C esphome host-test` |
 | (none for `eink/esp/`) | needs the chip's headers; `esphome compile` is the check | `make -C esphome compile` |
+
+`tests/fuzz/` is a third kind (below): the parsers that read bytes nobody here wrote are run on millions of made-up inputs.
 
 `tests/support/` holds what the first two share: the check macros, the test `main`, and the fakes.
 
