@@ -26,6 +26,8 @@ using Headers = std::vector<std::pair<std::string, std::string>>;
 
 // What the display needs to speak to the server securely: where it is, the root to check it against, and the display's
 // own certificate and key to show. The key stays where it is kept (flash identity); this only points at it.
+struct Parsed;
+
 struct Peer {
   uint32_t ip = 0;  // IPv4 as lwIP stores it
   uint16_t port = 0;
@@ -36,7 +38,38 @@ struct Peer {
   // Where to find a session to resume and keep the next one (eink_session_cache.h), or null to shake hands in full
   // every time. Not owned: it outlives the stream, since what it keeps is for the next connection.
   eink_session_cache::Store *sessions = nullptr;
+  // `root` and `certificate` already parsed (`parse`), to save parsing them on every connection of a wake. Optional: if
+  // null each connection parses its own. It must be made from this peer's root and certificate as they are now; change
+  // either and it is made again.
+  std::shared_ptr<const Parsed> parsed;
 };
+
+// The root and the display's certificate in the form mbedTLS uses. The TLS session points into them, so whoever holds
+// a connection holds this too.
+struct Parsed {
+  mbedtls_x509_crt trust, own;
+  bool trust_ok = false;
+  bool own_ok = false;  // false also when there is no certificate to show
+
+  Parsed() {
+    mbedtls_x509_crt_init(&trust);
+    mbedtls_x509_crt_init(&own);
+  }
+  ~Parsed() {
+    mbedtls_x509_crt_free(&trust);
+    mbedtls_x509_crt_free(&own);
+  }
+  Parsed(const Parsed &) = delete;
+  Parsed &operator=(const Parsed &) = delete;
+};
+
+inline std::shared_ptr<const Parsed> parse(const Peer &peer) {
+  auto out = std::make_shared<Parsed>();
+  out->trust_ok = mbedtls_x509_crt_parse_der(&out->trust, peer.root.data(), peer.root.size()) == 0;
+  out->own_ok = !peer.certificate.empty() && peer.key != nullptr &&
+                mbedtls_x509_crt_parse_der(&out->own, peer.certificate.data(), peer.certificate.size()) == 0;
+  return out;
+}
 
 class Stream {
  public:
@@ -54,13 +87,10 @@ class Stream {
   Start start(const Peer &peer, const std::string &method, const std::string &path, const Headers &headers = {},
               const std::string &content_type = "", const std::string &body = "", int timeout_ms = 0) {
     close();
-    mbedtls_x509_crt_init(&trust_);
-    mbedtls_x509_crt_init(&own_);
-    inited_ = true;
-    if (mbedtls_x509_crt_parse_der(&trust_, peer.root.data(), peer.root.size()) != 0)
+    parsed_ = peer.parsed ? peer.parsed : parse(peer);
+    if (!parsed_->trust_ok)
       return Start::UNREACHABLE;
-    const bool showing = !peer.certificate.empty() && peer.key != nullptr &&
-                         mbedtls_x509_crt_parse_der(&own_, peer.certificate.data(), peer.certificate.size()) == 0;
+    const bool showing = parsed_->own_ok;
     // A saved session is tried first. If the handshake with it fails (the server forgot the ticket, was restarted with
     // other keys, or the session is from another build), it is forgotten and the connection is made again in full,
     // once. Whatever happens, the tickets the server sends are kept for the next time.
@@ -68,8 +98,8 @@ class Stream {
     for (int attempt = 0; attempt < 2; attempt++) {
       session_.reset(new eink_tls::Session());
       session_->use_sessions(peer.sessions, attempt == 0);
-      opened = session_->open(peer.ip, peer.port, &trust_, showing ? &own_ : nullptr, showing ? peer.key : nullptr,
-                              timeout_ms > 0 ? timeout_ms : peer.timeout_ms);
+      opened = session_->open(peer.ip, peer.port, &parsed_->trust, showing ? &parsed_->own : nullptr,
+                              showing ? peer.key : nullptr, timeout_ms > 0 ? timeout_ms : peer.timeout_ms);
       if (opened == eink_tls::Open::OK || attempt == 1 || peer.sessions == nullptr || !session_->offered())
         break;
       peer.sessions->forget();
@@ -152,12 +182,8 @@ class Stream {
   }
 
   void close() {
-    session_.reset();
-    if (inited_) {
-      mbedtls_x509_crt_free(&trust_);
-      mbedtls_x509_crt_free(&own_);
-      inited_ = false;
-    }
+    session_.reset();  // before the certificates it points at
+    parsed_.reset();
     response_ = eink_body::Response();
     pending_.clear();
     delivered_ = 0;
@@ -165,8 +191,7 @@ class Stream {
 
  private:
   std::unique_ptr<eink_tls::Session> session_;
-  mbedtls_x509_crt trust_, own_;
-  bool inited_ = false;
+  std::shared_ptr<const Parsed> parsed_;
   eink_body::Response response_;
   std::string pending_;  // body bytes decoded and not yet handed on
   size_t delivered_ = 0;
