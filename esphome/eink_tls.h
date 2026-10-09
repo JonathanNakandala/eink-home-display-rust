@@ -186,35 +186,14 @@ class Session {
   // `refused_by_peer()` is true and the response has no status.
   eink_http::Response request(const std::string &method, const std::string &path, const std::string &content_type,
                               const std::string &body) {
-    const std::string out = eink_http::request(method, path, SERVER_NAME, content_type, body);
-    size_t sent = 0;
-    while (sent < out.size()) {
-      const int r =
-          mbedtls_ssl_write(&ssl_, reinterpret_cast<const unsigned char *>(out.data()) + sent, out.size() - sent);
-      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
-        continue;
-      if (r < 0) {
-        error_ = r;
-        return {};
-      }
-      sent += static_cast<size_t>(r);
-    }
+    if (!send_request(method, path, content_type, body))
+      return {};
     std::string raw;
     unsigned char buffer[1024];
-    for (;;) {
-      const int r = mbedtls_ssl_read(&ssl_, buffer, sizeof buffer);
-      if (r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
-        keep_ticket();
-        continue;
-      }
-      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
-        continue;
-      if (r <= 0) {
-        error_ = r;
-        break;  // closed, cleanly or not: what arrived is the answer
-      }
-      raw.append(reinterpret_cast<char *>(buffer), static_cast<size_t>(r));
-    }
+    int n;
+    // Until the server closes, cleanly or not: what arrived is the answer.
+    while ((n = read_some(buffer, sizeof buffer)) > 0)
+      raw.append(reinterpret_cast<char *>(buffer), static_cast<size_t>(n));
     return eink_http::parse(raw);
   }
 
