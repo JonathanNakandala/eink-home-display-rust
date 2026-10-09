@@ -49,9 +49,10 @@ class Stream {
   using Start = eink_link::Start;
 
   // Connects, shows the display's certificate if the peer has one, sends the request and reads as far as the end of the
-  // head. The body is still to be read.
+  // head. The body is still to be read. `timeout_ms` of 0 is the peer's own; another one is for this request only,
+  // which saves copying the peer (its root and certificate) to change it.
   Start start(const Peer &peer, const std::string &method, const std::string &path, const Headers &headers = {},
-              const std::string &content_type = "", const std::string &body = "") {
+              const std::string &content_type = "", const std::string &body = "", int timeout_ms = 0) {
     close();
     mbedtls_x509_crt_init(&trust_);
     mbedtls_x509_crt_init(&own_);
@@ -68,7 +69,7 @@ class Stream {
       session_.reset(new eink_tls::Session());
       session_->use_sessions(peer.sessions, attempt == 0);
       opened = session_->open(peer.ip, peer.port, &trust_, showing ? &own_ : nullptr, showing ? peer.key : nullptr,
-                              peer.timeout_ms);
+                              timeout_ms > 0 ? timeout_ms : peer.timeout_ms);
       if (opened == eink_tls::Open::OK || attempt == 1 || peer.sessions == nullptr || !session_->offered())
         break;
       peer.sessions->forget();

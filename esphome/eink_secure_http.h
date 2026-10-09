@@ -74,11 +74,10 @@ class Http final : public esphome::http_request::HttpRequestComponent {
     eink_stream::Headers headers;
     for (const auto &h : request_headers)
       headers.push_back({h.name, h.value});
-    eink_stream::Peer peer = c.peer;
-    peer.timeout_ms = static_cast<int>(this->get_timeout());
     App.feed_wdt();
-    c.last = container->stream.start(peer, method, eink_http::path_of(url), headers,
-                                     body.empty() ? "" : "application/octet-stream", body);
+    c.last = container->stream.start(c.peer, method, eink_http::path_of(url), headers,
+                                     body.empty() ? "" : "application/octet-stream", body,
+                                     static_cast<int>(this->get_timeout()));
     App.feed_wdt();
     if (c.last != eink_stream::Stream::Start::OK)
       return nullptr;
