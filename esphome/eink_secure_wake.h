@@ -1,16 +1,13 @@
 // What a wake does with the secure transport: whether to speak TLS, fall back to plain HTTP, wait for the owner, or
 // give up, from how the display is set (eink_service.h) and how the join went (eink_join.h).
 //
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/). The
-// README's table of the three transports is this, in code:
+// This is the table of the three transports in the README, in code:
 //   http          never joins, never speaks TLS.
-//   prefer-https  speaks TLS when it has joined and falls back to plain HTTP on any failure, because someone who can
-//   break
-//                 the TLS can also strip it, so refusing to fall back adds no protection, only a display that stops. It
-//                 is for moving over. It still shows the pairing code while the owner has to approve.
-//   https         TLS only, never plain HTTP. If it cannot, the wake fails like any other (or, when it is only waiting
-//   for the
-//                 owner, waits without counting a failure).
+//   prefer-https  speaks TLS when it has joined, and on any failure goes on over plain HTTP: someone who can break the
+//                 TLS can also strip it, so refusing would add no protection, only a display that stops. It is for
+//                 moving over. It still shows the pairing code while the owner has to approve.
+//   https         TLS only, never plain HTTP. If it cannot, the wake fails like any other; when it is only waiting for
+//                 the owner, it waits without counting a failure.
 #pragma once
 
 #include <cstdint>

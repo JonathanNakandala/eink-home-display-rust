@@ -1,14 +1,10 @@
 # =============================================================================
 # The secure transport: joining the server's authority, and speaking TLS to it.
 # =============================================================================
-# `server_transport` (packages/server.yaml) chooses:
-#   http          none of this runs; the wake is as it always was.
-#   prefer-https  joins, and speaks TLS once it has. On any failure it goes on over plain HTTP (someone who can break the TLS
-#                 can strip it too, so refusing would add no protection, only a display that stops). While the owner has yet
-#                 to approve it, the panel shows the code to type in at the server.
-#   https         TLS only, never plain HTTP. Waits for the owner without counting a failure; any other failure is a failed
-#                 wake like any other.
-# What it does is eink_join.h (joining), eink_secure_wake.h (the choices), eink_stream.h (TLS and the body) and
+# `server_transport` (packages/server.yaml) chooses between http (none of this runs), prefer-https and https; what each
+# does is in eink_secure_wake.h. While the owner has yet to approve the display, the panel shows the code to type in at
+# the server.
+# The parts: eink_join.h (joining), eink_secure_wake.h (the choices), eink_stream.h (TLS and the body) and
 # eink_secure_chip.h (the chip's flash, clock and watchdog), all but the last tested against a real server (host/).
 substitutions:
   # The owner's root built into the firmware, as base64 of its DER (`openssl x509 -in root.pem -outform der | base64 -w0`),

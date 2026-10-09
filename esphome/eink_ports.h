@@ -30,9 +30,8 @@ class Clock {
   virtual bool usable() = 0;
 };
 
-// The display's own key and what it holds of the authority, in flash. Nothing here is ever removed by an error: only
-// the owner removes pairing (a long press, or a flash that erases). Writing is all or nothing, so that a power cut
-// leaves the old value (two slots, switched when the new one is complete).
+// The display's own key and what it holds of the authority, in flash (eink_credentials.h). Nothing here is removed by
+// an error, and a write is all or nothing, so a power cut leaves the old value.
 class Identity {
  public:
   virtual ~Identity() = default;

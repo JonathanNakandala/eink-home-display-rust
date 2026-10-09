@@ -1,7 +1,5 @@
 // The HTTP/1.1 the display speaks to the server: a request written out, and a response taken apart. Every request asks
 // for the connection to be closed after the answer, so a response is everything until the end of the stream.
-//
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 #pragma once
 
 #include <cstdlib>

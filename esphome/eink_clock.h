@@ -1,7 +1,5 @@
 // Whether the clock can be believed enough to check a certificate against.
 //
-// Pure calculation, like eink_wake.h: nothing here touches ESPHome, so it is compiled and tested on a computer.
-//
 // A certificate is valid between two dates, so before TLS the display needs the time. After a power cut the
 // clock starts at 1970 until SNTP sets it, and a clock that says 1970 would find every certificate "not yet
 // valid"; one wrongly far ahead would find them expired. Neither is a reason to think the display is unpaired,

@@ -13,8 +13,7 @@
 
 namespace eink_state {
 
-// Why this wake failed, once it has: WIFI, SERVER (no usable /plan), DOWNLOAD, MEMORY, or TIMEOUT (the
-// `wake_watchdog` ran out). NONE if it didn't.
+// Why this wake failed, once it has (the reasons are in eink_report.h). NONE if it didn't.
 inline eink_report::Failure fail_reason = eink_report::Failure::NONE;
 
 // How charged the battery is, for the server and the log.
@@ -23,8 +22,7 @@ inline eink_battery::State battery_state = eink_battery::State::OK;
 // What this wake does about the battery: carry on, sleep (still halted), or halt now and say so first.
 inline eink_battery::Action battery_action = eink_battery::Action::CARRY_ON;
 
-// ---- the secure transport (eink_secure_wake.h)
-// ----------------------------------------------------------------------------
+// ---- the secure transport (eink_secure_wake.h) ----------------------------------------------------------------------
 
 // Whether this wake speaks TLS to the server: the display has joined and the transport is set to use it.
 inline bool secure_active = false;

@@ -1,8 +1,8 @@
 // A request to the server over TLS whose answer is read as it arrives, for a body too big to hold: the image.
 //
-// It owns the connection, the trust anchor and the display's certificate for as long as the answer is being read, since
-// the TLS session points at them. The head is parsed by eink_body.h as it comes, and the body is handed on by `read`,
-// in whatever sizes the caller wants, whatever pieces the network delivers.
+// It holds the connection, and the root and certificate it was made with (`Parsed`), for as long as the answer is being
+// read, since the TLS session points at them. The head is parsed by eink_body.h as it comes, and the body is handed on
+// by `read`, in whatever sizes the caller wants, whatever pieces the network delivers.
 //
 // Written against mbedTLS 3.6 and tested on a computer against a real server (host/).
 #pragma once

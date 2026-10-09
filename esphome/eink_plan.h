@@ -1,6 +1,5 @@
 // What a wake does with the server's /plan: whether the picture has to be fetched and drawn, and whether the
 // zone offset it carries is one to keep.
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 // Reading the JSON is the YAML's job; this decides from what it read.
 #pragma once
 

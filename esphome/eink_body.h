@@ -5,8 +5,7 @@
 // The image is megabytes and the chip has some hundreds of KB, so the body is passed on as it comes and never held
 // whole. eink_http.h does the same for the small replies that fit in a string; this is for the one that does not.
 //
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/),
-// including every way the bytes can be split.
+// Tested with every way the bytes can be split.
 #pragma once
 
 #include <cstddef>

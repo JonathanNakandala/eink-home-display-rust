@@ -3,12 +3,12 @@
 // so that a write cut short by a power loss leaves the record before it, and nothing is ever half one thing and half
 // the other.
 //
-// Pure calculation over a `BlobStore` (what flash does: read and write a named blob), with nothing from ESPHome or
-// ESP-IDF, so it is compiled and tested on a computer (tests/), including every way a write can be cut short.
+// Works over a `BlobStore` (what flash does: read and write a named blob), and is tested with every way a write can be
+// cut short.
 //
-// Pairing is removed only by the owner, never by an error. So a record that cannot be read for any reason but there
-// being none (a failing flash, a bad checksum on every slot, a version written by another firmware) is not "empty": it
-// stays untouched, and nothing is written over it.
+// Pairing is removed only by the owner (erasing the flash), never by an error. So a record that cannot be read for any
+// reason but there being none (a failing flash, a bad checksum on every slot, a version written by another firmware) is
+// not "empty": it stays untouched, and nothing is written over it.
 #pragma once
 
 #include <cstdint>
@@ -19,8 +19,7 @@ namespace eink_credentials {
 
 using Bytes = std::vector<uint8_t>;
 
-// ---- what flash does
-// ----------------------------------------------------------------------------------------------------
+// ---- what flash does ------------------------------------------------------------------------------------------------
 
 enum class Read : uint8_t {
   OK,
@@ -37,8 +36,7 @@ class BlobStore {
   virtual bool write(const char *name, const Bytes &data) = 0;
 };
 
-// ---- the record
-// ---------------------------------------------------------------------------------------------------------
+// ---- the record -----------------------------------------------------------------------------------------------------
 
 struct Record {
   Bytes key;          // the private key, DER
@@ -156,8 +154,7 @@ inline Decode decode(const Bytes &data, Record &record) {
   return Decode::OK;
 }
 
-// ---- two slots
-// ----------------------------------------------------------------------------------------------------------
+// ---- two slots ------------------------------------------------------------------------------------------------------
 
 class Credentials {
  public:
