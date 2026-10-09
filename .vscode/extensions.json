@@ -4,6 +4,8 @@
         "tamasfe.even-better-toml",
         "ms-vscode.makefile-tools",
         "rust-lang.rust-analyzer",
-        "ms-vscode.cpptools-extension-pack"
+        "ms-vscode.cpptools-extension-pack",
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml"
     ]
 }
