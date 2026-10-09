@@ -159,9 +159,16 @@ class Stream {
       }
       response_.feed(raw, static_cast<size_t>(n), pending_);
     }
-    const size_t n = max < pending_.size() ? max : pending_.size();
-    std::memcpy(out, pending_.data(), n);
-    pending_.erase(0, n);
+    const size_t available = pending_.size() - taken_;
+    const size_t n = max < available ? max : available;
+    std::memcpy(out, pending_.data() + taken_, n);
+    // Moved past, not erased: erasing shifts what is left down on every read. Emptied once it is all handed on, so that
+    // `pending_` is empty exactly when nothing is waiting.
+    taken_ += n;
+    if (taken_ == pending_.size()) {
+      pending_.clear();
+      taken_ = 0;
+    }
     delivered_ += n;
     return static_cast<int>(n);
   }
@@ -186,6 +193,7 @@ class Stream {
     parsed_.reset();
     response_ = eink_body::Response();
     pending_.clear();
+    taken_ = 0;
     delivered_ = 0;
   }
 
@@ -193,7 +201,8 @@ class Stream {
   std::unique_ptr<eink_tls::Session> session_;
   std::shared_ptr<const Parsed> parsed_;
   eink_body::Response response_;
-  std::string pending_;  // body bytes decoded and not yet handed on
+  std::string pending_;  // body bytes decoded, of which the first `taken_` have been handed on
+  size_t taken_ = 0;
   size_t delivered_ = 0;
 };
 
