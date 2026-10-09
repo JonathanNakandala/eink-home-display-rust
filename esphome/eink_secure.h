@@ -33,8 +33,12 @@ inline Context &context() {
 
 // Says where the server is and what to show it. `key` is where the key is kept (the flash identity), not a copy, and
 // must stay where it is for as long as requests are made through this: the chip's identity is a static, so it does.
+//
+// `sessions` is where a TLS session is kept between connections, so that the plan and the picture of one wake, and the
+// wakes after, resume it instead of shaking hands in full. It must be for this server and this identity
+// (eink_session_cache.h makes the key), and outlive the requests; null shakes hands in full every time.
 inline void use(uint32_t ip, uint16_t port, const std::vector<uint8_t> &root, const std::vector<uint8_t> &certificate,
-                mbedtls_pk_context *key, int timeout_ms = 15000) {
+                mbedtls_pk_context *key, int timeout_ms = 15000, eink_session_cache::Store *sessions = nullptr) {
   Context &c = context();
   c.peer.ip = ip;
   c.peer.port = port;
@@ -42,6 +46,7 @@ inline void use(uint32_t ip, uint16_t port, const std::vector<uint8_t> &root, co
   c.peer.certificate = certificate;
   c.peer.key = key;
   c.peer.timeout_ms = timeout_ms;
+  c.peer.sessions = sessions;
   c.ready = ip != 0 && port != 0 && !root.empty();
   c.last = eink_stream::Stream::Start::OK;
 }

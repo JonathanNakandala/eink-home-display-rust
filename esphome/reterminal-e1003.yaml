@@ -70,6 +70,7 @@ esphome:
     - eink_secure.h
     - eink_secure_http.h
     - eink_link.h
+    - eink_session_cache.h
     - eink_secure_wake.h
     - eink_secure_begin.h
     - eink_secure_chip.h

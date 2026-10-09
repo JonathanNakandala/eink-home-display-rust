@@ -33,6 +33,9 @@ struct Peer {
   Bytes certificate;  // empty: connect without showing one
   mbedtls_pk_context *key = nullptr;
   int timeout_ms = 15000;  // for the connection, and for every wait for data after it
+  // Where to find a session to resume and keep the next one (eink_session_cache.h), or null to shake hands in full
+  // every time. Not owned: it outlives the stream, since what it keeps is for the next connection.
+  eink_session_cache::Store *sessions = nullptr;
 };
 
 class Stream {
@@ -57,9 +60,19 @@ class Stream {
       return Start::UNREACHABLE;
     const bool showing = !peer.certificate.empty() && peer.key != nullptr &&
                          mbedtls_x509_crt_parse_der(&own_, peer.certificate.data(), peer.certificate.size()) == 0;
-    session_.reset(new eink_tls::Session());
-    const eink_tls::Open opened = session_->open(peer.ip, peer.port, &trust_, showing ? &own_ : nullptr,
-                                                 showing ? peer.key : nullptr, peer.timeout_ms);
+    // A saved session is tried first. If the handshake with it fails (the server forgot the ticket, was restarted with
+    // other keys, or the session is from another build), it is forgotten and the connection is made again in full,
+    // once. Whatever happens, the tickets the server sends are kept for the next time.
+    eink_tls::Open opened = eink_tls::Open::UNREACHABLE;
+    for (int attempt = 0; attempt < 2; attempt++) {
+      session_.reset(new eink_tls::Session());
+      session_->use_sessions(peer.sessions, attempt == 0);
+      opened = session_->open(peer.ip, peer.port, &trust_, showing ? &own_ : nullptr, showing ? peer.key : nullptr,
+                              peer.timeout_ms);
+      if (opened == eink_tls::Open::OK || attempt == 1 || peer.sessions == nullptr || !session_->offered())
+        break;
+      peer.sessions->forget();
+    }
     if (opened == eink_tls::Open::REFUSED)
       return Start::REFUSED;
     if (opened != eink_tls::Open::OK)

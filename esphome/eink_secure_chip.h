@@ -22,6 +22,7 @@
 #include "eink_pairing.h"
 #include "eink_secure.h"
 #include "eink_secure_begin.h"
+#include "eink_session_cache.h"
 #include "eink_secure_wake.h"
 #include "eink_verifier.h"
 
@@ -56,6 +57,24 @@ inline eink_pairing::Answer &last_answer() {
   return rtc_answer;
 }
 
+// The TLS session kept between connections and wakes (eink_session_cache.h), in RTC memory: it survives deep sleep and
+// is lost with the power, which is right for something that only saves a handshake. A little over 3 KB of the 8 KB
+// there is, for a session of about 700 bytes. What is in it is checked before it is believed, since an update over the
+// air leaves whatever the last firmware put there.
+static RTC_DATA_ATTR eink_session_cache::Slot rtc_session;
+
+// The wall clock, if SNTP has set it: a session's age is worked out from it, because the clock mbedTLS uses starts
+// again after deep sleep. -1 when it cannot be believed, and then nothing is kept or offered.
+inline int64_t wall_clock() {
+  const int64_t now = static_cast<int64_t>(::time(nullptr));
+  return eink_clock::plausible(now) ? now : -1;
+}
+
+inline eink_session_cache::SlotStore<int64_t (*)()> &sessions() {
+  static eink_session_cache::SlotStore<int64_t (*)()> instance(rtc_session, eink_session_cache::Key{}, &wall_clock);
+  return instance;
+}
+
 inline eink_nvs::NvsStore &store() {
   static eink_nvs::NvsStore instance;
   return instance;
@@ -84,7 +103,7 @@ inline eink_secure_begin::Begin begin(eink_service::Transport transport, uint32_
   // watchdog.
   esphome::watchdog::WatchdogManager wdm(120000);
   SntpClock clock(newest_render);
-  return eink_secure_begin::begin(transport, ip, tls_port, name, clock, identity(server_root));
+  return eink_secure_begin::begin(transport, ip, tls_port, name, clock, identity(server_root), &sessions());
 }
 
 // A small request through the secure connection, with the time ESPHome's watchdog needs for it.
