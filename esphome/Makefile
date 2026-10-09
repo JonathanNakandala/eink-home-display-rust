@@ -6,7 +6,7 @@
 CXX ?= c++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/main.cpp $(wildcard tests/*_test.cpp)
-HEADERS := eink_body.h eink_credentials.h tests/fake_store.h eink_base64.h eink_calendar.h eink_der.h eink_http.h eink_ports.h eink_join.h tests/fakes.h eink_sha256.h eink_trust.h eink_pairing.h eink_service.h eink_plan.h eink_clock.h eink_wake.h eink_battery.h eink_format.h eink_report.h tests/check.h
+HEADERS := eink_link.h eink_secure_wake.h eink_body.h eink_credentials.h tests/fake_store.h eink_base64.h eink_calendar.h eink_der.h eink_http.h eink_ports.h eink_join.h tests/fakes.h eink_sha256.h eink_trust.h eink_pairing.h eink_service.h eink_plan.h eink_clock.h eink_wake.h eink_battery.h eink_format.h eink_report.h tests/check.h
 
 .PHONY: test
 test: build/tests
@@ -68,7 +68,7 @@ MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/framewo
 host-tls:
 	@test -n "$(MBEDTLS_SRC)" || { echo "mbedTLS source not found: run 'make compile' first, or set MBEDTLS_SRC" >&2; exit 1; }
 	cmake -S host -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
-	cmake --build build/host --target spike_tls join_host_test stream_host_test
+	cmake --build build/host --target spike_tls join_host_test stream_host_test begin_host_test
 
 .PHONY: spike
 spike: host-tls
@@ -78,7 +78,7 @@ spike: host-tls
 .PHONY: host-test
 host-test: host-tls
 	@failed=0; \
-	for binary in join_host_test stream_host_test; do \
+	for binary in join_host_test stream_host_test begin_host_test; do \
 		for test in $$(build/host/$$binary --list); do \
 			if host/with_fixture.sh build/host/$$binary $$test > build/host/$$test.log 2>&1; then \
 				echo "ok   $$test"; \
