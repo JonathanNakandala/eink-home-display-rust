@@ -13,13 +13,13 @@ substitutions:
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
   # Empty takes the first image server found.
   server_name: ""
-  # How this display reaches the server: http, prefer-https or https (eink_secure_wake.h says what each does). Anything
+  # How this display reaches the server: http, prefer-https or https (core/secure_wake.h says what each does). Anything
   # else stops the build. Only `https` looks under `_https._tcp`; the others look under `_http._tcp`. The joining and
   # the TLS are packages/secure.yaml.
   server_transport: http
 
 http_request:
-  # The stock component: plain HTTP. A display that has joined points the image download at eink_secure_http.h instead
+  # The stock component: plain HTTP. A display that has joined points the image download at esp/secure_http.h instead
   # (packages/secure.yaml), and goes back to this one if it falls back.
   id: stock_http
   # Long enough for the server to render when the button asks for it (it waits up to 40 s).
@@ -103,7 +103,7 @@ script:
           condition:
             lambda: 'return eink_state::secure_active;'
           then:
-            # Over TLS: the same request, made by eink_secure_chip.h, and answered to handle_plan the same way. No answer is a
+            # Over TLS: the same request, made by esp/secure_chip.h, and answered to handle_plan the same way. No answer is a
             # status of 0, which handle_plan takes for a plan that did not come.
             - lambda: |-
                 eink_secure::aim(id(server_ip), id(server_tls_port));  // the server may have been looked for again
@@ -180,7 +180,7 @@ script:
             // Not `failed_wakes = 0` here: the plan answering isn't the wake succeeding. The image can still
             // fail to download, and resetting now would keep that failure at the first backoff step forever.
             id(plan_received_ms) = millis();
-            // The picture is also redrawn to clear a notice or to add or remove the battery label (eink_plan.h).
+            // The picture is also redrawn to clear a notice or to add or remove the battery label (core/plan.h).
             id(plan_changed) = eink_plan::needs_draw(id(plan_changed), id(plan_stale),
                                                      {id(notice_on_panel), id(low_label_on_panel), id(battery_low),
                                                       id(prompt_on_panel) && eink_state::prompt_wanted});
@@ -215,7 +215,7 @@ script:
                 update: false
                 # Says who is asking, so the server knows which display it sent this image to.
                 url: !lambda |-
-                  // Over TLS only the path matters: the address and the name checked are the ones eink_secure.h holds.
+                  // Over TLS only the path matters: the address and the name checked are the ones tls/secure.h holds.
                   if (eink_state::secure_active)
                     return std::string("https://") + eink_tls::SERVER_NAME + "${image_path}?device=" + App.get_name().str();
                   std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");

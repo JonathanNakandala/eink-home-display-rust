@@ -1,7 +1,7 @@
 // Finds the eink-home-display-rust image server on the LAN with an mDNS / DNS-SD query.
 // The server announces itself as `_http._tcp` (or `_https._tcp` when it serves only HTTPS) with the TXT keys txtvers,
 // path, format (served now), formats (all it can serve) and, when it offers HTTPS, tlsport and secure (see
-// src/adapters/image_server/advertise.rs in the Rust app). What to make of an answer is eink_service.h, which is
+// src/adapters/image_server/advertise.rs in the Rust app). What to make of an answer is core/service.h, which is
 // tested on a computer; this is only the query.
 #pragma once
 
@@ -13,7 +13,7 @@
 #include "esphome/core/log.h"
 #include "mdns.h"
 
-#include "eink_service.h"
+#include "eink/core/service.h"
 
 namespace eink_discovery {
 
@@ -41,7 +41,7 @@ inline bool first_ipv4(const mdns_result_t *result, uint32_t &ip) {
   return false;
 }
 
-// One answer of the scan as the text eink_service.h judges.
+// One answer of the scan as the text core/service.h judges.
 inline eink_service::Announcement announcement(const mdns_result_t *result) {
   eink_service::Announcement a;
   if (result->instance_name != nullptr)

@@ -1,5 +1,5 @@
-// One wake's worth of joining the server's authority: decide what to do (eink_pairing.h), do it through the interfaces
-// (eink_ports.h), and say where it got to. Pure logic over interfaces, so it is tested on a computer with fakes; the
+// One wake's worth of joining the server's authority: decide what to do (core/pairing.h), do it through the interfaces
+// (core/ports.h), and say where it got to. Pure logic over interfaces, so it is tested on a computer with fakes; the
 // chip supplies the real ones.
 //
 // The root is the root fetched from an unverified connection, so until a certificate has been issued under it the
@@ -12,10 +12,10 @@
 #include <cstdint>
 #include <string>
 
-#include "eink_pairing.h"
-#include "eink_ports.h"
-#include "eink_report.h"
-#include "eink_trust.h"
+#include "eink/core/pairing.h"
+#include "eink/core/ports.h"
+#include "eink/core/report.h"
+#include "eink/core/trust.h"
 
 namespace eink_join {
 

@@ -1,7 +1,7 @@
 // What the display tells the server about itself on each check-in, as the query-string tail of its /plan and
 // /refresh requests (the server reads it in src/application/devices.rs, which also decides what is believable).
 //
-// Where the values come from (the radio, RTC memory) is eink_telemetry.h.
+// Where the values come from (the radio, RTC memory) is esp/telemetry.h.
 #pragma once
 
 #include <cstdint>

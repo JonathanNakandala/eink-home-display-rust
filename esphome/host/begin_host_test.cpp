@@ -1,4 +1,4 @@
-// A wake's beginning (eink_secure_begin.h) against the real server on a computer, for each way the display can be set:
+// A wake's beginning (tls/secure_begin.h) against the real server on a computer, for each way the display can be set:
 // joining, deciding the route, and the first request through the connection it leaves behind. The display's flash is a
 // stand-in that keeps what it is given, and each wake starts afresh, as on the chip.
 //
@@ -7,8 +7,8 @@
 #include <string>
 
 #include "host_support.h"
-#include "eink_secure.h"
-#include "eink_secure_begin.h"
+#include "eink/tls/secure.h"
+#include "eink/tls/secure_begin.h"
 
 using namespace support;
 using eink_secure_begin::Begin;
@@ -27,7 +27,7 @@ struct Wakes {
 
   explicit Wakes(const std::string &n) : name(n) {}
 
-  // The identity holds the key that eink_secure.h points at, so it lives until the next wake begins, as the chip's does
+  // The identity holds the key that tls/secure.h points at, so it lives until the next wake begins, as the chip's does
   // (a static there).
   std::unique_ptr<eink_flash::FlashIdentity> identity;
 

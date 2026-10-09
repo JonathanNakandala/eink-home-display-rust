@@ -38,44 +38,9 @@ esphome:
   # flashed to several displays without them sharing a name. The server tells displays apart by this name: it is
   # sent with every request (`App.get_name()`), so two displays are never mixed up.
   name_add_mac_suffix: true
+  # Every header under eink/ (core/, tls/, esp/): ESPHome copies the tree into the build and includes each one.
   includes:
-    - eink_discovery.h
-    - eink_notice.h
-    - eink_health.h
-    - eink_battery.h
-    - eink_wake.h
-    - eink_clock.h
-    - eink_plan.h
-    - eink_format.h
-    - eink_report.h
-    - eink_service.h
-    - eink_sha256.h
-    - eink_trust.h
-    - eink_pairing.h
-    - eink_ports.h
-    - eink_join.h
-    - eink_base64.h
-    - eink_calendar.h
-    - eink_der.h
-    - eink_http.h
-    - eink_tls.h
-    - eink_csr.h
-    - eink_verifier.h
-    - eink_est_client.h
-    - eink_credentials.h
-    - eink_flash_identity.h
-    - eink_nvs.h
-    - eink_body.h
-    - eink_stream.h
-    - eink_secure.h
-    - eink_secure_http.h
-    - eink_link.h
-    - eink_session_cache.h
-    - eink_secure_wake.h
-    - eink_secure_begin.h
-    - eink_secure_chip.h
-    - eink_state.h
-    - eink_telemetry.h
+    - eink
   on_boot:
     priority: -100
     then:

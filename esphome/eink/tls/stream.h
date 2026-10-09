@@ -1,7 +1,7 @@
 // A request to the server over TLS whose answer is read as it arrives, for a body too big to hold: the image.
 //
 // It holds the connection, and the root and certificate it was made with (`Parsed`), for as long as the answer is being
-// read, since the TLS session points at them. The head is parsed by eink_body.h as it comes, and the body is handed on
+// read, since the TLS session points at them. The head is parsed by core/body.h as it comes, and the body is handed on
 // by `read`, in whatever sizes the caller wants, whatever pieces the network delivers.
 //
 // Written against mbedTLS 3.6 and tested on a computer against a real server (host/).
@@ -15,9 +15,9 @@
 
 #include "mbedtls/x509_crt.h"
 
-#include "eink_body.h"
-#include "eink_link.h"
-#include "eink_tls.h"
+#include "eink/core/body.h"
+#include "eink/core/link.h"
+#include "eink/tls/tls.h"
 
 namespace eink_stream {
 
@@ -35,7 +35,7 @@ struct Peer {
   Bytes certificate;  // empty: connect without showing one
   mbedtls_pk_context *key = nullptr;
   int timeout_ms = 15000;  // for the connection, and for every wait for data after it
-  // Where to find a session to resume and keep the next one (eink_session_cache.h), or null to shake hands in full
+  // Where to find a session to resume and keep the next one (core/session_cache.h), or null to shake hands in full
   // every time. Not owned: it outlives the stream, since what it keeps is for the next connection.
   eink_session_cache::Store *sessions = nullptr;
   // `root` and `certificate` already parsed (`parse`), to save parsing them on every connection of a wake. Optional: if
@@ -78,7 +78,7 @@ class Stream {
   Stream &operator=(const Stream &) = delete;
   ~Stream() { close(); }
 
-  // Why an attempt to start did not give an answer (eink_link.h).
+  // Why an attempt to start did not give an answer (core/link.h).
   using Start = eink_link::Start;
 
   // Connects, shows the display's certificate if the peer has one, sends the request and reads as far as the end of the

@@ -1,5 +1,5 @@
-// The display's side of EST (RFC 7030 as corrected by RFC 8951) over eink_tls.h: fetch the authority, ask for a
-// certificate, renew one. It implements the `Est` interface eink_join.h drives, and is run against a real server on a
+// The display's side of EST (RFC 7030 as corrected by RFC 8951) over tls/tls.h: fetch the authority, ask for a
+// certificate, renew one. It implements the `Est` interface core/join.h drives, and is run against a real server on a
 // computer (host/).
 #pragma once
 
@@ -8,13 +8,13 @@
 
 #include "mbedtls/x509_crt.h"
 
-#include "eink_base64.h"
-#include "eink_calendar.h"
-#include "eink_csr.h"
-#include "eink_der.h"
-#include "eink_http.h"
-#include "eink_ports.h"
-#include "eink_tls.h"
+#include "eink/core/base64.h"
+#include "eink/core/calendar.h"
+#include "eink/tls/csr.h"
+#include "eink/core/der.h"
+#include "eink/core/http.h"
+#include "eink/core/ports.h"
+#include "eink/tls/tls.h"
 
 namespace eink_est {
 
@@ -27,7 +27,7 @@ inline int64_t epoch(const mbedtls_x509_time &t) {
 
 class EstClient : public eink_ports::Est {
  public:
-  // `ip` is the server's IPv4 as lwIP stores it, and `port` its HTTPS port (eink_service.h). `identity` supplies the
+  // `ip` is the server's IPv4 as lwIP stores it, and `port` its HTTPS port (core/service.h). `identity` supplies the
   // key for the requests and for showing the certificate.
   EstClient(uint32_t ip, uint16_t port, eink_tls::TlsIdentity &identity) : ip_(ip), port_(port), identity_(identity) {}
 

@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <string>
 
-#include "eink_report.h"
+#include "eink/core/report.h"
 
 namespace eink_format {
 

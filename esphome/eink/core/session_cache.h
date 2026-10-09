@@ -19,7 +19,7 @@
 #include <cstring>
 #include <vector>
 
-#include "eink_sha256.h"
+#include "eink/core/sha256.h"
 
 namespace eink_session_cache {
 

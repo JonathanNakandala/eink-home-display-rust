@@ -1,5 +1,5 @@
 #include "check.h"
-#include "../eink_format.h"
+#include "eink/core/format.h"
 
 using namespace eink_format;
 using eink_report::Failure;

@@ -2,10 +2,10 @@
 # The secure transport: joining the server's authority, and speaking TLS to it.
 # =============================================================================
 # `server_transport` (packages/server.yaml) chooses between http (none of this runs), prefer-https and https; what each
-# does is in eink_secure_wake.h. While the owner has yet to approve the display, the panel shows the code to type in at
+# does is in core/secure_wake.h. While the owner has yet to approve the display, the panel shows the code to type in at
 # the server.
-# The parts: eink_join.h (joining), eink_secure_wake.h (the choices), eink_stream.h (TLS and the body) and
-# eink_secure_chip.h (the chip's flash, clock and watchdog), all but the last tested against a real server (host/).
+# The parts: core/join.h (joining), core/secure_wake.h (the choices), tls/stream.h (TLS and the body) and
+# esp/secure_chip.h (the chip's flash, clock and watchdog), all but the last tested against a real server (host/).
 substitutions:
   # The owner's root built into the firmware, as base64 of its DER (`openssl x509 -in root.pem -outform der | base64 -w0`),
   # for an owner who would rather not rely on the pairing code for the first contact: nothing is then fetched, and a server
@@ -32,7 +32,7 @@ script:
           else:
             - script.execute: check_plan
 
-  # Gets the clock, finds the server, joins if need be, and goes on by the route eink_secure_wake.h chooses.
+  # Gets the clock, finds the server, joins if need be, and goes on by the route core/secure_wake.h chooses.
   - id: secure_session
     then:
       - script.execute: ensure_clock
@@ -79,7 +79,7 @@ script:
                               eink_telemetry::set_failure(eink_state::secure_failure);
                         - script.execute: check_plan
 
-  # This wake speaks TLS: the picture comes through eink_secure_http.h.
+  # This wake speaks TLS: the picture comes through esp/secure_http.h.
   - id: use_tls
     then:
       - lambda: |-

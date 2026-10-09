@@ -1,7 +1,7 @@
 #include <string>
 
 #include "check.h"
-#include "../eink_service.h"
+#include "eink/core/service.h"
 
 using namespace eink_service;
 

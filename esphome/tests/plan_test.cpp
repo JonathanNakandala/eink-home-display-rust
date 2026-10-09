@@ -1,5 +1,5 @@
 #include "check.h"
-#include "../eink_plan.h"
+#include "eink/core/plan.h"
 
 using namespace eink_plan;
 

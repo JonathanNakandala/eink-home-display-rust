@@ -1,4 +1,4 @@
-// Session resumption on the data connections (eink_session_cache.h, eink_tls.h, eink_stream.h) against the real server
+// Session resumption on the data connections (core/session_cache.h, tls/tls.h, tls/stream.h) against the real server
 // on a computer: the plan and the picture of a wake resume what the first connection left, a session survives being
 // written out and read back as it does through deep sleep (with the age put right, which is the thing the chip's clock
 // would otherwise break), and everything that makes a saved session unusable ends in a connection made in full, not a
@@ -13,8 +13,8 @@
 #include <unistd.h>
 
 #include "host_support.h"
-#include "eink_secure.h"
-#include "eink_session_cache.h"
+#include "eink/tls/secure.h"
+#include "eink/core/session_cache.h"
 
 using namespace support;
 using eink_stream::Stream;

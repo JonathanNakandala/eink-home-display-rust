@@ -1,7 +1,7 @@
 #include <string>
 
 #include "check.h"
-#include "../eink_http.h"
+#include "eink/core/http.h"
 
 using namespace eink_http;
 

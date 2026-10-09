@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-#include "eink_format.h"
+#include "eink/core/format.h"
 
 namespace eink_plan {
 

@@ -1,4 +1,4 @@
-// The display's PKCS #10 request, signed with its key. The DER is put together in eink_der.h (tested on a computer);
+// The display's PKCS #10 request, signed with its key. The DER is put together in core/der.h (tested on a computer);
 // this takes the public key from mbedTLS and has it sign.
 #pragma once
 
@@ -8,9 +8,9 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/sha256.h"
 
-#include "eink_base64.h"
-#include "eink_der.h"
-#include "eink_tls.h"
+#include "eink/core/base64.h"
+#include "eink/core/der.h"
+#include "eink/tls/tls.h"
 
 namespace eink_csr {
 

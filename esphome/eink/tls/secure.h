@@ -1,9 +1,9 @@
 // Where the server is and how to speak to it securely, kept for the length of a wake, and the way the wake script makes
 // the small requests (the plan) over it.
 //
-// The join (eink_join.h) leaves the display with a root, a certificate and a key; the wake script then records them
+// The join (core/join.h) leaves the display with a root, a certificate and a key; the wake script then records them
 // here with the server's address, and everything after goes through this: the plan directly, and the image through the
-// HTTP component in eink_secure_http.h, which reads the same place. One place means the script says where the server is
+// HTTP component in esp/secure_http.h, which reads the same place. One place means the script says where the server is
 // once.
 //
 // Written against mbedTLS 3.6 and tested on a computer against a real server (host/).
@@ -13,12 +13,12 @@
 #include <utility>
 #include <vector>
 
-#include "eink_stream.h"
+#include "eink/tls/stream.h"
 
 namespace eink_secure {
 
-// What is known for this wake. Not kept across sleeps: the address and ports are (eink_service.h, flash), and the root
-// and certificate are (eink_credentials.h); this is the working copy the requests read.
+// What is known for this wake. Not kept across sleeps: the address and ports are (core/service.h, flash), and the root
+// and certificate are (core/credentials.h); this is the working copy the requests read.
 struct Context {
   eink_stream::Peer peer;
   bool ready = false;
@@ -36,7 +36,7 @@ inline Context &context() {
 //
 // `sessions` is where a TLS session is kept between connections, so that the plan and the picture of one wake, and the
 // wakes after, resume it instead of shaking hands in full. It must be for this server and this identity
-// (eink_session_cache.h makes the key), and outlive the requests; null shakes hands in full every time.
+// (core/session_cache.h makes the key), and outlive the requests; null shakes hands in full every time.
 inline void use(uint32_t ip, uint16_t port, const std::vector<uint8_t> &root, const std::vector<uint8_t> &certificate,
                 mbedtls_pk_context *key, int timeout_ms = 15000, eink_session_cache::Store *sessions = nullptr) {
   Context &c = context();

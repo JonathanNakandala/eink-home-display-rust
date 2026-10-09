@@ -1,5 +1,5 @@
 #include "check.h"
-#include "../eink_battery.h"
+#include "eink/core/battery.h"
 
 using namespace eink_battery;
 

@@ -1,13 +1,13 @@
 // The display's identity kept in memory, for tests on a computer: a real key made by mbedTLS and everything else held
 // in plain members. The chip's is the same interface over flash. Its key, request and public key are the real ones
-// (eink_csr.h), so the server sees exactly what it would from the chip.
+// (tls/csr.h), so the server sees exactly what it would from the chip.
 #pragma once
 
 #include "mbedtls/ecp.h"
 #include "mbedtls/pk.h"
 
-#include "eink_csr.h"
-#include "eink_tls.h"
+#include "eink/tls/csr.h"
+#include "eink/tls/tls.h"
 
 namespace host {
 

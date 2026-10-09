@@ -1,5 +1,5 @@
 #include "check.h"
-#include "../eink_secure_wake.h"
+#include "eink/core/secure_wake.h"
 
 using namespace eink_secure_wake;
 using eink_join::Outcome;

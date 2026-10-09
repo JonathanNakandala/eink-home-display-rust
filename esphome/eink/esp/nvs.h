@@ -1,7 +1,7 @@
-// Flash on the chip: ESP-IDF's non-volatile storage as the `BlobStore` eink_credentials.h keeps its record in.
+// Flash on the chip: ESP-IDF's non-volatile storage as the `BlobStore` core/credentials.h keeps its record in.
 //
 // Only the chip has this; the record format, the two slots and every way a write can be cut short are tested on a
-// computer in eink_credentials.h. NVS writes an entry as a whole and commits it, so a power cut leaves the old value or
+// computer in core/credentials.h. NVS writes an entry as a whole and commits it, so a power cut leaves the old value or
 // the new one; the checksum in the record is a second line behind that.
 //
 // A private namespace ("eink"), so nothing here can touch ESPHome's own settings and none of ESPHome's touches these.
@@ -12,7 +12,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
-#include "eink_credentials.h"
+#include "eink/core/credentials.h"
 
 namespace eink_nvs {
 

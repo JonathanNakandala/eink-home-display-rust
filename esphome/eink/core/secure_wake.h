@@ -1,5 +1,5 @@
 // What a wake does with the secure transport: whether to speak TLS, fall back to plain HTTP, wait for the owner, or
-// give up, from how the display is set (eink_service.h) and how the join went (eink_join.h).
+// give up, from how the display is set (core/service.h) and how the join went (core/join.h).
 //
 // This is the table of the three transports in the README, in code:
 //   http          never joins, never speaks TLS.
@@ -12,12 +12,12 @@
 
 #include <cstdint>
 
-#include "eink_join.h"
-#include "eink_pairing.h"
-#include "eink_report.h"
-#include "eink_service.h"
-#include "eink_link.h"
-#include "eink_wake.h"
+#include "eink/core/join.h"
+#include "eink/core/pairing.h"
+#include "eink/core/report.h"
+#include "eink/core/service.h"
+#include "eink/core/link.h"
+#include "eink/core/wake.h"
 
 namespace eink_secure_wake {
 

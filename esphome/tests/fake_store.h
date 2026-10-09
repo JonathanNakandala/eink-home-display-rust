@@ -5,7 +5,7 @@
 #include <map>
 #include <string>
 
-#include "../eink_credentials.h"
+#include "eink/core/credentials.h"
 
 namespace fakes {
 

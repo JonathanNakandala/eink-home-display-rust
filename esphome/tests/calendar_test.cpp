@@ -1,5 +1,5 @@
 #include "check.h"
-#include "../eink_calendar.h"
+#include "eink/core/calendar.h"
 
 using namespace eink_calendar;
 

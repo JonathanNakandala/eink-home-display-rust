@@ -1,7 +1,7 @@
 #include <string>
 
 #include "check.h"
-#include "../eink_base64.h"
+#include "eink/core/base64.h"
 
 using namespace eink_base64;
 
