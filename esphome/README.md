@@ -329,6 +329,25 @@ port, joins ([eink_join.h](eink_join.h)) and takes the route [eink_secure_wake.h
 others, kept across sleeps so it is drawn once and not every wake (`prompt_on_panel`), and cleared when the picture or any other
 notice is drawn over it.
 
+**Resuming a session.** A TLS 1.3 handshake with a client certificate is the most that one wake asks of the radio and the
+battery, and a wake makes two (the plan, the picture). The server gives the display a ticket on each connection, and
+[eink_session_cache.h](eink_session_cache.h) keeps the newest, so that the next connection (the picture, and the plan ten minutes
+later) resumes it: no certificate exchange, no signatures. Resumption is for the data connections only; the first contact and the
+enrolment are made in full, since they are tied to their own connection (RFC 9266) and nothing about a display is kept before the
+owner approves it.
+
+- It is kept in **RTC memory** (3 KB of the 8 KB there; the session itself is about 700 bytes): it survives deep sleep, and a flat
+  battery just means one full handshake. It is secret like the key, and is where the key is anyway for anyone holding the device.
+- It is keyed on the server's address and port, the root and the display's certificate, so another server, a changed root and a
+  **renewed certificate** each start afresh.
+- mbedTLS dates a ticket by a clock that restarts at deep sleep, so the cache ages it by the wall clock instead; see
+  [host/README.md](host/README.md). With no clock that can be believed nothing is kept or offered.
+- Anything that stops a saved session working (the server was restarted with other keys, a session from another build, damage)
+  is forgotten and the connection is made again in full, once, in the same request: never a failed wake.
+- The server still checks membership on every request, so a revoked display is turned away on a resumed connection too.
+- The server's `/metrics` counts handshakes by kind (`eink_tls_handshakes_total{kind="resumed"}`), which is how to see it working
+  on a real display: it should climb by about two per wake after the first.
+
 Limits worth knowing:
 
 - A display set to `prefer-https` against a server that does not serve HTTPS looks for it on every wake (about 2.5 s of radio),

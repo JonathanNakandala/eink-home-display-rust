@@ -68,7 +68,7 @@ MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/framewo
 host-tls:
 	@test -n "$(MBEDTLS_SRC)" || { echo "mbedTLS source not found: run 'make compile' first, or set MBEDTLS_SRC" >&2; exit 1; }
 	cmake -S host -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
-	cmake --build build/host --target spike_tls join_host_test stream_host_test begin_host_test
+	cmake --build build/host --target spike_tls join_host_test stream_host_test begin_host_test resume_host_test
 
 .PHONY: spike
 spike: host-tls
@@ -78,7 +78,7 @@ spike: host-tls
 .PHONY: host-test
 host-test: host-tls
 	@failed=0; \
-	for binary in join_host_test stream_host_test begin_host_test; do \
+	for binary in join_host_test stream_host_test begin_host_test resume_host_test; do \
 		for test in $$(build/host/$$binary --list); do \
 			if host/with_fixture.sh build/host/$$binary $$test > build/host/$$test.log 2>&1; then \
 				echo "ok   $$test"; \

@@ -54,6 +54,7 @@ host_target(spike_tls spike_tls.cpp)
 host_target(join_host_test join_host_test.cpp ${FIRMWARE}/tests/main.cpp)
 host_target(stream_host_test stream_host_test.cpp ${FIRMWARE}/tests/main.cpp)
 host_target(begin_host_test begin_host_test.cpp ${FIRMWARE}/tests/main.cpp)
+host_target(resume_host_test resume_host_test.cpp ${FIRMWARE}/tests/main.cpp)
 
 # The tests against a real server, for ctest and the editor's test panel. Each test is run by itself against its own server
 # (with_fixture.sh), since the server limits how many different display names one address may join with in a day, so this is
