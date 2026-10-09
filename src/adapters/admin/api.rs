@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, IntoResponses, ToSchema};
 
-use crate::domain::models::pairing::{Pairing, PairingState};
+use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 
 /// The longest a pairing window can be opened for. Long enough for a display that wakes rarely; short enough
 /// that the window is not left open and forgotten.
@@ -74,6 +74,10 @@ pub struct DisplayEntry {
     /// A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one at the
     /// server, the next time it is switched on.
     pub certificate_expired: bool,
+    /// A member whose certificate should have been renewed by now and has not been (about 63 days after it was issued,
+    /// for a 90-day certificate): it has stopped renewing, though the certificate has not run out. Look at the display;
+    /// once the certificate ends this is false and `certificate_expired` says so.
+    pub renewal_overdue: bool,
     /// A member that has been given a certificate for a new key and has not used it yet.
     pub changing_keys: bool,
     /// A different key is waiting for the owner to approve it taking this member's name, as when a display was
@@ -82,7 +86,8 @@ pub struct DisplayEntry {
 }
 
 impl DisplayEntry {
-    pub fn of(pairing: &Pairing, now: DateTime<Utc>) -> Self {
+    /// `lifetime` is how long the certificates this server issues last.
+    pub fn of(pairing: &Pairing, now: DateTime<Utc>, lifetime: chrono::Duration) -> Self {
         let (state, ends) = match &pairing.state {
             PairingState::Pending => (DisplayState::Waiting, None),
             PairingState::Approved => (DisplayState::Approved, None),
@@ -101,6 +106,7 @@ impl DisplayEntry {
             waiting_since,
             certificate_not_after: ends,
             certificate_expired: ends.is_some_and(|end| end <= now),
+            renewal_overdue: ends.is_some_and(|end| renewal_overdue(end - now, lifetime)),
             changing_keys: pairing.rollover.is_some(),
             replacement_waiting: pairing.replacement.is_some(),
         }
@@ -153,6 +159,10 @@ pub enum ErrorCode {
     /// The code does not match what the display would show. A typing mistake, or, if it is right on the
     /// display's panel, something between the display and the server.
     WrongCode,
+    /// Too many wrong codes were typed for the display in a row, so none is looked at for a while (the message says how
+    /// long). Look at the code on the display's panel and at the one the server shows; if they differ, the display may be
+    /// talking to something else.
+    TooManyAttempts,
     /// No display of that name has asked to join, or its request lapsed.
     UnknownDisplay,
     /// The display is not waiting for approval, so there is nothing to approve or turn down.
@@ -174,6 +184,7 @@ impl ErrorCode {
                 StatusCode::BAD_REQUEST
             }
             Self::WrongCode => StatusCode::FORBIDDEN,
+            Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
             Self::NotFound | Self::UnknownDisplay => StatusCode::NOT_FOUND,
             Self::NotWaiting | Self::NotAMember => StatusCode::CONFLICT,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,

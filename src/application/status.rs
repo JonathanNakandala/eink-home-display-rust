@@ -17,7 +17,7 @@ use super::api_schema::SourceReportSchema;
 use super::devices::DeviceStatus;
 use super::plan::{PlanTiming, is_stale, version_of};
 use crate::domain::models::freshness::format_age;
-use crate::domain::models::pairing::{Pairing, PairingState};
+use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 use crate::domain::models::render_report::{RenderReport, SourceReport};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::render_observer::RenderObserver;
@@ -86,6 +86,11 @@ pub struct MemberStatus {
     /// A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one
     /// at the server, the next time it is switched on.
     pub certificate_expired: bool,
+    /// A member whose certificate should have been renewed by now and has not been (about 63 days after it was issued,
+    /// for a 90-day certificate): it has stopped renewing, though the certificate has not run out. Look at the display:
+    /// it may be off, out of range, or its clock or flash may be wrong. Once the certificate ends this is false and
+    /// `certificate_expired` says so instead.
+    pub renewal_overdue: bool,
     /// It has been given a certificate for a new key and has not used it yet.
     pub changing_keys: bool,
     /// A different key is waiting for the owner to approve it taking this display's name.
@@ -93,7 +98,8 @@ pub struct MemberStatus {
 }
 
 impl MemberStatus {
-    pub fn of(pairing: &Pairing, now: DateTime<Tz>) -> Self {
+    /// `lifetime` is how long the certificates this server issues last.
+    pub fn of(pairing: &Pairing, now: DateTime<Tz>, lifetime: chrono::Duration) -> Self {
         let (state, ends) = match &pairing.state {
             PairingState::Enrolled { not_after, .. } => ("member", Some(*not_after)),
             other => (other.name(), None),
@@ -105,6 +111,8 @@ impl MemberStatus {
             certificate_not_after: ends.map(|end| end.with_timezone(&now.timezone())),
             certificate_expires_in_seconds: seconds,
             certificate_expired: seconds.is_some_and(|s| s <= 0),
+            renewal_overdue: seconds
+                .is_some_and(|s| renewal_overdue(chrono::Duration::seconds(s), lifetime)),
             changing_keys: pairing.rollover.is_some(),
             replacement_waiting: pairing.replacement.is_some(),
         }
@@ -459,6 +467,8 @@ mod tests {
         );
     }
 
+    const LIFETIME: chrono::Duration = chrono::Duration::days(90);
+
     fn pairing(state: PairingState) -> Pairing {
         use crate::domain::models::device_id::DeviceId;
         use crate::domain::models::pairing::PublicKey;
@@ -476,6 +486,7 @@ mod tests {
                 not_after: ends,
             }),
             at(12, 0, 0),
+            LIFETIME,
         );
         assert_eq!(member.name, "kitchen");
         assert_eq!(member.state, "member");
@@ -493,11 +504,40 @@ mod tests {
                 not_after: ended,
             }),
             at(12, 0, 0),
+            LIFETIME,
         );
         assert_eq!(member.certificate_expires_in_seconds, Some(-2 * 86_400));
         assert!(member.certificate_expired);
         // Still a member: expiry is not being unpaired.
         assert_eq!(member.state, "member");
+    }
+
+    #[test]
+    fn a_member_that_has_not_renewed_when_it_should_have_is_flagged_before_its_certificate_ends() {
+        let status = |days_left: i64| {
+            MemberStatus::of(
+                &pairing(PairingState::Enrolled {
+                    serial: "01".to_owned(),
+                    not_after: at(12, 0, 0).to_utc() + chrono::Duration::days(days_left),
+                }),
+                at(12, 0, 0),
+                LIFETIME,
+            )
+        };
+        // 40 days left: 50 days old, renewing is still a way off. 28: it renews when 30 are left, with a few days' grace.
+        assert!(!status(40).renewal_overdue);
+        assert!(!status(28).renewal_overdue);
+        // 20 days left: 70 days old and not renewed.
+        let late = status(20);
+        assert!(late.renewal_overdue);
+        assert!(
+            !late.certificate_expired,
+            "not out yet; a different, louder state"
+        );
+        // Out: expired, no longer overdue.
+        let out = status(-1);
+        assert!(out.certificate_expired);
+        assert!(!out.renewal_overdue);
     }
 
     #[test]
@@ -508,7 +548,7 @@ mod tests {
             (PairingState::Rejected, "rejected"),
             (PairingState::Revoked, "revoked"),
         ] {
-            let status = MemberStatus::of(&pairing(state), at(12, 0, 0));
+            let status = MemberStatus::of(&pairing(state), at(12, 0, 0), LIFETIME);
             assert_eq!(status.state, name);
             assert_eq!(status.certificate_not_after, None);
             assert_eq!(status.certificate_expires_in_seconds, None);
@@ -520,7 +560,7 @@ mod tests {
     fn a_key_change_and_a_replacement_waiting_are_shown() {
         use crate::domain::models::pairing::{PublicKey, Replacement, Rollover};
         let mut changing = pairing(PairingState::Pending);
-        assert!(!MemberStatus::of(&changing, at(12, 0, 0)).changing_keys);
+        assert!(!MemberStatus::of(&changing, at(12, 0, 0), LIFETIME).changing_keys);
         changing.rollover = Some(Rollover {
             key: PublicKey::from_der(vec![2; 91]),
             since: at(9, 0, 0).to_utc(),
@@ -530,7 +570,7 @@ mod tests {
             approved: false,
             requested_at: at(10, 0, 0).to_utc(),
         });
-        let status = MemberStatus::of(&changing, at(12, 0, 0));
+        let status = MemberStatus::of(&changing, at(12, 0, 0), LIFETIME);
         assert!(status.changing_keys && status.replacement_waiting);
     }
 }

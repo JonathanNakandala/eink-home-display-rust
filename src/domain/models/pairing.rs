@@ -11,7 +11,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -260,6 +260,23 @@ impl Pairing {
     }
 }
 
+/// Whether a member's certificate should have been renewed by now and has not been.
+///
+/// A display renews with a third of its life left, at its next wake, and a display wakes at least once a day, so a
+/// healthy one has a new certificate within a day or so of that point. One that still has a certificate with less
+/// than a third of its life left, less a few days of allowance, has stopped renewing: it has gone quiet, or it cannot
+/// reach the server, or something is wrong with its clock or its flash. With 90-day certificates that is about 63
+/// days after it was issued.
+///
+/// False once the certificate has ended (`remaining` is not positive): that is its own, louder state, and a display
+/// that is switched off would otherwise be reported for good. A display that is switched on gets a new certificate
+/// by itself.
+pub fn renewal_overdue(remaining: Duration, lifetime: Duration) -> bool {
+    // Long enough for a display that sleeps its longest and backs off, but never most of a short certificate's life.
+    let allowance = Duration::days(3).min(lifetime / 6);
+    remaining > Duration::zero() && remaining < lifetime / 3 - allowance
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +452,42 @@ mod tests {
         }
         // Display is still the way to mean to show one.
         assert_eq!(code.to_string(), code.as_str());
+    }
+
+    #[test]
+    fn a_certificate_is_overdue_for_renewal_a_few_days_after_the_third_of_its_life_that_is_left() {
+        let life = Duration::days(90);
+        // Fresh, halfway, and at the point where a display renews: not overdue, a display does that on its next wake.
+        assert!(!renewal_overdue(Duration::days(90), life));
+        assert!(!renewal_overdue(Duration::days(45), life));
+        assert!(!renewal_overdue(Duration::days(30), life));
+        // The allowance for a display that sleeps for a day and backs off: still not.
+        assert!(!renewal_overdue(Duration::days(27), life));
+        // Past it: it has stopped renewing.
+        assert!(renewal_overdue(
+            Duration::days(27) - Duration::seconds(1),
+            life
+        ));
+        assert!(renewal_overdue(Duration::days(5), life));
+        assert!(renewal_overdue(Duration::seconds(1), life));
+    }
+
+    #[test]
+    fn a_certificate_that_has_ended_is_expired_and_not_overdue() {
+        let life = Duration::days(90);
+        assert!(!renewal_overdue(Duration::zero(), life));
+        assert!(!renewal_overdue(-Duration::days(2), life));
+    }
+
+    #[test]
+    fn a_short_lived_certificate_keeps_most_of_its_life_before_it_is_overdue() {
+        // The allowance is a sixth of the life at most, so one day's certificate is not overdue at once.
+        let life = Duration::days(1);
+        assert!(!renewal_overdue(life / 3 - life / 6, life));
+        assert!(renewal_overdue(
+            life / 3 - life / 6 - Duration::seconds(1),
+            life
+        ));
+        assert!(!renewal_overdue(Duration::hours(20), life));
     }
 }

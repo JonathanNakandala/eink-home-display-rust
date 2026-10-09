@@ -151,6 +151,21 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
+            "eink_member_certificate_renewal_overdue",
+            "1 if a member's certificate should have been renewed by now and has not been (about 63 days after it was issued, for a 90-day certificate). Alert on this: the display has stopped renewing, and the certificate will run out. 0 for the rest, and once it has run out.",
+        );
+        for member in &status.members {
+            if member.certificate_not_after.is_some() {
+                let _ = writeln!(
+                    out,
+                    "eink_member_certificate_renewal_overdue{{device=\"{}\"}} {}",
+                    escape(&member.name),
+                    u8::from(member.renewal_overdue)
+                );
+            }
+        }
+        gauge(
+            &mut out,
             "eink_member_replacement_waiting",
             "1 if a different key is waiting for the owner to approve it taking the display's name.",
         );
@@ -396,6 +411,7 @@ mod tests {
                     ),
                     certificate_expires_in_seconds: Some(172_800),
                     certificate_expired: false,
+                    renewal_overdue: true,
                     changing_keys: true,
                     replacement_waiting: false,
                 },
@@ -405,6 +421,7 @@ mod tests {
                     certificate_not_after: None,
                     certificate_expires_in_seconds: None,
                     certificate_expired: false,
+                    renewal_overdue: false,
                     changing_keys: false,
                     replacement_waiting: true,
                 },
@@ -425,6 +442,7 @@ mod tests {
             "eink_member_state{device=\"hall\",state=\"pending\"} 1",
             "eink_member_state{device=\"hall\",state=\"member\"} 0",
             "eink_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"} 1798200000",
+            "eink_member_certificate_renewal_overdue{device=\"kitchen\"} 1",
             "eink_member_replacement_waiting{device=\"hall\"} 1",
             "eink_member_replacement_waiting{device=\"kitchen\"} 0",
             "eink_member_changing_keys{device=\"kitchen\"} 1",
@@ -437,6 +455,7 @@ mod tests {
         }
         // A display with no certificate has no expiry to report, not a zero that would alert.
         assert!(!text.contains("expiry_timestamp_seconds{device=\"hall\"}"));
+        assert!(!text.contains("renewal_overdue{device=\"hall\"}"));
     }
 
     #[test]

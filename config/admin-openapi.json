@@ -302,6 +302,16 @@
               }
             }
           },
+          "429": {
+            "description": "Too many wrong codes were typed for the display in a row, so none is looked at for 15 minutes, the right one included. The message says for how long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The server failed. The log has the detail.",
             "content": {
@@ -694,6 +704,7 @@
           "name",
           "state",
           "certificate_expired",
+          "renewal_overdue",
           "changing_keys",
           "replacement_waiting"
         ],
@@ -729,6 +740,10 @@
           "certificate_expired": {
             "type": "boolean",
             "description": "A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one at the\nserver, the next time it is switched on."
+          },
+          "renewal_overdue": {
+            "type": "boolean",
+            "description": "A member whose certificate should have been renewed by now and has not been (about 63 days after it was issued,\nfor a 90-day certificate): it has stopped renewing, though the certificate has not run out. Look at the display;\nonce the certificate ends this is false and `certificate_expired` says so."
           },
           "changing_keys": {
             "type": "boolean",
@@ -795,6 +810,7 @@
           "invalid_name",
           "invalid_code",
           "wrong_code",
+          "too_many_attempts",
           "unknown_display",
           "not_waiting",
           "not_a_member",

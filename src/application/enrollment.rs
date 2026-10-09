@@ -12,6 +12,7 @@
 //! Everything a request carries comes from the network, so the unauthenticated path is narrow: it
 //! creates something only while the owner has the window open, and only up to a few at a time.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::{DateTime, Duration, Utc};
@@ -20,7 +21,7 @@ use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::{
-    Pairing, PairingCode, PairingState, PublicKey, Replacement, Rollover,
+    Pairing, PairingCode, PairingState, PublicKey, Replacement, Rollover, renewal_overdue,
 };
 use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,
@@ -36,6 +37,14 @@ pub const MAX_PENDING: usize = 8;
 /// is still asking after that asks again (with the window open) and is a new request. Without this, requests
 /// from strangers, or from a display that was given away, would fill the places for good.
 pub const REQUEST_LIFETIME: Duration = Duration::hours(24);
+
+/// How many wrong codes may be typed for one display, one after the other, before approving it is refused for a while.
+/// The code is sixty bits, so this is not about guessing it. A code that keeps being wrong is a display shown something
+/// other than what this server worked out, and the owner should look into that and not keep typing.
+pub const MAX_WRONG_CODES: u32 = 5;
+
+/// How long approving a display is refused after `MAX_WRONG_CODES` wrong codes. After that it may be tried again.
+pub const WRONG_CODE_LOCKOUT: Duration = Duration::minutes(15);
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnrollmentPolicy {
@@ -115,8 +124,23 @@ pub enum ApproveError {
     /// if the display really shows what was typed, someone between the two.
     #[error("that is not the code {0} would show")]
     WrongCode(DeviceId),
+    /// Too many wrong codes in a row for this display: none is looked at until `retry_after` has passed.
+    #[error("too many wrong codes for {device}; none is accepted for {} more minute(s)", retry_after.num_minutes().max(1))]
+    TooManyAttempts {
+        device: DeviceId,
+        retry_after: Duration,
+    },
     #[error("the server failed: {0:#}")]
     Failed(#[from] anyhow::Error),
+}
+
+/// The wrong codes typed for one display, in a row.
+#[derive(Debug, Clone, Copy)]
+struct WrongCodes {
+    count: u32,
+    last_at: DateTime<Utc>,
+    /// While this is in the future no code is looked at.
+    locked_until: Option<DateTime<Utc>>,
 }
 
 pub struct Enrollment {
@@ -130,6 +154,8 @@ pub struct Enrollment {
     /// can't interleave: a renewal that has read a display as a member must not write it back as one
     /// after the owner has revoked it.
     changes: tokio::sync::Mutex<()>,
+    /// Wrong codes by display. Not kept on disk: a restart forgets, and the owner is there when one happens.
+    wrong_codes: Mutex<HashMap<DeviceId, WrongCodes>>,
 }
 
 impl Enrollment {
@@ -146,7 +172,33 @@ impl Enrollment {
             policy,
             window: Mutex::new(None),
             changes: tokio::sync::Mutex::new(()),
+            wrong_codes: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The members whose certificates should have been renewed by now and have not been, with how long each has left
+    /// (see `renewal_overdue`).
+    pub async fn overdue_renewals(&self) -> anyhow::Result<Vec<(DeviceId, Duration)>> {
+        let now = self.now();
+        Ok(self
+            .store
+            .all()
+            .await?
+            .into_iter()
+            .filter_map(|pairing| match pairing.state {
+                PairingState::Enrolled { not_after, .. } => {
+                    let left = not_after - now;
+                    renewal_overdue(left, self.policy.certificate_lifetime)
+                        .then_some((pairing.device, left))
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// How long the certificates this server issues to displays last.
+    pub fn certificate_lifetime(&self) -> Duration {
+        self.policy.certificate_lifetime
     }
 
     /// Whether a request has to be tied to its connection, for the server to tell displays so.
@@ -400,6 +452,41 @@ impl Enrollment {
         Ok(false)
     }
 
+    /// How much longer approving `device` is refused, if it is.
+    fn locked_for(&self, device: &DeviceId, now: DateTime<Utc>) -> Option<Duration> {
+        let wrong = self
+            .wrong_codes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let until = wrong.get(device)?.locked_until?;
+        (until > now).then(|| until - now)
+    }
+
+    /// Notes a wrong code for `device`. True if that was the one that locks it.
+    fn count_wrong_code(&self, device: &DeviceId, now: DateTime<Utc>) -> bool {
+        let mut wrong = self
+            .wrong_codes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // A display that has not been tried for as long as a request lasts has lapsed: not kept for ever.
+        wrong.retain(|_, w| now - w.last_at < REQUEST_LIFETIME);
+        let entry = wrong.entry(device.clone()).or_insert(WrongCodes {
+            count: 0,
+            last_at: now,
+            locked_until: None,
+        });
+        entry.count += 1;
+        entry.last_at = now;
+        if entry.count >= MAX_WRONG_CODES {
+            // Locked, and after the lock a fresh run of tries.
+            entry.count = 0;
+            entry.locked_until = Some(now + WRONG_CODE_LOCKOUT);
+            true
+        } else {
+            false
+        }
+    }
+
     /// The owner confirms a display, or a replacement for one, by typing in the code its panel shows.
     pub async fn approve(
         &self,
@@ -427,12 +514,31 @@ impl Enrollment {
                 state: pairing.state.name(),
             });
         };
+        // Before the code is looked at, so that a locked display does not say whether a code was right.
+        if let Some(retry_after) = self.locked_for(device, now) {
+            return Err(ApproveError::TooManyAttempts {
+                device: device.clone(),
+                retry_after,
+            });
+        }
         let same: bool = typed
             .as_str()
             .as_bytes()
             .ct_eq(expected.as_str().as_bytes())
             .into();
         if !same {
+            if self.count_wrong_code(device, now) {
+                log::warn!(
+                    "{MAX_WRONG_CODES} wrong pairing codes in a row for {device}: approving it is refused for {} \
+                     minutes. Compare the code on its panel with the one the server shows (the display may be \
+                     talking to something else), then try again",
+                    WRONG_CODE_LOCKOUT.num_minutes()
+                );
+                return Err(ApproveError::TooManyAttempts {
+                    device: device.clone(),
+                    retry_after: WRONG_CODE_LOCKOUT,
+                });
+            }
             log::warn!(
                 "The pairing code typed for {device} did not match. Type what the display's own panel shows; a \
                  code that is right on the panel and wrong here can mean something is between the display and \
@@ -450,6 +556,10 @@ impl Enrollment {
         }
         pairing.updated_at = now;
         self.store.put(&pairing).await?;
+        self.wrong_codes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(device);
         log::info!("Approved {device}; it gets its certificate the next time it asks");
         Ok(())
     }
@@ -979,6 +1089,163 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, Outcome::Pending { .. }), "still waiting");
+    }
+
+    async fn wrong_codes(f: &Fixture, name: &str, times: u32) -> Vec<Result<(), ApproveError>> {
+        let wrong = PairingCode::parse("0000-0000-0000").unwrap();
+        let mut results = Vec::new();
+        for _ in 0..times {
+            results.push(f.enrollment.approve(&device(name), &wrong).await);
+        }
+        results
+    }
+
+    #[tokio::test]
+    async fn members_that_have_not_renewed_when_they_should_have_are_listed_with_what_they_have_left()
+     {
+        // Certificates last a year here: a display renews with 122 days left, and is late three days after that.
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        for (name, key) in [("kitchen", "k1"), ("hall", "k2")] {
+            f.enrollment.enroll(&csr(name, key), None).await.unwrap();
+            f.enrollment
+                .approve(&device(name), &f.code(name, key))
+                .await
+                .unwrap();
+            f.enrollment.enroll(&csr(name, key), None).await.unwrap();
+        }
+        assert!(f.enrollment.overdue_renewals().await.unwrap().is_empty());
+
+        // 250 days on: 115 left, past the point and its allowance. The hall has not been asked for a new one either.
+        f.advance(Duration::days(250));
+        let mut overdue = f.enrollment.overdue_renewals().await.unwrap();
+        overdue.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(overdue.len(), 2, "{overdue:?}");
+        assert_eq!(overdue[0].1, Duration::days(115));
+
+        // Out, they are expired and no longer overdue.
+        f.advance(Duration::days(120));
+        assert!(f.enrollment.overdue_renewals().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn wrong_codes_in_a_row_lock_the_display_for_a_while_even_against_the_right_one() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+
+        // The first few are wrong codes, the one that makes five locks it.
+        let results = wrong_codes(&f, "kitchen", MAX_WRONG_CODES).await;
+        for early in &results[..results.len() - 1] {
+            assert!(
+                matches!(early, Err(ApproveError::WrongCode(_))),
+                "{early:?}"
+            );
+        }
+        assert!(
+            matches!(
+                results.last().unwrap(),
+                Err(ApproveError::TooManyAttempts { .. })
+            ),
+            "{results:?}"
+        );
+
+        // Locked: the right code is not looked at either, so the lock tells an attacker nothing.
+        f.advance(Duration::minutes(5));
+        let result = f
+            .enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await;
+        match result {
+            Err(ApproveError::TooManyAttempts { retry_after, .. }) => {
+                assert_eq!(retry_after, WRONG_CODE_LOCKOUT - Duration::minutes(5));
+            }
+            other => panic!("expected the display to be locked, got {other:?}"),
+        }
+        let outcome = f
+            .enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, Outcome::Pending { .. }), "not approved");
+
+        // And after the lockout the right code is approved.
+        f.advance(WRONG_CODE_LOCKOUT);
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_right_code_in_time_clears_the_wrong_ones() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.enroll(&csr("hall", "k2"), None).await.unwrap();
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+
+        wrong_codes(&f, "kitchen", MAX_WRONG_CODES - 1).await;
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
+
+        // Nothing is carried over: a display that joins afresh starts at none again.
+        f.enrollment.forget(&device("kitchen")).await.unwrap();
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        let results = wrong_codes(&f, "kitchen", MAX_WRONG_CODES - 1).await;
+        assert!(
+            results
+                .iter()
+                .all(|r| matches!(r, Err(ApproveError::WrongCode(_)))),
+            "{results:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_display_being_locked_does_not_lock_another() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        f.enrollment.enroll(&csr("hall", "k2"), None).await.unwrap();
+        wrong_codes(&f, "kitchen", MAX_WRONG_CODES).await;
+        f.enrollment
+            .approve(&device("hall"), &f.code("hall", "k2"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn after_a_lockout_there_is_a_fresh_run_of_tries() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        wrong_codes(&f, "kitchen", MAX_WRONG_CODES).await;
+        f.advance(WRONG_CODE_LOCKOUT + Duration::seconds(1));
+        let results = wrong_codes(&f, "kitchen", MAX_WRONG_CODES - 1).await;
+        assert!(
+            results
+                .iter()
+                .all(|r| matches!(r, Err(ApproveError::WrongCode(_)))),
+            "{results:?}"
+        );
+        let last = wrong_codes(&f, "kitchen", 1).await;
+        assert!(matches!(last[0], Err(ApproveError::TooManyAttempts { .. })));
     }
 
     #[tokio::test]

@@ -197,7 +197,10 @@ display goes like this:
    dashes; `I` and `L` are read as `1`, `O` as `0`. **The server never shows the code**, and nothing here will print
    it: a code copied from the server would say nothing about the display. If the code you type is wrong the command
    says so and nothing changes; if you are sure it is right on the panel, something may be between the display and the
-   server.
+   server. **Five wrong codes in a row for one display lock its approval for 15 minutes**, the right code included
+   (`approve` then says `too_many_attempts` and for how long). A code that keeps being wrong is not a typing mistake, so
+   the lock makes you stop and compare the panel with the server first. A right code clears the count, and a restart
+   forgets it.
 5. The display becomes a member the next time it asks, within a few minutes, and `displays list` then shows it as a
    `member` with when its certificate ends. You can close the window now: a display already waiting can still be
    approved. (When you have approved a new key for an existing member's name, no other key can displace it before it
@@ -256,6 +259,8 @@ anywhere else is the server's own, which is exactly what someone in the middle w
 |---|---|
 | `<name> asked to join` (info) | A display is waiting. Check the code on its panel, then approve. |
 | `The pairing code typed for <name> did not match` (warn) | A typo, or the code on the panel is not the one the server worked out. If you typed it carefully from the panel, **do not approve**: something may be between the display and the server. |
+| `5 wrong pairing codes in a row for <name>: approving it is refused for 15 minutes` (warn) | Five codes were typed that were not the one the server worked out. Compare the code on the display's panel with the one you are typing before you try again: if it is right on the panel, the display may be talking to something else. |
+| `<name> has not renewed its certificate, which ends in N day(s)` (warn) | A member that should have renewed by now has not (about 63 days after it was issued, for a 90-day certificate). It is off, cannot reach the server, or has a wrong clock; once it is switched on and can reach the server it gets a new one by itself. Said once a day while it stays so. |
 | `<name> is a member, and another key asked for its name` (warn) | A display with an existing name asked again with a new key: a reflashed display, or someone trying to take its place. The member keeps working. Approve only if you meant to re-pair it. |
 | `EST request from <address> refused: …` (warn) | Someone at that address was turned away (window shut, wrong key, not a member). A few are a display retrying; a stream from an address that is not a display is worth a look. Only 10 a minute are logged one by one; `N more refusals in the last minute were not logged one by one` says how many were left out. |
 | `Turned away <name> (<address>): … not a member` (warn) | A certificate that is valid but whose display was revoked, forgotten or replaced. |
@@ -265,19 +270,22 @@ anywhere else is the server's own, which is exactly what someone in the middle w
 
 `/status` lists every display's standing under `members`: its state (`pending`, `approved`, `member`, `rejected`,
 `revoked`), when its latest certificate ends and how long is left, whether that has run out (`certificate_expired`,
-which fixes itself when the display is next on), and whether a key change or a replacement is waiting. `/metrics`
-has the same as `eink_member_*`. A useful alert is a member that has stopped renewing, which shows as a certificate
-close to its end:
+which fixes itself when the display is next on), whether it has **stopped renewing** (`renewal_overdue`: its
+certificate should have been replaced by now and has not been, about 63 days after it was issued for a 90-day
+certificate; false once the certificate has ended, when `certificate_expired` says so instead), and whether a key
+change or a replacement is waiting. `displayctl displays list` says it in words, and `/metrics` has the same as
+`eink_member_*`. The alert for a member that has stopped renewing:
 
 ```yaml
 - alert: DisplayNotRenewing
-  expr: eink_member_certificate_expiry_timestamp_seconds - time() < 14 * 86400
+  expr: eink_member_certificate_renewal_overdue == 1
   for: 1h
   annotations:
-    summary: "{{ $labels.device }} has not renewed its certificate (ends in under 14 days)"
+    summary: "{{ $labels.device }} has not renewed its certificate when it should have"
 ```
 
-A display that is simply off will trigger this, which is also the right thing to know.
+A display that is simply off will trigger this, which is also the right thing to know. The log says it too, once a
+day for each such display (see the table above), for those who do not run a scraper.
 
 - **TLS 1.3 only.** Older versions are refused.
 - **Announced over mDNS** for a display to find. With `prefer-https` it is the usual `_http._tcp` service with
