@@ -14,6 +14,7 @@
 #include "eink_pairing.h"
 #include "eink_ports.h"
 #include "eink_secure.h"
+#include "eink_session_cache.h"
 #include "eink_secure_wake.h"
 #include "eink_service.h"
 #include "eink_tls.h"
@@ -30,8 +31,13 @@ struct Begin {
 
 // `ip` and `tls_port` are what discovery found (0 for neither). If the display has joined the server is recorded in
 // eink_secure.h, and the display's root, certificate and key (kept in `identity`) are what it will show.
+//
+// `sessions`, if given, is where the TLS session of this server and this display is kept, so that the plan and the
+// picture of the wake, and the wakes after, resume it (eink_session_cache.h). It is asked for the store of this server
+// and this display once the display has joined.
 inline Begin begin(eink_service::Transport transport, uint32_t ip, uint16_t tls_port, const std::string &name,
-                   eink_ports::Clock &clock, eink_tls::TlsIdentity &identity) {
+                   eink_ports::Clock &clock, eink_tls::TlsIdentity &identity,
+                   eink_session_cache::Holder *sessions = nullptr) {
   Begin out;
   eink_join::Outcome joined;
   const bool addressable = ip != 0 && tls_port != 0;
@@ -42,8 +48,12 @@ inline Begin begin(eink_service::Transport transport, uint32_t ip, uint16_t tls_
     joined = eink_join::Joiner(clock, identity, est, verifier, name).run();
     if (joined.paired) {
       const eink_ports::Bytes compiled = identity.compiled_root();
-      eink_secure::use(ip, tls_port, compiled.empty() ? identity.stored_root() : compiled, identity.held_certificate(),
-                       &identity.private_key());
+      const eink_ports::Bytes root = compiled.empty() ? identity.stored_root() : compiled;
+      const eink_ports::Bytes certificate = identity.held_certificate();
+      eink_secure::use(ip, tls_port, root, certificate, &identity.private_key(), 15000,
+                       sessions == nullptr
+                           ? nullptr
+                           : sessions->select(eink_session_cache::make_key(ip, tls_port, root, certificate)));
     }
   }
   out.verdict = eink_secure_wake::decide(transport, addressable, joined);

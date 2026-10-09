@@ -21,11 +21,13 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/pk.h"
+#include "mbedtls/platform_time.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 
 #include "eink_http.h"
 #include "eink_ports.h"
+#include "eink_session_cache.h"
 
 namespace eink_tls {
 
@@ -76,12 +78,54 @@ class Session {
   }
   ~Session() {
     mbedtls_ssl_free(&ssl_);
+    if (have_offered_session_)
+      mbedtls_ssl_session_free(&offered_session_);
     mbedtls_ssl_config_free(&conf_);
     if (socket_ >= 0)
       ::close(socket_);
   }
   Session(const Session &) = delete;
   Session &operator=(const Session &) = delete;
+
+  // Resumes an earlier session, and keeps the tickets the server sends for the next one. For connections that show a
+  // certificate and verify the server, never for the first contact or the enrolment, which are made fresh each time, so
+  // that each of them is tied to its own connection (RFC 9266) and nothing about a display is kept before the owner has
+  // approved it.
+  //   `offer` says whether to try the saved session; false still keeps new tickets (the saved one just failed).
+  // Call before `open`.
+  void use_sessions(eink_session_cache::Store *store, bool offer = true) {
+    sessions_ = store;
+    offer_ = offer;
+  }
+
+  // The saved session was offered to the server on this connection.
+  bool offered() const { return offered_; }
+
+  // The session as bytes, to keep: mbedTLS's own serialisation, which holds the ticket and the secrets that use it, so
+  // it is as secret as the key. Empty if it cannot be had.
+  static Bytes serialise(const mbedtls_ssl_session &session) {
+    size_t length = 0;
+    mbedtls_ssl_session_save(&session, nullptr, 0, &length);
+    if (length == 0)
+      return {};
+    Bytes out(length);
+    if (mbedtls_ssl_session_save(&session, out.data(), out.size(), &length) != 0)
+      return {};
+    out.resize(length);
+    return out;
+  }
+
+  // A saved session made ready to offer: loaded, and its age put right. mbedTLS dates a ticket by a monotonic clock
+  // (`mbedtls_ms_time`), which starts again when the chip wakes from deep sleep, so a ticket saved before the sleep
+  // would look as if it came from the future, or from long ago, and be refused without a word. `age_s` is how long it
+  // has really been, from the wall clock, and the ticket's reception time is set so that mbedTLS sees that age now.
+  // False if it cannot be loaded (it was saved by another build of mbedTLS, whose format differs).
+  static bool restore(const Bytes &saved, int64_t age_s, mbedtls_ssl_session &session) {
+    if (saved.empty() || age_s < 0 || mbedtls_ssl_session_load(&session, saved.data(), saved.size()) != 0)
+      return false;
+    session.MBEDTLS_PRIVATE(ticket_reception_time) = mbedtls_ms_time() - age_s * 1000;
+    return true;
+  }
 
   // Connects to `ip` (IPv4 as lwIP stores it: the first octet in the lowest byte) and shakes hands, TLS 1.3 only.
   // `trust` null verifies nothing (first contact, to fetch the root, which the pairing code confirms later); otherwise
@@ -109,6 +153,21 @@ class Session {
     // The name the certificate must have, whatever address was connected to.
     if (trust != nullptr && mbedtls_ssl_set_hostname(&ssl_, SERVER_NAME) != 0)
       return Open::UNREACHABLE;
+    if (sessions_ != nullptr) {
+      // In TLS 1.3 a ticket arrives after the handshake; the library keeps it only if the application asks to be told.
+      mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets(&conf_,
+                                                               MBEDTLS_SSL_TLS1_3_SIGNAL_NEW_SESSION_TICKETS_ENABLED);
+      Bytes saved;
+      int64_t age_s = 0;
+      if (offer_ && sessions_->load(saved, age_s)) {
+        mbedtls_ssl_session_init(&offered_session_);
+        have_offered_session_ = true;
+        if (restore(saved, age_s, offered_session_) && mbedtls_ssl_set_session(&ssl_, &offered_session_) == 0)
+          offered_ = true;
+        else
+          sessions_->forget();  // it cannot be used (another build wrote it): not kept to fail every wake
+      }
+    }
     mbedtls_ssl_set_bio(&ssl_, this, &Session::send_bytes, &Session::receive_bytes, nullptr);
     int r;
     while ((r = mbedtls_ssl_handshake(&ssl_)) == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) {
@@ -144,8 +203,11 @@ class Session {
     unsigned char buffer[1024];
     for (;;) {
       const int r = mbedtls_ssl_read(&ssl_, buffer, sizeof buffer);
-      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE ||
-          r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+      if (r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
+        keep_ticket();
+        continue;
+      }
+      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
         continue;
       if (r <= 0) {
         error_ = r;
@@ -182,8 +244,11 @@ class Session {
   int read_some(uint8_t *out, size_t length) {
     for (;;) {
       const int r = mbedtls_ssl_read(&ssl_, out, length);
-      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE ||
-          r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+      if (r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
+        keep_ticket();
+        continue;
+      }
+      if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
         continue;
       if (r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
         return 0;
@@ -222,6 +287,25 @@ class Session {
   int error_ = 0;
   mbedtls_ssl_context ssl_;
   mbedtls_ssl_config conf_;
+  eink_session_cache::Store *sessions_ = nullptr;
+  bool offer_ = true;
+  bool offered_ = false;
+  mbedtls_ssl_session offered_session_;
+  bool have_offered_session_ = false;
+
+  // A ticket has arrived: the session as it is now is the one to resume next time.
+  void keep_ticket() {
+    if (sessions_ == nullptr)
+      return;
+    mbedtls_ssl_session session;
+    mbedtls_ssl_session_init(&session);
+    if (mbedtls_ssl_get_session(&ssl_, &session) == 0) {
+      const Bytes bytes = serialise(session);
+      if (!bytes.empty())
+        sessions_->save(bytes);
+    }
+    mbedtls_ssl_session_free(&session);
+  }
 
   bool connect_socket(uint32_t ip, uint16_t port, int timeout_ms) {
     timeout_ms_ = timeout_ms;
