@@ -6,9 +6,9 @@
 // Works over a `BlobStore` (what flash does: read and write a named blob), and is tested with every way a write can be
 // cut short.
 //
-// Pairing is removed only by the owner (erasing the flash), never by an error. So a record that cannot be read for any
-// reason but there being none (a failing flash, a bad checksum on every slot, a version written by another firmware) is
-// not "empty": it stays untouched, and nothing is written over it.
+// Pairing is removed only by the owner (holding the button, or erasing the flash), never by an error. So a record that
+// cannot be read for any reason but there being none (a failing flash, a bad checksum on every slot, a version written
+// by another firmware) is not "empty": it stays untouched, and nothing is written over it.
 #pragma once
 
 #include <cstdint>
@@ -31,6 +31,8 @@ class BlobStore {
  public:
   virtual ~BlobStore() = default;
   virtual Read read(const char *name, Bytes &out) = 0;
+  // Removes the blob. True if it is gone, including when there never was one; false if it may still be there.
+  virtual bool erase(const char *name) = 0;
   // All or nothing as far as the caller can tell. A write that returns false may have changed nothing, or may have left
   // the blob cut short (a power cut): the record format is what makes that safe.
   virtual bool write(const char *name, const Bytes &data) = 0;
@@ -168,6 +170,21 @@ class Credentials {
 
   State state() const { return state_; }
   const Record &record() const { return record_; }
+
+  // Removes the record, whatever state it is in (a record that cannot be read is no reason to keep it), because the
+  // owner asked: this is the one thing that removes pairing. The slot that is not current goes first, so that if the
+  // power goes in between, the display is still paired with what it had and the owner can ask again; going the other
+  // way the older record could come back. True if both are gone; then the state is EMPTY, as for a new display. False
+  // if one would not go, and the state is as it was.
+  bool erase() {
+    const int first = active_ == 0 ? 1 : 0;
+    if (!store_.erase(name(first)) || !store_.erase(name(1 - first)))
+      return false;
+    record_ = Record();
+    active_ = -1;
+    state_ = State::EMPTY;
+    return true;
+  }
 
   // Writes `next` as the new record, to the slot that is not the current one, and makes it current only if the write
   // was made. The sequence is set here. False if the flash would not take it, or if the state is UNREADABLE.

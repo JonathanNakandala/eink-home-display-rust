@@ -24,4 +24,7 @@ inline std::string condition(bool panel_shows_only_the_picture) {
 // about it later).
 inline void keep(const std::string &etag) { eink_etag::keep(slot, etag); }
 
+// The panel no longer shows a picture that is known (the display was reset): nothing is asked about it.
+inline void forget() { eink_etag::clear(slot); }
+
 }  // namespace eink_shown

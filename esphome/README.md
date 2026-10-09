@@ -153,6 +153,31 @@ it downloads and draws the new image, then sleeps until the next scheduled rende
   (2.4 s), longer on a Raspberry Pi or a cold Chrome. There is no on-screen "refreshing" message.
 - If the server can't be reached, the usual lookup, retry and failure notice apply.
 
+### Resetting a display's pairing
+
+Hold KEY0 (the same right green button) from the moment the display wakes. After **five seconds** the panel says
+`Keep holding to reset pairing (5 s)`; after **ten** the pairing is erased and the panel says `Pairing reset`. Let go
+before ten and nothing is reset: the notice is replaced by the picture again in the same wake. A press for a refresh is
+short, so it is not mistaken for this. Only a display set to `prefer-https` or `https` has it (`http` has nothing to
+reset).
+
+What is erased: the key, the certificate and the root in flash, whatever state the record is in (so it is also the way out
+of a flash record that cannot be read), and what RTC memory keeps beside them (the server's last answer, the TLS session,
+the picture's ETag). A root built into the firmware (`server_root`) stays, since it is part of the firmware. The other slot
+goes first, so if the power goes in the middle the display is still paired and the button can be held again. The display
+then goes on with the wake as a new one: it fetches the root, makes a key and asks to join.
+
+At the server the name belongs to a member with the old key, so the new key is held as a **replacement** that the owner has
+to approve with the code on the panel (`displayctl approve <name> <code>`); until then the member carries on, and the old
+code does not work for the new key. For a display that is being given away or whose server is gone, `displayctl revoke` and
+`forget` (on the server) are the other half.
+
+The timing is `core/hold.h`, tested for every way a hold can go (let go early, at seven seconds, a bounce, a late look at the
+button, the millisecond counter wrapping); the erase and its power-cut order are tested in `core/credentials.h`'s tests, and
+the server's side of a display that asks again with a new key against the real server. Reading the pin is `esp/button.h`:
+KEY0 is also the pin that wakes the display from sleep, and ESPHome does not let a binary sensor share it. That, and the
+panel's behaviour while the button is held, need a device.
+
 ### How the device finds the server
 
 [esp/discovery.h](eink/esp/discovery.h) queries mDNS and takes the first service whose TXT record has `txtvers=1` and a
@@ -276,8 +301,8 @@ falls back to fetching one.
 
 **The rule under all of this: pairing is removed only by the owner, never by an error.** The key, the certificate
 and the authority are not deleted because a connection failed, a certificate was refused, a response was `403`, the
-clock was wrong or the server was unreachable. Only a deliberate action (erasing the flash; a long press to
-erase pairing is not built yet) clears them. They are stored as one versioned blob with a checksum, so a half-written
+clock was wrong or the server was unreachable. Only a deliberate action (holding KEY0 for ten seconds, below, or
+erasing the flash) clears them. They are stored as one versioned blob with a checksum, so a half-written
 one is recognised and the previous one used.
 
 **After being off for a while** (a flat battery, a drawer), in this order:
@@ -591,6 +616,11 @@ The device sleeps for the `next_seconds` the server reports: the next scheduled 
 
 - The first boot log shows no `Not enough PSRAM` line. If it does, the figures in it say how much was
   free; check that PSRAM is detected (about 8 MB) before anything else.
+
+- Hold KEY0 right after waking: at five seconds the panel says to keep holding, and letting go before ten leaves the pairing
+  (and puts the picture back); holding to ten says `Pairing reset`, and the display asks to join again with a new code.
+  A short press still asks for a fresh picture, as before. This is the one thing in the secure transport that reads a
+  pin directly (`esp/button.h`).
 
 - Stop the server and wake the device a few times: the label appears once, and the log shows
   `Failure 2 in a row; sleeping 1200 s`, then 2400 s. Start the server again: the next wake redraws

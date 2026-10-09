@@ -7,6 +7,7 @@
 #pragma once
 
 #include "eink/core/battery.h"
+#include "eink/core/hold.h"
 #include "eink/core/report.h"
 #include "eink/core/secure_wake.h"
 #include <string>
@@ -31,6 +32,10 @@ inline std::string plan_target;
 // there is none.
 inline std::string image_condition;
 inline std::string downloaded_etag;
+
+// The reset button (core/hold.h): how long KEY0 has been held since the wake began, and what that last said to do.
+inline eink_hold::Tracker reset_hold;
+inline eink_hold::Action hold_action = eink_hold::Action::NONE;
 
 // ---- the secure transport (core/secure_wake.h) ----------------------------------------------------------------------
 

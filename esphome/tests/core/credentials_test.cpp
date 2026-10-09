@@ -326,3 +326,80 @@ TEST(the_later_of_two_good_records_wins_even_across_the_sequence_wrapping) {
   Credentials c(store);
   CHECK_EQ(c.record().not_after, (int64_t) 99);
 }
+
+TEST(erasing_removes_the_record_and_leaves_a_display_that_is_new) {
+  MemoryStore store;
+  Credentials credentials(store);
+  Record record;
+  record.key = filled(10, 1);
+  record.certificate = filled(20, 2);
+  CHECK(credentials.update(record));
+  CHECK(credentials.update(record));  // both slots hold one
+  CHECK_EQ(store.blobs.size(), 2u);
+
+  CHECK(credentials.erase());
+  CHECK(credentials.state() == State::EMPTY);
+  CHECK(credentials.record().empty());
+  CHECK(store.blobs.empty());
+
+  // And a restart agrees, and the display can be paired afresh.
+  Credentials after(store);
+  CHECK(after.state() == State::EMPTY);
+  CHECK(after.update(record));
+  CHECK(after.state() == State::READY);
+}
+
+TEST(the_slot_that_is_not_current_is_erased_first_so_a_cut_leaves_the_display_as_it_was) {
+  MemoryStore store;
+  Credentials credentials(store);
+  Record record;
+  record.key = filled(10, 1);
+  CHECK(credentials.update(record));  // slot A
+  record.certificate = filled(20, 3);
+  CHECK(credentials.update(record));  // slot B, the current one
+
+  store.cut_erase = 2;  // the power goes just before the second erase
+  CHECK(!credentials.erase());
+  CHECK_EQ(store.erased.size(), 1u);
+  CHECK_EQ(store.erased[0], std::string("cred_a"));
+  // Still paired with the record it had, in this run and after a restart; the owner can hold the button again.
+  CHECK(credentials.state() == State::READY);
+  store.restore_power();
+  Credentials after(store);
+  CHECK(after.state() == State::READY);
+  CHECK(after.record().certificate == filled(20, 3));
+}
+
+TEST(an_erase_that_fails_changes_nothing_in_what_the_display_holds) {
+  MemoryStore store;
+  Credentials credentials(store);
+  Record record;
+  record.key = filled(10, 1);
+  CHECK(credentials.update(record));
+  store.fail_erase = 1;
+  CHECK(!credentials.erase());
+  CHECK(credentials.state() == State::READY);
+  CHECK(!credentials.record().key.empty());
+}
+
+TEST(a_record_that_cannot_be_read_can_still_be_erased_by_the_owner) {
+  // The way out of a flash that holds something unreadable: the one thing that removes it is the owner asking.
+  MemoryStore store;
+  store.blobs["cred_a"] = filled(30, 9);  // not a record
+  Credentials credentials(store);
+  CHECK(credentials.state() == State::UNREADABLE);
+  CHECK(!credentials.update(Record()));  // an error never writes over it
+  CHECK(credentials.erase());
+  CHECK(credentials.state() == State::EMPTY);
+  CHECK(store.blobs.empty());
+  Record record;
+  record.key = filled(10, 1);
+  CHECK(credentials.update(record));
+}
+
+TEST(erasing_a_display_that_has_nothing_is_fine) {
+  MemoryStore store;
+  Credentials credentials(store);
+  CHECK(credentials.erase());
+  CHECK(credentials.state() == State::EMPTY);
+}
