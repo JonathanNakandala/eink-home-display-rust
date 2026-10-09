@@ -53,6 +53,14 @@ esphome:
     - eink_pairing.h
     - eink_ports.h
     - eink_join.h
+    - eink_base64.h
+    - eink_calendar.h
+    - eink_der.h
+    - eink_http.h
+    - eink_tls.h
+    - eink_csr.h
+    - eink_verifier.h
+    - eink_est_client.h
     - eink_state.h
     - eink_telemetry.h
   on_boot:

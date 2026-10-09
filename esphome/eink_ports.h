@@ -51,7 +51,8 @@ class Identity {
   virtual Bytes csr(const std::string &name, const Bytes &binding) = 0;
 
   virtual bool has_certificate() = 0;
-  virtual Lifetime lifetime() = 0;  // of the certificate held
+  virtual Bytes held_certificate() = 0;  // the DER of the certificate held, to show on a connection
+  virtual Lifetime lifetime() = 0;       // of the certificate held
   virtual bool save_certificate(const Bytes &der, const Lifetime &lifetime) = 0;
 
   // What the server last said to this display's request, kept across sleeps.
