@@ -4,7 +4,7 @@
 //
 // This is what the wake script calls first, with the chip's clock and flash (esp/secure_chip.h) or a computer's
 // stand-ins, so that the whole of it, joining, deciding and the first request, runs against a real server on a computer
-// (host/).
+// (tests/tls/).
 #pragma once
 
 #include <string>

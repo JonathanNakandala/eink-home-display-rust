@@ -1,5 +1,5 @@
-// A flash stand-in for tests: named blobs in memory, with ways to fail, so a test can cut a write short, make a read fail,
-// or leave a blob damaged.
+// A flash stand-in for tests: named blobs in memory, with ways to fail, so a test can cut a write short, make a read
+// fail, or leave a blob damaged.
 #pragma once
 
 #include <map>
@@ -13,8 +13,8 @@ struct MemoryStore : eink_credentials::BlobStore {
   std::map<std::string, eink_credentials::Bytes> blobs;
   int writes = 0;
 
-  // The Nth write from now (1 is the next) is cut short: only the first half of the blob is kept, and the power is gone, so
-  // that write and every one after it fails until `restore_power()`.
+  // The Nth write from now (1 is the next) is cut short: only the first half of the blob is kept, and the power is
+  // gone, so that write and every one after it fails until `restore_power()`.
   int cut_write = 0;
   bool power_off = false;
   // A write that fails outright, leaving the blob as it was.

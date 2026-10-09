@@ -1,8 +1,8 @@
 // A TLS 1.3 connection to the server with mbedTLS, over BSD sockets (which lwIP has too), one HTTP request on it, and
 // the things the display takes from the connection: the RFC 9266 channel binding and what the server presented.
 //
-// Written against mbedTLS 3.6 and tested on a computer against a real server (host/), with the same source the chip is
-// built from. Nothing here throws or needs RTTI, since the chip's build has neither.
+// Written against mbedTLS 3.6 and tested on a computer against a real server (tests/tls/), with the same source the
+// chip is built from. Nothing here throws or needs RTTI, since the chip's build has neither.
 #pragma once
 
 #include <cerrno>

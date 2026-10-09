@@ -1,8 +1,8 @@
 // The display's identity as it is kept in flash: the interface core/join.h and tls/est_client.h use, over the record
 // in core/credentials.h. The key is a real mbedTLS key, loaded from the record and written to it when it is made.
 //
-// Written against mbedTLS 3.6 and tested on a computer (host/), with a stand-in for flash that can lose power in any
-// write. The chip uses it with the NVS store in esp/nvs.h.
+// Written against mbedTLS 3.6 and tested on a computer (tests/tls/), with a stand-in for flash that can lose power in
+// any write. The chip uses it with the NVS store in esp/nvs.h.
 //
 // What the server last said (waiting, turned away) is not kept here, and not in flash: it changes with every wake while
 // a display is waiting, and flash does not take that many writes. The caller gives a place to keep it that survives

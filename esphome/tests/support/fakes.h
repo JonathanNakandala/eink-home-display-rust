@@ -1,5 +1,5 @@
-// In-memory stand-ins for the interfaces in core/ports.h, so joining runs on a computer. They record what was asked of them
-// and answer as the test says.
+// In-memory stand-ins for the interfaces in core/ports.h, so joining runs on a computer. They record what was asked of
+// them and answer as the test says.
 #pragma once
 
 #include <string>

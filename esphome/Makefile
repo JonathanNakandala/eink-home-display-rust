@@ -4,9 +4,9 @@
 # instead of passing by luck. The headers that need the device (esp/telemetry.h, esp/discovery.h,
 # esp/health.h, esp/notice.h) are not built here; `esphome compile` covers them.
 CXX ?= c++
-CXXFLAGS ?= -std=c++17 -I. -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
-SOURCES := tests/main.cpp $(wildcard tests/*_test.cpp)
-HEADERS := $(wildcard eink/core/*.h) tests/fake_store.h tests/fakes.h tests/check.h
+CXXFLAGS ?= -std=c++17 -I. -Itests/support -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
+SOURCES := tests/support/main.cpp $(wildcard tests/core/*_test.cpp)
+HEADERS := $(wildcard eink/core/*.h) $(wildcard tests/support/*.h)
 
 .PHONY: test
 test: build/tests
@@ -39,7 +39,7 @@ compile: secrets.yaml
 
 # The C++ is held to .clang-format, and the helper script to ruff (configured in ../pyproject.toml), which is the style it is already written in. `lint` fails on a difference and
 # `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
-CPP := $(shell find eink -name '*.h') $(wildcard tests/*.cpp) tests/check.h $(wildcard host/*.cpp)
+CPP := $(shell find eink -name '*.h') $(wildcard tests/core/*.cpp) $(wildcard tests/tls/*.cpp) $(wildcard tests/support/*.h)
 
 .PHONY: lint
 lint:
@@ -62,18 +62,18 @@ vscode:
 
 # mbedTLS built for the computer, from the very source ESPHome builds the chip's with (the ESP-IDF in its cache, so
 # `compile` has to have run once), and the spike that runs the display's whole TLS conversation against the real server.
-# Needs cmake and cargo. See host/README.md.
+# Needs cmake and cargo. See tests/tls/README.md.
 MBEDTLS_SRC ?= $(firstword $(wildcard $(HOME)/Library/Caches/esphome/idf/frameworks/*/components/mbedtls/mbedtls $(HOME)/.cache/esphome/idf/frameworks/*/components/mbedtls/mbedtls))
 
 .PHONY: host-tls
 host-tls:
 	@test -n "$(MBEDTLS_SRC)" || { echo "mbedTLS source not found: run 'make compile' first, or set MBEDTLS_SRC" >&2; exit 1; }
-	cmake -S host -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
+	cmake -S tests/tls -B build/host -DMBEDTLS_SRC=$(MBEDTLS_SRC) -DCMAKE_BUILD_TYPE=Debug > /dev/null
 	cmake --build build/host --target spike_tls join_host_test stream_host_test begin_host_test resume_host_test
 
 .PHONY: spike
 spike: host-tls
-	host/run_spike.sh
+	tests/tls/run_spike.sh
 
 # The firmware's joining code over its own TLS and EST code, run against a real server (needs cmake and cargo).
 .PHONY: host-test
@@ -81,7 +81,7 @@ host-test: host-tls
 	@failed=0; \
 	for binary in join_host_test stream_host_test begin_host_test resume_host_test; do \
 		for test in $$(build/host/$$binary --list); do \
-			if host/with_fixture.sh build/host/$$binary $$test > build/host/$$test.log 2>&1; then \
+			if tests/tls/with_fixture.sh build/host/$$binary $$test > build/host/$$test.log 2>&1; then \
 				echo "ok   $$test"; \
 			else \
 				echo "FAIL $$test"; cat build/host/$$test.log; failed=1; \

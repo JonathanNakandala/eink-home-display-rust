@@ -1,7 +1,7 @@
 // The little of ASN.1 DER the display needs: taking a certs-only CMS message apart, and putting a PKCS #10 request
 // together. mbedTLS has no CMS, and its request writer cannot add a challenge password, so these are done here.
 //
-// The whole is also run against a real server in host/.
+// The whole is also run against a real server in tests/tls/.
 #pragma once
 
 #include <cstddef>

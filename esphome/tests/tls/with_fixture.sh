@@ -3,7 +3,7 @@
 # requires the RFC 9266 channel binding, runs the command with where things are in its environment, and stops the
 # fixture. The command's exit status is the result.
 #
-#   host/with_fixture.sh <command> [arguments]
+#   tests/tls/with_fixture.sh <command> [arguments]
 #
 # In the command's environment: FIXTURE_PORT (HTTPS), FIXTURE_ADMIN (the admin socket) and DISPLAYCTL (the program).
 #
@@ -11,7 +11,7 @@
 # where it put them and does not assume `target/` in the repository.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../.." && pwd)
+root=$(cd "$here/../../.." && pwd)
 port=${FIXTURE_PORT:-18443}
 
 # The artifacts, as JSON on standard output; the compiler's own messages, rendered for a person, still go to standard error, so a

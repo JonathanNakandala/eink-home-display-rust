@@ -1,6 +1,6 @@
 // The display's side of EST (RFC 7030 as corrected by RFC 8951) over tls/tls.h: fetch the authority, ask for a
 // certificate, renew one. It implements the `Est` interface core/join.h drives, and is run against a real server on a
-// computer (host/).
+// computer (tests/tls/).
 #pragma once
 
 #include <string>

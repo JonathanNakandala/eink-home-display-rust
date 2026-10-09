@@ -33,7 +33,7 @@ constexpr int64_t DAY = 86400;
 inline std::string environment(const char *name) {
   const char *value = std::getenv(name);
   if (value == nullptr) {
-    std::fprintf(stderr, "%s is not set: run through host/with_fixture.sh\n", name);
+    std::fprintf(stderr, "%s is not set: run through tests/tls/with_fixture.sh\n", name);
     std::exit(2);
   }
   return value;

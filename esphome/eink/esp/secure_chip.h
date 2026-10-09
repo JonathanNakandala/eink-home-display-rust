@@ -3,7 +3,7 @@
 // wake script has a few calls to make.
 //
 // Only the chip's build has this. What it calls is core/join.h, core/secure_wake.h and the TLS under them, all run
-// against a real server on a computer (host/).
+// against a real server on a computer (tests/tls/).
 #pragma once
 
 #include <ctime>
