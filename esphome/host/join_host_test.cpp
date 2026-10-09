@@ -1,4 +1,4 @@
-// The firmware's own joining code (eink_join.h) over its own TLS and EST code (eink_est_client.h and the rest), run
+// The firmware's own joining code (core/join.h) over its own TLS and EST code (tls/est_client.h and the rest), run
 // against a real server on a computer, with the same mbedTLS the chip is built with. Each test is a display that joins,
 // renews, or is turned away, as it would on the chip but for the flash, the radio and the clock being the computer's.
 //

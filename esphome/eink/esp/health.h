@@ -7,7 +7,7 @@
 #include "esp_heap_caps.h"
 #include "esphome/core/log.h"
 
-#include "eink_wake.h"
+#include "eink/core/wake.h"
 
 namespace eink_health {
 

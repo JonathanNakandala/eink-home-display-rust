@@ -8,9 +8,9 @@
 #include <string>
 #include <vector>
 
-#include "eink_report.h"
-#include "eink_sha256.h"
-#include "eink_trust.h"
+#include "eink/core/report.h"
+#include "eink/core/sha256.h"
+#include "eink/core/trust.h"
 
 namespace eink_pairing {
 

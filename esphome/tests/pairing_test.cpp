@@ -2,7 +2,7 @@
 #include <vector>
 
 #include "check.h"
-#include "../eink_pairing.h"
+#include "eink/core/pairing.h"
 
 using namespace eink_pairing;
 using eink_report::Failure;

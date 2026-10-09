@@ -2,7 +2,7 @@
 // that survives sleep, the system clock, ESPHome's watchdog), put together with the parts tested on a computer, so the
 // wake script has a few calls to make.
 //
-// Only the chip's build has this. What it calls is eink_join.h, eink_secure_wake.h and the TLS under them, all run
+// Only the chip's build has this. What it calls is core/join.h, core/secure_wake.h and the TLS under them, all run
 // against a real server on a computer (host/).
 #pragma once
 
@@ -13,24 +13,24 @@
 #include "esphome/components/watchdog/watchdog.h"
 #include "esphome/core/application.h"
 
-#include "eink_base64.h"
-#include "eink_clock.h"
-#include "eink_est_client.h"
-#include "eink_flash_identity.h"
-#include "eink_join.h"
-#include "eink_nvs.h"
-#include "eink_pairing.h"
-#include "eink_secure.h"
-#include "eink_secure_begin.h"
-#include "eink_session_cache.h"
-#include "eink_secure_wake.h"
-#include "eink_verifier.h"
+#include "eink/core/base64.h"
+#include "eink/core/clock.h"
+#include "eink/tls/est_client.h"
+#include "eink/tls/flash_identity.h"
+#include "eink/core/join.h"
+#include "eink/esp/nvs.h"
+#include "eink/core/pairing.h"
+#include "eink/tls/secure.h"
+#include "eink/tls/secure_begin.h"
+#include "eink/core/session_cache.h"
+#include "eink/core/secure_wake.h"
+#include "eink/tls/verifier.h"
 
 namespace eink_secure_chip {
 
 using Bytes = eink_ports::Bytes;
 
-// The system clock as set by SNTP, believed only if eink_clock.h says it can be.
+// The system clock as set by SNTP, believed only if core/clock.h says it can be.
 class SntpClock : public eink_ports::Clock {
  public:
   explicit SntpClock(uint32_t newest_render) : newest_render_(newest_render) {}
@@ -57,7 +57,7 @@ inline eink_pairing::Answer &last_answer() {
   return rtc_answer;
 }
 
-// The TLS session kept between connections and wakes (eink_session_cache.h), in RTC memory: it survives deep sleep and
+// The TLS session kept between connections and wakes (core/session_cache.h), in RTC memory: it survives deep sleep and
 // is lost with the power, which is right for something that only saves a handshake. What is in it is checked before it
 // is believed, since an update over the air leaves whatever the last firmware put there.
 static RTC_DATA_ATTR eink_session_cache::Slot rtc_session;
@@ -94,7 +94,7 @@ inline eink_flash::FlashIdentity &identity(const char *server_root) {
   return instance;
 }
 
-// Joins if it is to, and decides how this wake reaches the server (eink_secure_begin.h), on the chip's clock and flash.
+// Joins if it is to, and decides how this wake reaches the server (tls/secure_begin.h), on the chip's clock and flash.
 // `ip` and `tls_port` are what discovery found (0 for neither).
 inline eink_secure_begin::Begin begin(eink_service::Transport transport, uint32_t ip, uint16_t tls_port,
                                       const std::string &name, uint32_t newest_render, const char *server_root) {

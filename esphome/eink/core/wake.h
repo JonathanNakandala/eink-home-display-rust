@@ -1,7 +1,7 @@
 // The arithmetic of a wake: how long to sleep, how the backoff grows, how much memory the image needs.
 //
 // The YAML only reads and writes its globals and calls these.
-// What is device-specific (the heap, the clock, deep sleep itself) stays in the YAML and in eink_health.h.
+// What is device-specific (the heap, the clock, deep sleep itself) stays in the YAML and in esp/health.h.
 #pragma once
 
 #include <cstddef>

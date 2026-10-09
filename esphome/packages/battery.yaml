@@ -86,7 +86,7 @@ globals:
     restore_value: no
     initial_value: '0'
 
-  # Its state and what to do about it are `eink_state::battery_state` and `battery_action` (eink_state.h): typed,
+  # Its state and what to do about it are `eink_state::battery_state` and `battery_action` (esp/state.h): typed,
   # which a global can't be.
 
 script:
@@ -97,7 +97,7 @@ script:
       - lambda: |-
           // sample() is the voltage at the pin, before the sensor's filters, so undo the divider here.
           float v = id(battery_voltage).sample() * ${battery_divider}f;
-          // What the reading means, and the latches and what to do about them, are worked out in eink_battery.h.
+          // What the reading means, and the latches and what to do about them, are worked out in core/battery.h.
           auto battery = eink_battery::assess(v, id(battery_halted), id(battery_low), ${battery_low_v},
                                               ${battery_empty_v}, ${battery_resume_v});
           id(battery_known) = battery.known;

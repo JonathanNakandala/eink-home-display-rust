@@ -1,24 +1,24 @@
 // How a wake begins its dealings with the server when it may speak TLS: join if need be, decide the route
-// (eink_secure_wake.h), and when the display has joined, record the server for the requests that follow
-// (eink_secure.h).
+// (core/secure_wake.h), and when the display has joined, record the server for the requests that follow
+// (tls/secure.h).
 //
-// This is what the wake script calls first, with the chip's clock and flash (eink_secure_chip.h) or a computer's
+// This is what the wake script calls first, with the chip's clock and flash (esp/secure_chip.h) or a computer's
 // stand-ins, so that the whole of it, joining, deciding and the first request, runs against a real server on a computer
 // (host/).
 #pragma once
 
 #include <string>
 
-#include "eink_est_client.h"
-#include "eink_join.h"
-#include "eink_pairing.h"
-#include "eink_ports.h"
-#include "eink_secure.h"
-#include "eink_session_cache.h"
-#include "eink_secure_wake.h"
-#include "eink_service.h"
-#include "eink_tls.h"
-#include "eink_verifier.h"
+#include "eink/tls/est_client.h"
+#include "eink/core/join.h"
+#include "eink/core/pairing.h"
+#include "eink/core/ports.h"
+#include "eink/tls/secure.h"
+#include "eink/core/session_cache.h"
+#include "eink/core/secure_wake.h"
+#include "eink/core/service.h"
+#include "eink/tls/tls.h"
+#include "eink/tls/verifier.h"
 
 namespace eink_secure_begin {
 
@@ -30,10 +30,10 @@ struct Begin {
 };
 
 // `ip` and `tls_port` are what discovery found (0 for neither). If the display has joined the server is recorded in
-// eink_secure.h, and the display's root, certificate and key (kept in `identity`) are what it will show.
+// tls/secure.h, and the display's root, certificate and key (kept in `identity`) are what it will show.
 //
 // `sessions`, if given, is where the TLS session of this server and this display is kept, so that the plan and the
-// picture of the wake, and the wakes after, resume it (eink_session_cache.h). It is asked for the store of this server
+// picture of the wake, and the wakes after, resume it (core/session_cache.h). It is asked for the store of this server
 // and this display once the display has joined.
 inline Begin begin(eink_service::Transport transport, uint32_t ip, uint16_t tls_port, const std::string &name,
                    eink_ports::Clock &clock, eink_tls::TlsIdentity &identity,

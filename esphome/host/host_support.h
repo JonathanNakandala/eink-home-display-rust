@@ -13,11 +13,11 @@
 #include "check.h"
 #include "fake_store.h"
 #include "memory_identity.h"
-#include "eink_flash_identity.h"
-#include "eink_est_client.h"
-#include "eink_join.h"
-#include "eink_stream.h"
-#include "eink_verifier.h"
+#include "eink/tls/flash_identity.h"
+#include "eink/tls/est_client.h"
+#include "eink/core/join.h"
+#include "eink/tls/stream.h"
+#include "eink/tls/verifier.h"
 
 namespace support {
 

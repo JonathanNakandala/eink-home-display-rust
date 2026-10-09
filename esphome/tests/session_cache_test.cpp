@@ -1,7 +1,7 @@
 #include <string>
 
 #include "check.h"
-#include "../eink_session_cache.h"
+#include "eink/core/session_cache.h"
 
 using namespace eink_session_cache;
 

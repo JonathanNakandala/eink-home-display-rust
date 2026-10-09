@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "eink_pairing.h"
+#include "eink/core/pairing.h"
 
 namespace eink_ports {
 
@@ -26,11 +26,11 @@ class Clock {
  public:
   virtual ~Clock() = default;
   virtual int64_t now() = 0;
-  // Whether it can be believed enough to check a certificate against (eink_clock.h).
+  // Whether it can be believed enough to check a certificate against (core/clock.h).
   virtual bool usable() = 0;
 };
 
-// The display's own key and what it holds of the authority, in flash (eink_credentials.h). Nothing here is removed by
+// The display's own key and what it holds of the authority, in flash (core/credentials.h). Nothing here is removed by
 // an error, and a write is all or nothing, so a power cut leaves the old value.
 class Identity {
  public:

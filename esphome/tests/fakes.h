@@ -1,11 +1,11 @@
-// In-memory stand-ins for the interfaces in eink_ports.h, so joining runs on a computer. They record what was asked of them
+// In-memory stand-ins for the interfaces in core/ports.h, so joining runs on a computer. They record what was asked of them
 // and answer as the test says.
 #pragma once
 
 #include <string>
 #include <vector>
 
-#include "../eink_ports.h"
+#include "eink/core/ports.h"
 
 namespace fakes {
 

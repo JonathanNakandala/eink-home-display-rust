@@ -2,7 +2,7 @@
 
 #include "check.h"
 #include "fakes.h"
-#include "../eink_join.h"
+#include "eink/core/join.h"
 
 using namespace fakes;
 using eink_join::Joiner;

@@ -15,7 +15,7 @@ itself in ESPHome's cache, so the firmware has to have been compiled once.
 
 `spike_tls.cpp` is the client. `run_spike.sh` starts `examples/est_fixture.rs` (the program's own server code: the
 authority, EST, the admin socket, with stand-in display routes) in a fresh directory, runs the client against it, and
-stops it. The client approves its own pairing with the real `displayctl`, with the code the firmware's `eink_pairing.h`
+stops it. The client approves its own pairing with the real `displayctl`, with the code the firmware's `core/pairing.h`
 works out, so a code that differs from the server's fails the spike.
 
 ## What it shows works
@@ -62,8 +62,8 @@ works out, so a code that differs from the server's fails the spike.
 
 ## The firmware's own code, against the real server
 
-`make -C esphome host-test` runs `join_host_test.cpp`: **the firmware's joining logic (`eink_join.h`) driving the
-firmware's own TLS and EST code (`eink_est_client.h`, `eink_tls.h`, `eink_csr.h`, `eink_verifier.h`) against the real
+`make -C esphome host-test` runs `join_host_test.cpp`: **the firmware's joining logic (`core/join.h`) driving the
+firmware's own TLS and EST code (`tls/est_client.h`, `tls/tls.h`, `tls/csr.h`, `tls/verifier.h`) against the real
 server**, with a display's identity held in memory (`memory_identity.h`) and a clock a test can move. Only the flash
 and the radio differ from the chip. Each test starts its own server, since the server limits how many different names
 one address may ask to join with in a day.
@@ -80,7 +80,7 @@ one address may ask to join with in a day.
 | a display the owner has revoked is not kept but loses nothing | the renewal is refused, it asks as a new display and is refused that too: not recognised, with the code to give the owner; key, certificate and root all still held |
 | once the owner approves it again a revoked display is back | revoke, forget, ask, approve the new code, paired |
 
-Four more use `eink_flash_identity.h` over a flash stand-in, with a display that starts afresh at every wake (as after
+Four more use `tls/flash_identity.h` over a flash stand-in, with a display that starts afresh at every wake (as after
 deep sleep) and keeps nothing between wakes but its flash and the one value RTC memory holds:
 
 | Test | Shows |

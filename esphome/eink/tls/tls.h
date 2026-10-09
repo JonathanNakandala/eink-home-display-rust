@@ -25,9 +25,9 @@
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 
-#include "eink_http.h"
-#include "eink_ports.h"
-#include "eink_session_cache.h"
+#include "eink/core/http.h"
+#include "eink/core/ports.h"
+#include "eink/core/session_cache.h"
 
 namespace eink_tls {
 

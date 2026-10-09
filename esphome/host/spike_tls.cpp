@@ -22,7 +22,7 @@
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 
-#include "eink_pairing.h"
+#include "eink/core/pairing.h"
 
 using Bytes = std::vector<uint8_t>;
 

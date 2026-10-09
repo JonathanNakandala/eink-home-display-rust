@@ -2,7 +2,7 @@
 #include <vector>
 
 #include "check.h"
-#include "../eink_sha256.h"
+#include "eink/core/sha256.h"
 
 using namespace eink_sha256;
 

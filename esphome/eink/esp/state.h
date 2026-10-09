@@ -6,14 +6,14 @@
 // starts afresh at boot. The types, and what is done with them, are tested on a computer in the headers they come from.
 #pragma once
 
-#include "eink_battery.h"
-#include "eink_report.h"
-#include "eink_secure_wake.h"
+#include "eink/core/battery.h"
+#include "eink/core/report.h"
+#include "eink/core/secure_wake.h"
 #include <string>
 
 namespace eink_state {
 
-// Why this wake failed, once it has (the reasons are in eink_report.h). NONE if it didn't.
+// Why this wake failed, once it has (the reasons are in core/report.h). NONE if it didn't.
 inline eink_report::Failure fail_reason = eink_report::Failure::NONE;
 
 // How charged the battery is, for the server and the log.
@@ -22,7 +22,7 @@ inline eink_battery::State battery_state = eink_battery::State::OK;
 // What this wake does about the battery: carry on, sleep (still halted), or halt now and say so first.
 inline eink_battery::Action battery_action = eink_battery::Action::CARRY_ON;
 
-// ---- the secure transport (eink_secure_wake.h) ----------------------------------------------------------------------
+// ---- the secure transport (core/secure_wake.h) ----------------------------------------------------------------------
 
 // Whether this wake speaks TLS to the server: the display has joined and the transport is set to use it.
 inline bool secure_active = false;

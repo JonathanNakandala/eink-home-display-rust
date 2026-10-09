@@ -1,5 +1,5 @@
 #include "check.h"
-#include "../eink_trust.h"
+#include "eink/core/trust.h"
 
 using namespace eink_trust;
 

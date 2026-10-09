@@ -1,7 +1,7 @@
 #include <cstdint>
 
 #include "check.h"
-#include "../eink_clock.h"
+#include "eink/core/clock.h"
 
 using namespace eink_clock;
 

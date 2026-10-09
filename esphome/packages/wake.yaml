@@ -38,7 +38,7 @@ deep_sleep:
     mode: ANY_LOW
 
 globals:
-  # Why this wake failed is `eink_state::fail_reason` (eink_state.h): typed, which a global can't be.
+  # Why this wake failed is `eink_state::fail_reason` (esp/state.h): typed, which a global can't be.
 
   # Wakes in a row that failed. Drives the backoff; 0 after a wake that finished with the image current.
   - id: failed_wakes

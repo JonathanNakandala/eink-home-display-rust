@@ -2,7 +2,7 @@
 
 #include "check.h"
 #include "fake_store.h"
-#include "../eink_credentials.h"
+#include "eink/core/credentials.h"
 
 using namespace eink_credentials;
 using fakes::MemoryStore;

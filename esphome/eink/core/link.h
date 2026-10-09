@@ -1,5 +1,5 @@
 // How an attempt to reach the server over TLS came out, without any of what it took: a name for the result that the
-// decisions (eink_secure_wake.h) can use and be tested with on a computer, where mbedTLS is not part of that test.
+// decisions (core/secure_wake.h) can use and be tested with on a computer, where mbedTLS is not part of that test.
 #pragma once
 
 #include <cstdint>

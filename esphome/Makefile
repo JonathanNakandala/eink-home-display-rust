@@ -1,12 +1,12 @@
-# Tests for the calculations in the headers that don't touch hardware (eink_wake.h, eink_battery.h,
-# eink_format.h, eink_report.h, eink_clock.h). They need only a C++17 compiler: `make -C esphome test`.
+# Tests for the calculations in the headers that don't touch hardware (core/wake.h, core/battery.h,
+# core/format.h, core/report.h, core/clock.h). They need only a C++17 compiler: `make -C esphome test`.
 # Undefined-behaviour and address sanitizers are on, so a signed overflow or a bad index fails the run
-# instead of passing by luck. The headers that need the device (eink_telemetry.h, eink_discovery.h,
-# eink_health.h, eink_notice.h) are not built here; `esphome compile` covers them.
+# instead of passing by luck. The headers that need the device (esp/telemetry.h, esp/discovery.h,
+# esp/health.h, esp/notice.h) are not built here; `esphome compile` covers them.
 CXX ?= c++
-CXXFLAGS ?= -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
+CXXFLAGS ?= -std=c++17 -I. -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/main.cpp $(wildcard tests/*_test.cpp)
-HEADERS := eink_session_cache.h eink_link.h eink_secure_wake.h eink_body.h eink_credentials.h tests/fake_store.h eink_base64.h eink_calendar.h eink_der.h eink_http.h eink_ports.h eink_join.h tests/fakes.h eink_sha256.h eink_trust.h eink_pairing.h eink_service.h eink_plan.h eink_clock.h eink_wake.h eink_battery.h eink_format.h eink_report.h tests/check.h
+HEADERS := $(wildcard eink/core/*.h) tests/fake_store.h tests/fakes.h tests/check.h
 
 .PHONY: test
 test: build/tests
@@ -39,13 +39,14 @@ compile: secrets.yaml
 
 # The C++ is held to .clang-format, and the helper script to ruff (configured in ../pyproject.toml), which is the style it is already written in. `lint` fails on a difference and
 # `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
-CPP := $(wildcard eink_*.h) $(wildcard tests/*.cpp) tests/check.h $(wildcard host/*.cpp)
+CPP := $(shell find eink -name '*.h') $(wildcard tests/*.cpp) tests/check.h $(wildcard host/*.cpp)
 
 .PHONY: lint
 lint:
 	$(POETRY) run clang-format --dry-run -Werror $(CPP)
 	$(POETRY) run ruff check scripts
 	$(POETRY) run ruff format --check scripts
+	python3 scripts/check_layers.py
 
 .PHONY: format
 format:

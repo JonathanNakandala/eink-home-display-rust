@@ -1,4 +1,4 @@
-// The firmware's streaming client (eink_stream.h) against the real server on a computer: a body of megabytes read in
+// The firmware's streaming client (tls/stream.h) against the real server on a computer: a body of megabytes read in
 // pieces of whatever size, in chunks or with a length, a connection that goes quiet, and a display the server turns
 // away.
 //
@@ -6,7 +6,7 @@
 #include <string>
 
 #include "host_support.h"
-#include "eink_secure.h"
+#include "eink/tls/secure.h"
 
 using namespace support;
 using eink_stream::Stream;

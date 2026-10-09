@@ -6,7 +6,7 @@
 
 #include "mbedtls/x509_crt.h"
 
-#include "eink_ports.h"
+#include "eink/core/ports.h"
 
 namespace eink_verifier {
 

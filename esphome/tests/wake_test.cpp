@@ -1,7 +1,7 @@
 #include <cstdint>
 
 #include "check.h"
-#include "../eink_wake.h"
+#include "eink/core/wake.h"
 
 using namespace eink_wake;
 

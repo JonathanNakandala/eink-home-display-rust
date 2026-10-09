@@ -1,7 +1,7 @@
 #include <string>
 
 #include "check.h"
-#include "../eink_body.h"
+#include "eink/core/body.h"
 
 using namespace eink_body;
 

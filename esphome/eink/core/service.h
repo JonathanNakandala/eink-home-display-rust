@@ -1,6 +1,6 @@
 // Which of the servers a scan found is the one to use, and where it is, from what it announced.
 //
-// The scan itself (mDNS) is eink_discovery.h, which fills an `Announcement` from each answer and asks here.
+// The scan itself (mDNS) is esp/discovery.h, which fills an `Announcement` from each answer and asks here.
 //
 // What the server announces is in src/adapters/image_server/advertise.rs: the TXT keys txtvers, path, format and
 // formats; and, when it offers HTTPS, tlsport (where) and secure (`optional` if plain HTTP is served too, `required`

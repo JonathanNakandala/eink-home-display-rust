@@ -3,9 +3,9 @@
 // `online_image` is `Parented` to an `HttpRequestComponent` and asks it for a `HttpContainer` that it reads the body
 // from. The stock component cannot do what the display needs (it checks a certificate against the address, takes a CA
 // at build time, and has no client certificate), so this one is pointed at instead:
-// `dashboard->set_parent(&eink_secure::http())`. It reads where the server is, and what to show it, from eink_secure.h.
+// `dashboard->set_parent(&eink_secure::http())`. It reads where the server is, and what to show it, from tls/secure.h.
 //
-// Only the chip's build has this (it needs ESPHome's headers); the TLS and the streaming under it are eink_stream.h,
+// Only the chip's build has this (it needs ESPHome's headers); the TLS and the streaming under it are tls/stream.h,
 // which is tested on a computer.
 #pragma once
 
@@ -17,8 +17,8 @@
 #include "esphome/components/watchdog/watchdog.h"
 #include "esphome/core/application.h"
 
-#include "eink_http.h"
-#include "eink_secure.h"
+#include "eink/core/http.h"
+#include "eink/tls/secure.h"
 
 namespace eink_secure {
 

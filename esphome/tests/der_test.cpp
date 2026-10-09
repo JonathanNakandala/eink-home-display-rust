@@ -1,7 +1,7 @@
 #include <string>
 
 #include "check.h"
-#include "../eink_der.h"
+#include "eink/core/der.h"
 
 using namespace eink_der;
 

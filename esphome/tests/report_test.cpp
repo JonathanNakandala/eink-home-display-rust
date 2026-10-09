@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "check.h"
-#include "../eink_report.h"
+#include "eink/core/report.h"
 
 using namespace eink_report;
 

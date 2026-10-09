@@ -1,5 +1,5 @@
 // The device side of the check-in report: where the values come from. The arithmetic and the wording are in
-// eink_report.h, which is tested on a computer; this is only the radio and RTC memory, so it can't be.
+// core/report.h, which is tested on a computer; this is only the radio and RTC memory, so it can't be.
 //
 // A wake asks /plan before it knows how it will go, so a failure can only be reported by the *next* wake that
 // gets through, and the wake time is that of the one before. Those two are kept in RTC memory, which stays
@@ -14,7 +14,7 @@
 #include "esp_attr.h"
 #include "esphome/components/wifi/wifi_component.h"
 
-#include "eink_report.h"
+#include "eink/core/report.h"
 
 namespace eink_telemetry {
 
