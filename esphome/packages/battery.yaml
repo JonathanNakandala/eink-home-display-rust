@@ -122,6 +122,7 @@ script:
                 id(notice_text) = "Battery empty - charge to resume";
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
+                id(prompt_on_panel) = false;
             - component.update: epaper_display
             - delay: ${refresh_settle}
             - script.execute: battery_sleep

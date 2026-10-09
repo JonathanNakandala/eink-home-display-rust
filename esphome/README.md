@@ -161,10 +161,12 @@ finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 
 ### Secure transport (what the firmware has to do)
 
-*Status: this is the contract the firmware is to be written to. The decisions are built and tested on a computer: the
-pairing code and what to do next ([eink_pairing.h](eink_pairing.h)), which root to trust and where a certificate is in its
-life ([eink_trust.h](eink_trust.h)), finding the server ([eink_service.h](eink_service.h)) and the failure reasons. The
-parts that touch the chip are not: the key and certificate store, the TLS client, the request and the screens.*
+*Status: built, and in the wake script (`server_transport`, [packages/secure.yaml](packages/secure.yaml)), but **not yet run on a
+device**. Everything that can be run on a computer has been, against the real server and the same mbedTLS the chip uses
+([host/](host/README.md)): the pairing code, joining, renewal, the flash record and a power cut in the middle of writing it, the
+TLS and EST client, the image streaming in megabytes, and the choice of route in each of the three transports. What has not been
+tried is the chip itself: heap during a handshake, time and battery per wake, NVS, RTC memory through deep sleep, and the panel.
+Treat `https` as untested hardware until it has been, and keep `http` (the default) until then.*
 
 The server can offer HTTPS (see `[server] transport` in [deploy/README.md](../deploy/README.md)). The display
 has the same three choices, as a substitution, and its choice matters as much as the server's: the server can
@@ -298,13 +300,42 @@ thin and does as little deciding as it can.
 | Interfaces | [eink_ports.h](eink_ports.h) (**built**) | what joining needs from outside: `Clock`, `Identity` (key, certificate, root, the last answer), `Est` (the network) and `Verifier` (a certificate chains to a root). The chip implements them; the tests use [fakes](tests/fakes.h) | n/a |
 | Storage | [eink_credentials.h](eink_credentials.h), [eink_flash_identity.h](eink_flash_identity.h), [eink_nvs.h](eink_nvs.h) (**built**) | the key, the root, the certificate and its dates as one record with a version, a sequence number and a CRC-32, written whole to one of two slots in turn, so a write cut short leaves the record before it. `FlashIdentity` is the interface the joining logic uses over it; `NvsStore` is ESP-IDF's NVS under it (namespace `eink`, never erased from here). A record that cannot be read is left alone and nothing is written over it | the record, the slots and every way a write can be cut short, and `FlashIdentity` against the real server, with a flash that loses power: on the host. NVS itself: on the device |
 | Transport | [eink_tls.h](eink_tls.h), [eink_est_client.h](eink_est_client.h), [eink_csr.h](eink_csr.h), [eink_verifier.h](eink_verifier.h) (**built**, with [eink_der.h](eink_der.h), [eink_base64.h](eink_base64.h), [eink_http.h](eink_http.h) and [eink_calendar.h](eink_calendar.h) under them) | a TLS 1.3 connection, EST over it (fetch the authority, ask, renew), the request, the check that a certificate chains to the root. They implement the interfaces above with mbedTLS and BSD sockets (which lwIP has too) | the pure parts on the host; all of it against a real server with the same mbedTLS (`make -C esphome host-test`) |
-| Transport | `eink_secure_http` (a `http_request` subclass) | TLS 1.3 with the fixed name, the pinned root and the client certificate; classifies a failure (clock, certificate, refused, unreachable) | on the device |
+| Transport | [eink_stream.h](eink_stream.h), [eink_body.h](eink_body.h), [eink_secure.h](eink_secure.h) (**built**) | a request whose answer is read as it comes, so the image (megabytes) is never held: the head, then the body by length or in chunks, in whatever pieces the network gives it; `eink_secure.h` is where the wake script says once where the server is and what to show it | the framing on the host; all of it against a real server, with a 2.6 MB body read in pieces of 1.4, 4 and 16 KB |
+| Transport | [eink_secure_http.h](eink_secure_http.h) (**built**) | a `HttpRequestComponent` and `HttpContainer` over that stream, so `online_image` downloads the picture through it unchanged: the script points it at the new component with `set_parent` and back at the stock one if it falls back | on the device (needs ESPHome's headers); `esphome compile` |
 | Discovery | `eink_discovery.h` (extended) | `_https._tcp` or `_http._tcp`, `tlsport`, `secure` | on the device |
-| Orchestration | the YAML wake script | calls the above in order; draws the panel for each state | on the device |
+| Orchestration | [eink_secure_wake.h](eink_secure_wake.h), [eink_secure_begin.h](eink_secure_begin.h), [eink_secure_chip.h](eink_secure_chip.h), [packages/secure.yaml](packages/secure.yaml) (**built**) | the choice of route from the transport and how the join went; a wake's beginning (join, decide, record the server); the chip's clock, flash and watchdog under it; and the scripts that call them | the choices and the beginning on the host (the beginning against the real server, in every transport); the scripts and the chip's part: `esphome compile` only |
 
 The stock `http_request` component cannot be used for the secure path: it takes its CA certificate at compile time,
-sets no name to check, and has no client certificate. Subclassing `HttpRequestComponent` and overriding `perform`
-lets `online_image` and the `http_request` actions keep working unchanged.
+sets no name to check, and has no client certificate. So `eink_secure_http.h` subclasses `HttpRequestComponent` and
+overrides `perform`, and the script points `online_image` at it with `set_parent` (no external component or Python needed).
+The `http_request` actions for the plan stay on the stock component and are used for plain HTTP only; over TLS the plan goes
+through `eink_secure_chip::fetch`, which is a small request read whole.
+
+### What a wake does with it (`server_transport`)
+
+[packages/secure.yaml](packages/secure.yaml), after Wi-Fi: `begin_server` runs the plain `check_plan` for `http`, and
+`secure_session` for the other two. That waits for the clock (`ensure_clock`), looks for the server if it does not know its HTTPS
+port, joins ([eink_join.h](eink_join.h)) and takes the route [eink_secure_wake.h](eink_secure_wake.h) gives:
+
+| After the join | `prefer-https` | `https` |
+|---|---|---|
+| paired | TLS | TLS |
+| waiting for the owner, or not recognised | **plain HTTP**, and the pairing code is drawn in the corner once, until the display is paired | **no request**: the code is drawn once, and it sleeps for the server's `Retry-After` (five minutes if it said none) without counting a failed wake, so the owner is not left waiting on a backoff |
+| clock not set, server not found or no HTTPS port, certificate refused, flash unreadable | **plain HTTP**; the reason is told to the server at the next wake that gets through | the wake fails like any other (backoff, notice with the reason) |
+| a TLS request fails after joining | retried over plain HTTP, the stock component put back for the picture | the wake fails with `certificate` (a certificate refused) or `server` |
+| the picture's download fails | tried once more over plain HTTP | the wake fails with `certificate` or `download` |
+
+`https` never ends up on plain HTTP; a test pins that for every outcome. The pairing code is a notice in the corner like the
+others, kept across sleeps so it is drawn once and not every wake (`prompt_on_panel`), and cleared when the picture or any other
+notice is drawn over it.
+
+Limits worth knowing:
+
+- A display set to `prefer-https` against a server that does not serve HTTPS looks for it on every wake (about 2.5 s of radio),
+  since it never learns an HTTPS port. Set it to `http` for such a server.
+- The flash grows by about 26 KB over what the TLS options cost, whatever `server_transport` is, as the code is part of the
+  wake script even when it is not used.
+- `server_root` (the owner's root in the firmware, in `secrets.yaml`) is read as the base64 of the DER, one line.
 
 The states, so each has one meaning on the panel and in `last_failure`: *no root yet* (fetching it), *asking*
 (has a key and a root, no certificate), *waiting for approval* (shows the code), *paired*, *renewing*, *expired*
