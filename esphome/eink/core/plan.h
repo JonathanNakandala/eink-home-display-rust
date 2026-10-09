@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "eink/core/format.h"
 
@@ -34,6 +35,13 @@ inline bool needs_draw(bool changed, bool stale, const Screen &screen) {
 // one stays.
 inline bool keeps_offset(bool was_a_number, int64_t utc_offset_s) {
   return was_a_number && eink_format::valid_utc_offset(utc_offset_s);
+}
+
+// What to ask the server for its plan (or, from the button, a render): the path, then the version on the panel, then
+// the display's report (core/report.h, which carries its own leading "&"). Every way of asking sends this, so what the
+// server is told does not depend on the route.
+inline std::string target(const std::string &path, uint32_t have, const std::string &report) {
+  return path + "?have=" + std::to_string(have) + report;
 }
 
 }  // namespace eink_plan

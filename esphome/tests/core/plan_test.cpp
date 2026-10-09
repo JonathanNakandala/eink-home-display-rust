@@ -52,3 +52,9 @@ TEST(a_changed_image_is_drawn_whatever_the_prompt) { CHECK(needs_draw(true, fals
 TEST(the_battery_label_still_wins_over_a_prompt) {
   CHECK(needs_draw(false, false, Screen{true, false, true, true}));  // low, label not drawn yet
 }
+
+TEST(the_plan_is_asked_for_with_the_version_on_the_panel_and_the_report) {
+  CHECK_EQ(target("/plan", 1791463200, "&device=a&failed_wakes=0"), "/plan?have=1791463200&device=a&failed_wakes=0");
+}
+
+TEST(a_display_that_shows_nothing_yet_asks_with_have_zero) { CHECK_EQ(target("/refresh", 0, ""), "/refresh?have=0"); }

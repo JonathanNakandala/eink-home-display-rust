@@ -99,21 +99,23 @@ script:
   # After a button wake it asks for a render first (POST /refresh), which answers the same way.
   - id: check_plan
     then:
+      # What is asked is the same whichever way it is sent: made once, here.
+      - lambda: |-
+          eink_state::plan_target = eink_plan::target(
+              id(force_refresh) ? "${refresh_path}" : "${plan_path}", id(shown_version),
+              eink_telemetry::query(App.get_name().str(), id(failed_wakes),
+                                    {id(battery_known), id(battery_mv), id(battery_pct),
+                                     eink_battery::state_name(eink_state::battery_state)}));
       - if:
           condition:
             lambda: 'return eink_state::secure_active;'
           then:
-            # Over TLS: the same request, made by esp/secure_chip.h, and answered to handle_plan the same way. No answer is a
-            # status of 0, which handle_plan takes for a plan that did not come.
+            # Over TLS: made by esp/secure_chip.h, and answered to handle_plan the same way. No answer is a status of 0,
+            # which handle_plan takes for a plan that did not come.
             - lambda: |-
                 eink_secure::aim(id(server_ip), id(server_tls_port));  // the server may have been looked for again
-                const bool refresh = id(force_refresh);
-                const std::string path = std::string(refresh ? "${refresh_path}" : "${plan_path}") + "?have=" +
-                                         std::to_string(id(shown_version)) +
-                                         eink_telemetry::query(App.get_name().str(), id(failed_wakes),
-                                                               {id(battery_known), id(battery_mv), id(battery_pct),
-                                                                eink_battery::state_name(eink_state::battery_state)});
-                const eink_secure::Fetched answer = eink_secure_chip::fetch(refresh ? "POST" : "GET", path);
+                const eink_secure::Fetched answer =
+                    eink_secure_chip::fetch(id(force_refresh) ? "POST" : "GET", eink_state::plan_target);
                 id(handle_plan)->execute(answer.ok() ? answer.status : 0, answer.body);
           else:
             - if:
@@ -121,12 +123,7 @@ script:
                   lambda: 'return id(force_refresh);'
                 then:
                   - http_request.post:
-                      url: !lambda |-
-                        std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
-                        return base + "${refresh_path}?have=" + std::to_string(id(shown_version)) +
-                               eink_telemetry::query(App.get_name().str(), id(failed_wakes),
-                                                     {id(battery_known), id(battery_mv), id(battery_pct),
-                                                      eink_battery::state_name(eink_state::battery_state)});
+                      url: !lambda 'return eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + eink_state::plan_target;'
                       capture_response: true
                       max_response_buffer_size: 1024
                       on_response:
@@ -136,12 +133,7 @@ script:
                             body: !lambda 'return body;'
                 else:
                   - http_request.get:
-                      url: !lambda |-
-                        std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
-                        return base + "${plan_path}?have=" + std::to_string(id(shown_version)) +
-                               eink_telemetry::query(App.get_name().str(), id(failed_wakes),
-                                                     {id(battery_known), id(battery_mv), id(battery_pct),
-                                                      eink_battery::state_name(eink_state::battery_state)});
+                      url: !lambda 'return eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + eink_state::plan_target;'
                       capture_response: true
                       max_response_buffer_size: 1024
                       on_response:

@@ -22,6 +22,10 @@ inline eink_battery::State battery_state = eink_battery::State::OK;
 // What this wake does about the battery: carry on, sleep (still halted), or halt now and say so first.
 inline eink_battery::Action battery_action = eink_battery::Action::CARRY_ON;
 
+// What this wake asks the server for its plan (core/plan.h `target`): the path and query, made once by `check_plan` and
+// used by whichever route sends it.
+inline std::string plan_target;
+
 // ---- the secure transport (core/secure_wake.h) ----------------------------------------------------------------------
 
 // Whether this wake speaks TLS to the server: the display has joined and the transport is set to use it.
