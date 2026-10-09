@@ -9,7 +9,7 @@ server against a **real** server, so the questions that would otherwise wait for
 make -C esphome spike      # needs cmake and cargo
 ```
 
-The same from VS Code: the CMake panel uses `host/CMakePresets.json`, so it needs no kit. Choose the `host` preset, then
+The same from VS Code: the CMake panel uses `tests/tls/CMakePresets.json`, so it needs no kit. Choose the `host` preset, then
 configure, build, and run the `host-tests` entry in the test panel (it runs `make host-test`). The mbedTLS source is found by
 itself in ESPHome's cache, so the firmware has to have been compiled once.
 
@@ -38,7 +38,7 @@ works out, so a code that differs from the server's fails the spike.
 1. **The chip's build had TLS 1.3 off.** `CONFIG_MBEDTLS_SSL_PROTO_TLS1_3` is not set by default, and it depends on
    `CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE`, which ESPHome turns off to save RAM. The exporter is behind
    `CONFIG_MBEDTLS_SSL_KEYING_MATERIAL_EXPORT`, also off. All three are now set in
-   [packages/board.yaml](../packages/board.yaml). The static cost, from `esphome compile`: **+40 KB of flash**
+   [packages/board.yaml](../../packages/board.yaml). The static cost, from `esphome compile`: **+40 KB of flash**
    (984,779 to 1,025,151 bytes, 53.7% to 55.9%) and **+0.7 KB of RAM**. Heap during a handshake is not measured by this.
 2. **A TLS 1.3 client must ask to be told about tickets.** With `mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets`,
    `mbedtls_ssl_read` returns `MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET`, and the session has to be taken then
@@ -116,7 +116,7 @@ the ticket's reception time to `now - (wall now - saved at)` after loading it. T
 hour ahead, shows that mbedTLS would see it as from the future, and shows that it resumes through the cache. This is why the
 cache needs SNTP: with no clock that can be believed, nothing is kept and nothing is offered.
 
-Run one test with `host/with_fixture.sh build/host/join_host_test <name>`; `--list` prints the names.
+Run one test with `tests/tls/with_fixture.sh build/host/join_host_test <name>`; `--list` prints the names.
 
 One thing these cannot do is move the server's clock, so a test that puts the display's clock ahead sees the
 server's real-time certificates as already over by it. The expired-certificate test holds the display's dates

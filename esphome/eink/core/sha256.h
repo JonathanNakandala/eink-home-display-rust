@@ -1,6 +1,7 @@
 // SHA-256 (FIPS 180-4), small and with no dependencies, so the pairing code is worked out the same way on the chip and
 // in the tests on a computer. It hashes public values (a certificate, a name, a public key), so nothing here is
-// secret and nothing needs to take constant time. Checked against the standard's own examples in tests/sha256_test.cpp.
+// secret and nothing needs to take constant time. Checked against the standard's own examples in
+// tests/core/sha256_test.cpp.
 #pragma once
 
 #include <array>

@@ -7,7 +7,7 @@
       "displayName": "Host tests (mbedTLS for this computer)",
       "description": "Builds the firmware's TLS code and its tests against the same mbedTLS the chip uses. The mbedTLS source is found in ESPHome's cache.",
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/../build/host",
+      "binaryDir": "${sourceDir}/../../build/host",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }

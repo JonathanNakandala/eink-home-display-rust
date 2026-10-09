@@ -5,7 +5,7 @@
 # does is in core/secure_wake.h. While the owner has yet to approve the display, the panel shows the code to type in at
 # the server.
 # The parts: core/join.h (joining), core/secure_wake.h (the choices), tls/stream.h (TLS and the body) and
-# esp/secure_chip.h (the chip's flash, clock and watchdog), all but the last tested against a real server (host/).
+# esp/secure_chip.h (the chip's flash, clock and watchdog), all but the last tested against a real server (tests/tls/).
 substitutions:
   # The owner's root built into the firmware, as base64 of its DER (`openssl x509 -in root.pem -outform der | base64 -w0`),
   # for an owner who would rather not rely on the pairing code for the first contact: nothing is then fetched, and a server

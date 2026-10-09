@@ -36,12 +36,12 @@ set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DMBEDTLS_CONFIG_FILE=\\\"${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_host_config.h\\\"")
 add_subdirectory(${MBEDTLS_SRC} mbedtls EXCLUDE_FROM_ALL)
 
-set(FIRMWARE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set(FIRMWARE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
 # Everything here is built against the same mbedTLS and the firmware's own headers.
 function(host_target name)
   add_executable(${name} ${ARGN})
-  target_include_directories(${name} PRIVATE ${FIRMWARE} ${FIRMWARE}/tests)
+  target_include_directories(${name} PRIVATE ${FIRMWARE} ${FIRMWARE}/tests/support)
   target_compile_definitions(${name} PRIVATE MBEDTLS_CONFIG_FILE="${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_host_config.h")
   target_compile_options(${name} PRIVATE -Wall -Wextra -Wno-unused-parameter)
   target_link_libraries(${name} PRIVATE mbedtls mbedx509 mbedcrypto)
@@ -51,10 +51,10 @@ endfunction()
 host_target(spike_tls spike_tls.cpp)
 
 # The firmware's own code (core/join.h over tls/est_client.h and the rest), against a real server.
-host_target(join_host_test join_host_test.cpp ${FIRMWARE}/tests/main.cpp)
-host_target(stream_host_test stream_host_test.cpp ${FIRMWARE}/tests/main.cpp)
-host_target(begin_host_test begin_host_test.cpp ${FIRMWARE}/tests/main.cpp)
-host_target(resume_host_test resume_host_test.cpp ${FIRMWARE}/tests/main.cpp)
+host_target(join_host_test join_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)
+host_target(stream_host_test stream_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)
+host_target(begin_host_test begin_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)
+host_target(resume_host_test resume_host_test.cpp ${FIRMWARE}/tests/support/main.cpp)
 
 # The tests against a real server, for ctest and the editor's test panel. Each test is run by itself against its own server
 # (with_fixture.sh), since the server limits how many different display names one address may join with in a day, so this is

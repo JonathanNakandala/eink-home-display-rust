@@ -4,7 +4,7 @@
 // read, since the TLS session points at them. The head is parsed by core/body.h as it comes, and the body is handed on
 // by `read`, in whatever sizes the caller wants, whatever pieces the network delivers.
 //
-// Written against mbedTLS 3.6 and tested on a computer against a real server (host/).
+// Written against mbedTLS 3.6 and tested on a computer against a real server (tests/tls/).
 #pragma once
 
 #include <cstring>

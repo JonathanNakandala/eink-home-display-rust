@@ -6,11 +6,11 @@
 // display owns (RTC memory on the chip, which survives deep sleep and is lost with the power), and never in the log or
 // on the wire.
 //
-// Three parts, with nothing from ESPHome, ESP-IDF or mbedTLS, tested on a computer (tests/): a fixed-size slot laid out
-// to sit in RTC memory, with a magic, a version and a CRC, so memory an earlier firmware or a power cut left behind is
-// not believed; a key saying which server and identity a session is for, so it is never offered to another server nor
-// kept across a renewed certificate or a changed root; and how long it has been kept, from the wall clock, since the
-// clock mbedTLS uses (monotonic) starts again after deep sleep.
+// Three parts, with nothing from ESPHome, ESP-IDF or mbedTLS, tested on a computer (tests/core/): a fixed-size slot
+// laid out to sit in RTC memory, with a magic, a version and a CRC, so memory an earlier firmware or a power cut left
+// behind is not believed; a key saying which server and identity a session is for, so it is never offered to another
+// server nor kept across a renewed certificate or a changed root; and how long it has been kept, from the wall clock,
+// since the clock mbedTLS uses (monotonic) starts again after deep sleep.
 #pragma once
 
 #include <array>
@@ -27,7 +27,7 @@ using Bytes = std::vector<uint8_t>;
 
 // The most a session may be to be kept. RTC memory is 8 KB for everything that uses it. How big a real session is,
 // with a client certificate, is measured by `what_a_session_costs_in_memory_and_in_bytes_on_the_wire`
-// (host/resume_host_test.cpp), which fails if one outgrows half of this.
+// (tests/tls/resume_host_test.cpp), which fails if one outgrows half of this.
 constexpr size_t CAPACITY = 3072;
 
 constexpr uint32_t MAGIC = 0xE1B70003;

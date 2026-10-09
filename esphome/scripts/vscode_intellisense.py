@@ -71,7 +71,7 @@ def main() -> None:
     host = {
         "name": "Host tests",
         # tests/ and the pure headers build with the computer's own compiler (see esphome/Makefile).
-        "includePath": ["${workspaceFolder}/esphome"],
+        "includePath": ["${workspaceFolder}/esphome", "${workspaceFolder}/esphome/tests/support"],
         "defines": [],
         "compilerPath": "/usr/bin/clang",
         "cStandard": "c17",

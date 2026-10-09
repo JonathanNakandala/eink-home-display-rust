@@ -19,18 +19,18 @@
     },
     "editor.rulers": [120],
 
-    // The host tests against a real server (esphome/host/). CMake Tools uses the presets there (CMakePresets.json), so it needs
+    // The host tests against a real server (esphome/tests/tls/). CMake Tools uses the presets there (CMakePresets.json), so it needs
     // no kit: pick the "host" preset. The mbedTLS source is found in ESPHome's cache, so the firmware has to have been compiled
     // once (`make -C esphome compile`); the build goes to esphome/build/host, which is out of git. Nothing configures on open or
     // on an edit, since a fresh clone has nothing to configure from until that compile.
-    "cmake.sourceDirectory": "${workspaceFolder}/esphome/host",
+    "cmake.sourceDirectory": "${workspaceFolder}/esphome/tests/tls",
     "cmake.useCMakePresets": "always",
     "cmake.configureOnOpen": false,
     "cmake.configureOnEdit": false,
     "cmake.automaticReconfigure": false,
     "cmake.ctest.testExplorerIntegrationEnabled": true,
     // The Makefile is in esphome/, and its commands name files from there. Without this Makefile Tools runs make from the
-    // repository root, finds "No rule to make target tests/main.cpp", and offers IntelliSense nothing.
+    // repository root, finds "No rule to make target tests/support/main.cpp", and offers IntelliSense nothing.
     "makefile.makefilePath": "esphome/Makefile",
     "makefile.makeDirectory": "esphome",
 

@@ -55,7 +55,7 @@ inline std::string show(bool value) { return value ? "true" : "false"; }
 inline std::string show(uint8_t value) { return std::to_string((unsigned) value); }
 
 // With no arguments, runs every test. `--list` prints their names, one to a line, and a name runs just that test: for
-// tests that each need a fresh server (host/).
+// tests that each need a fresh server (tests/tls/).
 inline int run_all(int argc = 0, char **argv = nullptr) {
   if (argc > 1 && std::string(argv[1]) == "--list") {
     for (const Case &c : cases())
