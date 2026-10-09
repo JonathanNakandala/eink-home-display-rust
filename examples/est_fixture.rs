@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
+use axum::extract::Path;
 use axum::routing::get;
 use chrono::Duration;
 use chrono_tz::Tz;
@@ -22,6 +24,11 @@ use eink_home_display_rust::adapters::clock::SystemClock;
 use eink_home_display_rust::bootstrap::{open_security, start_serving};
 use eink_home_display_rust::config::server::ServerConfig;
 use eink_home_display_rust::domain::models::display::ImageFormat;
+
+/// `n` bytes where byte i is i % 251.
+fn pattern(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 251) as u8).collect()
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -63,6 +70,46 @@ async fn main() -> anyhow::Result<()> {
     // Who is asking, as the server knows it from the certificate; how the TLS connections began; a picture.
     let display = Router::new()
         .route("/image", get(|| async { "image-bytes" }))
+        // Bodies for the firmware's streaming tests: byte i is i % 251, so a lost or repeated byte shows. `big` has a
+        // Content-Length; `chunked` has none, so it is sent in chunks; `stall` sends a little and then goes quiet.
+        .route(
+            "/big/{n}",
+            get(|Path(n): Path<usize>| async move { pattern(n) }),
+        )
+        .route(
+            "/chunked/{n}",
+            get(|Path(n): Path<usize>| async move {
+                let pieces = pattern(n)
+                    .chunks(1000)
+                    .map(|c| Ok::<_, std::convert::Infallible>(axum::body::Bytes::copy_from_slice(c)))
+                    .collect::<Vec<_>>();
+                Body::from_stream(futures_util::stream::iter(pieces))
+            }),
+        )
+        .route(
+            "/stall",
+            get(|| async {
+                let stream = futures_util::stream::unfold(0, |step| async move {
+                    if step == 0 {
+                        Some((Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"some")), 1))
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                        None
+                    }
+                });
+                Body::from_stream(stream)
+            }),
+        )
+        // Stand-ins for what the image server answers a display's plan with.
+        .route(
+            "/plan",
+            get(|| async {
+                (
+                    [("content-type", "application/json")],
+                    r#"{"version":1791463200,"changed":true,"stale":false,"pending":false,"next_seconds":600,"age_seconds":100,"timezone":"Europe/London","utc_offset_seconds":3600}"#,
+                )
+            }),
+        )
         .route(
             "/who",
             get(

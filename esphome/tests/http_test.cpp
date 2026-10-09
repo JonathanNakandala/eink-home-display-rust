@@ -61,3 +61,13 @@ TEST(the_status_is_whatever_the_server_said) {
   CHECK_EQ(parse("HTTP/1.1 403 Forbidden\r\n\r\n").status, 403);
   CHECK_EQ(parse("HTTP/1.1 429 Too Many Requests\r\nretry-after: 5\r\n\r\nslow").status, 429);
 }
+
+TEST(only_the_path_and_query_of_a_url_are_sent) {
+  CHECK_EQ(path_of("https://eink-home-display.internal/image?device=a"), "/image?device=a");
+  CHECK_EQ(path_of("http://192.168.1.20:8443/plan"), "/plan");
+  CHECK_EQ(path_of("/plan?have=1"), "/plan?have=1");
+  CHECK_EQ(path_of("https://host"), "/");
+  CHECK_EQ(path_of("https://host?x=1"), "/");
+  CHECK_EQ(path_of(""), "/");
+  CHECK_EQ(path_of("https://host/a/b/c.png"), "/a/b/c.png");
+}

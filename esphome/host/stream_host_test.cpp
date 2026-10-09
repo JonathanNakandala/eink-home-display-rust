@@ -1,0 +1,211 @@
+// The firmware's streaming client (eink_stream.h) against the real server on a computer: a body of megabytes read in
+// pieces of whatever size, in chunks or with a length, a connection that goes quiet, and a display the server turns
+// away.
+//
+// Run through with_fixture.sh, which starts the server and says where it is.
+#include <string>
+
+#include "host_support.h"
+#include "eink_secure.h"
+
+using namespace support;
+using eink_stream::Stream;
+
+namespace {
+
+// Every byte of a body made of i % 251, read in pieces of `piece` bytes.
+bool reads_pattern(Stream &stream, size_t total, size_t piece) {
+  std::vector<uint8_t> buffer(piece);
+  size_t at = 0;
+  for (;;) {
+    const int n = stream.read(buffer.data(), buffer.size());
+    if (n < 0)
+      return false;
+    if (n == 0)
+      break;
+    for (int i = 0; i < n; i++)
+      if (buffer[static_cast<size_t>(i)] != static_cast<uint8_t>((at + static_cast<size_t>(i)) % 251))
+        return false;
+    at += static_cast<size_t>(n);
+  }
+  return at == total;
+}
+
+}  // namespace
+
+TEST(a_plan_is_fetched_over_a_verified_connection_that_shows_the_certificate) {
+  Display d("host-stream-plan");
+  join_as(d);
+  Stream stream;
+  CHECK(stream.start(peer_of(d), "GET", "/plan") == Stream::Start::OK);
+  CHECK_EQ(stream.status(), 200);
+  CHECK_EQ(stream.header("content-type"), "application/json");
+  std::string body;
+  CHECK(stream.read_all(body, 4096));
+  CHECK(body.find("\"next_seconds\":600") != std::string::npos);
+  CHECK(stream.finished());
+}
+
+TEST(a_body_of_megabytes_with_a_length_arrives_whole_in_pieces_of_any_size) {
+  Display d("host-stream-big");
+  join_as(d);
+  const size_t total = 2600000;  // about the size of the 1872 x 1404 greyscale image
+  for (size_t piece : {1460u, 4096u, 16384u}) {
+    Stream stream;
+    CHECK(stream.start(peer_of(d), "GET", "/big/" + std::to_string(total)) == Stream::Start::OK);
+    CHECK_EQ(stream.status(), 200);
+    CHECK(stream.has_length());
+    CHECK_EQ(stream.content_length(), total);
+    CHECK(reads_pattern(stream, total, piece));
+    CHECK(stream.finished());
+    CHECK_EQ(stream.bytes_read(), total);
+  }
+}
+
+TEST(a_body_sent_in_chunks_arrives_whole_too) {
+  Display d("host-stream-chunked");
+  join_as(d);
+  const size_t total = 300000;
+  Stream stream;
+  CHECK(stream.start(peer_of(d), "GET", "/chunked/" + std::to_string(total)) == Stream::Start::OK);
+  CHECK(!stream.has_length());
+  CHECK(reads_pattern(stream, total, 2048));
+  CHECK(stream.finished());
+}
+
+TEST(an_empty_body_is_finished_at_once) {
+  Display d("host-stream-empty");
+  join_as(d);
+  Stream stream;
+  CHECK(stream.start(peer_of(d), "GET", "/big/0") == Stream::Start::OK);
+  uint8_t byte;
+  CHECK_EQ(stream.read(&byte, 1), 0);
+  CHECK(stream.finished());
+}
+
+TEST(a_connection_that_goes_quiet_is_an_error_and_not_a_wait_for_ever) {
+  Display d("host-stream-stall");
+  join_as(d);
+  Stream stream;
+  eink_stream::Peer peer = peer_of(d);
+  peer.timeout_ms = 1500;
+  CHECK(stream.start(peer, "GET", "/stall") == Stream::Start::OK);
+  std::string body;
+  CHECK(!stream.read_all(body, 1000));  // "some", then nothing
+  CHECK_EQ(body, "some");
+  CHECK(!stream.finished());
+}
+
+TEST(a_path_the_server_does_not_have_is_a_status_and_not_a_failure) {
+  Display d("host-stream-404");
+  join_as(d);
+  Stream stream;
+  CHECK(stream.start(peer_of(d), "GET", "/nothing-here") == Stream::Start::OK);
+  CHECK_EQ(stream.status(), 404);
+}
+
+TEST(a_display_the_server_has_revoked_is_turned_away) {
+  Display d("host-stream-revoked");
+  join_as(d);
+  CHECK_EQ(ctl("revoke host-stream-revoked"), 0);
+  Stream stream;
+  const Stream::Start started = stream.start(peer_of(d), "GET", "/who");
+  // The handshake is let through (the certificate is still valid); the request is refused by name, per request.
+  CHECK(started == Stream::Start::OK);
+  CHECK_EQ(stream.status(), 403);
+}
+
+TEST(a_server_that_does_not_chain_to_the_root_is_refused_before_anything_is_sent) {
+  Display d("host-stream-middle");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+  peer.root = someone_elses_root();
+  Stream stream;
+  CHECK(stream.start(peer, "GET", "/image") == Stream::Start::REFUSED);
+}
+
+TEST(nothing_listening_is_unreachable) {
+  Display d("host-stream-gone");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+  peer.port = 1;
+  Stream stream;
+  CHECK(stream.start(peer, "GET", "/image") == Stream::Start::UNREACHABLE);
+}
+
+TEST(a_stream_can_be_used_again_after_it_is_closed) {
+  Display d("host-stream-again");
+  join_as(d);
+  Stream stream;
+  for (int i = 0; i < 3; i++) {
+    CHECK(stream.start(peer_of(d), "GET", "/big/5000") == Stream::Start::OK);
+    CHECK(reads_pattern(stream, 5000, 700));
+    stream.close();
+  }
+}
+
+TEST(a_small_request_is_fetched_whole_with_its_status_and_headers) {
+  Display d("host-fetch");
+  join_as(d);
+  eink_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
+                   &d.identity.private_key());
+  const eink_secure::Fetched plan = eink_secure::fetch("GET", "/plan?have=1&device=host-fetch");
+  CHECK(plan.ok());
+  CHECK_EQ(plan.status, 200);
+  CHECK(plan.body.find("\"utc_offset_seconds\":3600") != std::string::npos);
+
+  const eink_secure::Fetched who = eink_secure::fetch("GET", "/who");
+  CHECK_EQ(who.body, "host-fetch");  // known by its certificate
+
+  const eink_secure::Fetched missing = eink_secure::fetch("GET", "/nothing");
+  CHECK(missing.ok());
+  CHECK_EQ(missing.status, 404);
+  eink_secure::forget();
+}
+
+TEST(a_body_longer_than_the_limit_is_not_a_plan) {
+  Display d("host-fetch-long");
+  join_as(d);
+  eink_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
+                   &d.identity.private_key());
+  const eink_secure::Fetched big = eink_secure::fetch("GET", "/big/100000");
+  CHECK(!big.ok());
+  CHECK(big.body.empty());
+  eink_secure::forget();
+}
+
+TEST(nothing_is_sent_until_the_script_has_said_where_the_server_is) {
+  eink_secure::forget();
+  const eink_secure::Fetched none = eink_secure::fetch("GET", "/plan");
+  CHECK(!none.ok());
+  CHECK(none.start == Stream::Start::UNREACHABLE);
+}
+
+TEST(how_the_last_request_got_on_is_kept_for_the_script_to_classify) {
+  Display d("host-fetch-class");
+  join_as(d);
+  eink_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
+                   &d.identity.private_key());
+  eink_secure::fetch("GET", "/plan");
+  CHECK(eink_secure::context().last == Stream::Start::OK);
+  eink_secure::use(server_ip(), server_port(), someone_elses_root(), d.identity.certificate_der,
+                   &d.identity.private_key());
+  eink_secure::fetch("GET", "/plan");
+  CHECK(eink_secure::context().last == Stream::Start::REFUSED);
+  eink_secure::use(server_ip(), 1, d.identity.stored, d.identity.certificate_der, &d.identity.private_key());
+  eink_secure::fetch("GET", "/plan");
+  CHECK(eink_secure::context().last == Stream::Start::UNREACHABLE);
+  eink_secure::forget();
+}
+
+TEST(the_server_can_be_moved_without_losing_what_the_display_holds) {
+  Display d("host-aim");
+  join_as(d);
+  eink_secure::use(server_ip(), 1, d.identity.stored, d.identity.certificate_der, &d.identity.private_key());
+  CHECK(!eink_secure::fetch("GET", "/plan").ok());  // nothing at port 1
+  eink_secure::aim(server_ip(), server_port());
+  CHECK(eink_secure::fetch("GET", "/plan").ok());
+  eink_secure::aim(0, 0);
+  CHECK(!eink_secure::context().ready);
+  eink_secure::forget();
+}
