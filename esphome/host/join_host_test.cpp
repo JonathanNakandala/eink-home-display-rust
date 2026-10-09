@@ -12,7 +12,9 @@
 #include "mbedtls/x509_csr.h"
 
 #include "check.h"
+#include "fake_store.h"
 #include "memory_identity.h"
+#include "eink_flash_identity.h"
 #include "eink_est_client.h"
 #include "eink_join.h"
 #include "eink_verifier.h"
@@ -76,6 +78,37 @@ struct Display {
 
   explicit Display(const std::string &n, uint16_t port = server_port()) : name(n), est(server_ip(), port, identity) {}
   Outcome wake() { return Joiner(clock, identity, est, verifier, name).run(); }
+};
+
+// A display that keeps what it holds in "flash" and starts afresh at every wake, as the chip does after deep sleep:
+// nothing lives in memory between wakes but the flash and the one value RTC memory keeps. This is what shows the record
+// is enough.
+struct Rebooting {
+  std::string name;
+  fakes::MemoryStore flash;
+  eink_pairing::Answer rtc = eink_pairing::Answer::NONE;  // survives sleep, not a power loss
+  HostClock clock;
+  int roots = 0, enrolled = 0, renewed = 0;
+  eink_ports::Bytes compiled;
+
+  explicit Rebooting(const std::string &n) : name(n) {}
+
+  Outcome wake() {
+    flash.restore_power();
+    eink_flash::FlashIdentity identity(flash, rtc, compiled);
+    CountingEst est(server_ip(), server_port(), identity);
+    eink_verifier::MbedVerifier verifier;
+    const Outcome out = Joiner(clock, identity, est, verifier, name).run();
+    roots += est.roots;
+    enrolled += est.enrolled;
+    renewed += est.renewed;
+    return out;
+  }
+  // What is held, as a fresh start reads it.
+  eink_credentials::Record held() {
+    eink_credentials::Credentials c(flash);
+    return c.record();
+  }
 };
 
 int ctl(const std::string &arguments) {
@@ -249,4 +282,80 @@ TEST(once_the_owner_approves_it_again_a_revoked_display_is_back) {
   CHECK(waiting.standing == Standing::WAITING);
   CHECK_EQ(ctl("approve host-back " + waiting.code), 0);
   CHECK(d.wake().paired);
+}
+
+TEST(a_display_that_starts_afresh_at_every_wake_joins_and_renews_from_what_flash_holds) {
+  Rebooting d("host-reboot");
+  const Outcome waiting = d.wake();
+  CHECK(waiting.standing == Standing::WAITING);
+  CHECK_EQ(ctl("approve host-reboot " + waiting.code), 0);
+  // The key made at the first wake is the one used at the second: the code is the same, and the server accepted it.
+  CHECK(d.wake().paired);
+  const eink_credentials::Record joined = d.held();
+  CHECK(!joined.key.empty() && !joined.root.empty() && !joined.certificate.empty());
+  CHECK_EQ(joined.sequence, 3u);  // the key, then the root, then the certificate
+
+  d.roots = d.enrolled = d.renewed = 0;
+  CHECK(d.wake().paired);
+  CHECK_EQ(d.roots + d.enrolled + d.renewed, 0);  // an ordinary wake asks nothing
+
+  d.clock.offset = 61 * DAY;
+  CHECK(d.wake().paired);
+  CHECK_EQ(d.renewed, 1);
+  CHECK(d.held().certificate != joined.certificate);
+  CHECK(d.held().key == joined.key);  // the same key throughout
+}
+
+TEST(a_display_that_lost_what_the_server_last_said_just_asks_again_and_is_told_again) {
+  Rebooting d("host-rtc");
+  const Outcome first = d.wake();
+  CHECK(first.standing == Standing::WAITING);
+  d.rtc = eink_pairing::Answer::NONE;  // a power loss clears RTC memory
+  const Outcome second = d.wake();
+  CHECK(second.standing == Standing::WAITING);
+  CHECK_EQ(second.code, first.code);  // the same key, so the same code
+}
+
+TEST(a_power_cut_while_the_certificate_is_written_leaves_the_display_as_it_was) {
+  Rebooting d("host-cut");
+  const Outcome waiting = d.wake();
+  CHECK_EQ(ctl("approve host-cut " + waiting.code), 0);
+  CHECK(d.wake().paired);
+  const eink_credentials::Record before = d.held();
+
+  d.clock.offset = 61 * DAY;  // due to renew
+  d.flash.cut_write = 1;      // the next write, the new certificate, is cut short and the power goes
+  const Outcome cut = d.wake();
+  CHECK(!cut.paired);
+  CHECK(cut.failure == Failure::MEMORY);
+
+  // Power back: what it reads is the record before, whole, and it goes on from there.
+  d.flash.restore_power();
+  const eink_credentials::Record after = d.held();
+  CHECK_EQ(after.sequence, before.sequence);
+  CHECK(after.certificate == before.certificate && after.key == before.key && after.root == before.root);
+  CHECK(d.wake().paired);
+  CHECK(d.held().certificate != before.certificate);
+}
+
+TEST(flash_that_cannot_be_read_is_left_alone_and_the_server_is_not_asked) {
+  Rebooting d("host-broken");
+  const Outcome waiting = d.wake();
+  CHECK_EQ(ctl("approve host-broken " + waiting.code), 0);
+  CHECK(d.wake().paired);
+  const eink_credentials::Record before = d.held();
+  const int writes = d.flash.writes;
+
+  d.flash.broken_reads["cred_a"] = true;
+  d.flash.broken_reads["cred_b"] = true;
+  d.roots = d.enrolled = d.renewed = 0;
+  const Outcome out = d.wake();
+  CHECK(!out.paired);
+  CHECK(out.failure == Failure::MEMORY);
+  CHECK_EQ(d.roots + d.enrolled + d.renewed, 0);
+  CHECK_EQ(d.flash.writes, writes);  // nothing written over what could not be read
+
+  d.flash.broken_reads.clear();  // the flash comes back
+  CHECK(d.wake().paired);
+  CHECK(d.held().key == before.key);
 }
