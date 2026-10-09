@@ -1,7 +1,6 @@
 // What the display tells the server about itself on each check-in, as the query-string tail of its /plan and
 // /refresh requests (the server reads it in src/application/devices.rs, which also decides what is believable).
 //
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 // Where the values come from (the radio, RTC memory) is eink_telemetry.h.
 #pragma once
 
@@ -10,26 +9,20 @@
 
 namespace eink_report {
 
-// Why the last failed wake failed. The names are what `last_failure` is sent as.
-//  - WIFI, SERVER (no usable /plan), DOWNLOAD, MEMORY and TIMEOUT (the wake hung): how a wake fails.
-//  - CLOCK: not set, so no certificate could be checked and nothing that needs one was tried.
-//  - CERTIFICATE: refused, the server's by the display or the display's by the server.
-//  - APPROVAL: asked to join, waiting for the owner. UNRECOGNISED: the server doesn't know this key, so the owner
-//    must approve it again.
-// The last four belong to the secure transport; the server understands them already (FailureReason in
-// src/application/devices.rs). A display that cannot join can still report them over plain HTTP, as the next
-// wake that gets through, if the server also serves it.
+// Why the last failed wake failed. The names are what `last_failure` is sent as, and the server understands all of them
+// (FailureReason in src/application/devices.rs). The last four belong to the secure transport; a display that cannot
+// join reports them over plain HTTP, as the next wake that gets through, if the server also serves it.
 enum class Failure : uint8_t {
   NONE = 0,
   WIFI = 1,
-  SERVER = 2,
+  SERVER = 2,  // no usable /plan
   DOWNLOAD = 3,
   MEMORY = 4,
-  TIMEOUT = 5,
-  CLOCK = 6,
-  CERTIFICATE = 7,
-  APPROVAL = 8,
-  UNRECOGNISED = 9,
+  TIMEOUT = 5,       // the wake hung
+  CLOCK = 6,         // not set, so nothing that needs a certificate checked was tried
+  CERTIFICATE = 7,   // refused: the server's by the display, or the display's by the server
+  APPROVAL = 8,      // asked to join, waiting for the owner
+  UNRECOGNISED = 9,  // the server doesn't know this key: the owner must approve it again
 };
 
 // The highest value that is a Failure, which is how memory left by another firmware is told from a valid one.

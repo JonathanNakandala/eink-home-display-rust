@@ -1,7 +1,5 @@
 // Base64 (RFC 4648, the standard alphabet with padding), for the bodies EST puts on the wire: a request and a
 // certificate each travel as base64 of DER.
-//
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 #pragma once
 
 #include <cstdint>

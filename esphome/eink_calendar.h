@@ -1,7 +1,5 @@
 // Calendar arithmetic with no library behind it: the seconds since 1970 of a date and time in UTC. The chip has no
 // timezone database and `timegm` is not portable, and a certificate's dates arrive as year, month, day and so on.
-//
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 #pragma once
 
 #include <cstdint>

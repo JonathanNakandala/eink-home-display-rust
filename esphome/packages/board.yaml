@@ -9,8 +9,8 @@ esp32:
       # Lets lwIP's resolver look up .local names (ESPHome's own mDNS only advertises).
       # Some versions default it off to save flash, so set it explicitly.
       enable_lwip_mdns_queries: true
-    # What the secure transport needs of mbedTLS, found by the host spike (host/): TLS 1.3 (off by default here), and the
-    # exporter RFC 9266 channel binding is made from. Session tickets for the client are already on.
+    # What the secure transport needs of mbedTLS: TLS 1.3 (off by default here) and the key-material exporter that the
+    # RFC 9266 channel binding is made from. Client session tickets are already on.
     sdkconfig_options:
       # ESPHome turns this off to save RAM, and TLS 1.3 depends on it: the peer's certificates stay in memory for the
       # connection (about two certificates, 1 KB each, of heap while connected).

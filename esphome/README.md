@@ -260,9 +260,9 @@ falls back to fetching one.
 
 **The rule under all of this: pairing is removed only by the owner, never by an error.** The key, the certificate
 and the authority are not deleted because a connection failed, a certificate was refused, a response was `403`, the
-clock was wrong or the server was unreachable. Only a deliberate action (a long press, or a flash that erases)
-clears them. They are stored as one versioned blob with a checksum, so a half-written one is recognised and the
-previous one used.
+clock was wrong or the server was unreachable. Only a deliberate action (erasing the flash; a long press to
+erase pairing is not built yet) clears them. They are stored as one versioned blob with a checksum, so a half-written
+one is recognised and the previous one used.
 
 **After being off for a while** (a flat battery, a drawer), in this order:
 
@@ -494,8 +494,8 @@ default), run each for a day, and compare `eink_device_last_wake_seconds` in `/m
 The TLS side is also run against a real server on a computer, with the same mbedTLS the chip is built with:
 `make -C esphome spike` (see [host/README.md](host/README.md) for what it shows and what it does not).
 
-The calculations are kept apart from the hardware so they can be tested on a computer, with no board and no
-ESPHome install, just a C++17 compiler:
+The calculations are kept apart from the hardware (the headers with nothing from ESPHome or ESP-IDF in them) so they can
+be tested on a computer, with no board and no ESPHome install, just a C++17 compiler:
 
 ```sh
 make -C esphome test

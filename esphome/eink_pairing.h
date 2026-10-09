@@ -1,6 +1,5 @@
 // Joining the server's private certificate authority: the code the owner types in, and what the display does next.
 //
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 // The server computes the same code (PairingCode::derive in src/domain/models/pairing.rs), and the two are pinned to
 // the same example, so a difference in either shows up as a failing test.
 #pragma once
@@ -56,8 +55,7 @@ inline std::string code(const std::vector<uint8_t> &root_der, const std::string 
 
 // ---- what to do next ----------------------------------------------------------------------------------------------
 
-// What the display holds, as far as deciding goes. The key, the certificate and the root are never deleted by an error:
-// only the owner removes pairing (a long press, or a flash that erases).
+// What the display holds, as far as deciding goes.
 struct Stored {
   eink_trust::RootSource root;
   bool has_key;

@@ -1,8 +1,7 @@
 // The little of ASN.1 DER the display needs: taking a certs-only CMS message apart, and putting a PKCS #10 request
 // together. mbedTLS has no CMS, and its request writer cannot add a challenge password, so these are done here.
 //
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/); the
-// whole is also run against a real server in host/.
+// The whole is also run against a real server in host/.
 #pragma once
 
 #include <cstddef>
@@ -121,8 +120,7 @@ inline std::vector<Bytes> certificates_in(const Bytes &cms) {
   return out;
 }
 
-// ---- a PKCS #10 request (RFC 2986)
-// -------------------------------------------------------------------------------------
+// ---- a PKCS #10 request (RFC 2986) ----------------------------------------------------------------------------------
 
 // id-at-commonName, pkcs-9-challengePassword and ecdsa-with-SHA256, as encoded.
 inline const Bytes &oid_common_name() {

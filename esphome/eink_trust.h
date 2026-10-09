@@ -1,6 +1,5 @@
 // Which root the display trusts, and where a certificate stands in its life.
 //
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 // Parsing a certificate and verifying a chain are mbedTLS's job; this decides from the answers.
 #pragma once
 

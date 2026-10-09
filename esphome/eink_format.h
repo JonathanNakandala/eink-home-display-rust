@@ -1,5 +1,4 @@
 // Text the device builds: a server's URL from what mDNS found, an age in words, and the time of day.
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 #pragma once
 
 #include <cstdint>

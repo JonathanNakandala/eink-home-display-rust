@@ -292,5 +292,6 @@ TEST(what_a_session_costs_in_memory_and_in_bytes_on_the_wire) {
   CHECK(get(d, peer, "/plan", body, status));
   std::printf("      a saved session is %u bytes (room for %zu)\n", cache.slot.length, eink_session_cache::CAPACITY);
   CHECK(cache.slot.length > 0);
-  CHECK(cache.slot.length <= eink_session_cache::CAPACITY);
+  // Half is the headroom the comment on CAPACITY promises: a longer chain or certificate must not fill the slot.
+  CHECK(cache.slot.length <= eink_session_cache::CAPACITY / 2);
 }

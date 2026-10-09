@@ -87,11 +87,10 @@ class Session {
   Session(const Session &) = delete;
   Session &operator=(const Session &) = delete;
 
-  // Resumes an earlier session, and keeps the tickets the server sends for the next one. For connections that show a
-  // certificate and verify the server, never for the first contact or the enrolment, which are made fresh each time, so
-  // that each of them is tied to its own connection (RFC 9266) and nothing about a display is kept before the owner has
-  // approved it.
-  //   `offer` says whether to try the saved session; false still keeps new tickets (the saved one just failed).
+  // Resumes an earlier session, and keeps the tickets the server sends. Only for connections that verify the server and
+  // show a certificate, never for first contact or enrolment: those are made fresh, so each is tied to its own
+  // connection (RFC 9266) and nothing is kept about a display before the owner has approved it.
+  //   `offer` false still keeps new tickets (the saved session just failed).
   // Call before `open`.
   void use_sessions(eink_session_cache::Store *store, bool offer = true) {
     sessions_ = store;

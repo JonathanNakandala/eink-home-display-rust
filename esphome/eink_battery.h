@@ -1,5 +1,4 @@
 // Battery arithmetic: charge from voltage, and the latches that decide when to warn and when to stop.
-// Pure calculation, with nothing from ESPHome or ESP-IDF, so it is compiled and tested on a computer (tests/).
 // Reading the voltage is the YAML's job.
 #pragma once
 

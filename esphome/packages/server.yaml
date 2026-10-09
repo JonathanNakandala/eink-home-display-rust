@@ -13,9 +13,9 @@ substitutions:
   # Pick a server by the name a scan shows (the Rust app's server.instance_name).
   # Empty takes the first image server found.
   server_name: ""
-  # How this display reaches the server: http (plain HTTP only), prefer-https (HTTPS when the server offers it and
-  # the display has joined, else HTTP) or https (HTTPS only, never HTTP). Anything else stops the build. Only `https`
-  # looks under `_https._tcp`; the others look under `_http._tcp`. The joining and the TLS are packages/secure.yaml.
+  # How this display reaches the server: http, prefer-https or https (eink_secure_wake.h says what each does). Anything
+  # else stops the build. Only `https` looks under `_https._tcp`; the others look under `_http._tcp`. The joining and
+  # the TLS are packages/secure.yaml.
   server_transport: http
 
 http_request:
@@ -39,7 +39,7 @@ globals:
     type: uint16_t
     restore_value: yes
     initial_value: '0'
-  # Where the server says its HTTPS is (0 if it does not offer it). Not used yet.
+  # Where the server says its HTTPS is (0 if it does not offer it).
   - id: server_tls_port
     type: uint16_t
     restore_value: yes

@@ -58,9 +58,8 @@ inline eink_pairing::Answer &last_answer() {
 }
 
 // The TLS session kept between connections and wakes (eink_session_cache.h), in RTC memory: it survives deep sleep and
-// is lost with the power, which is right for something that only saves a handshake. A little over 3 KB of the 8 KB
-// there is, for a session of about 700 bytes. What is in it is checked before it is believed, since an update over the
-// air leaves whatever the last firmware put there.
+// is lost with the power, which is right for something that only saves a handshake. What is in it is checked before it
+// is believed, since an update over the air leaves whatever the last firmware put there.
 static RTC_DATA_ATTR eink_session_cache::Slot rtc_session;
 
 // The wall clock, if SNTP has set it: a session's age is worked out from it, because the clock mbedTLS uses starts
