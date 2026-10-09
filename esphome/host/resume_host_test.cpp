@@ -5,7 +5,12 @@
 // failed wake.
 //
 // Run through with_fixture.sh, which starts the server and says where it is.
+#include <chrono>
 #include <string>
+
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "host_support.h"
 #include "eink_secure.h"
@@ -294,4 +299,38 @@ TEST(what_a_session_costs_in_memory_and_in_bytes_on_the_wire) {
   CHECK(cache.slot.length > 0);
   // Half is the headroom the comment on CAPACITY promises: a longer chain or certificate must not fill the slot.
   CHECK(cache.slot.length <= eink_session_cache::CAPACITY / 2);
+}
+
+TEST(a_handshake_that_times_out_keeps_the_session_and_is_not_tried_twice) {
+  Display d("host-resume-quiet");
+  join_as(d);
+  Cache cache(d);
+  eink_stream::Peer peer = peer_of(d);
+  peer.sessions = &cache.store;
+  std::string body;
+  int status = 0;
+  CHECK(get(d, peer, "/plan", body, status));  // leaves a session
+
+  // A server that takes the connection and never answers: a network that is down, not a ticket that is bad.
+  const int quiet = ::socket(AF_INET, SOCK_STREAM, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = server_ip();
+  CHECK(::bind(quiet, reinterpret_cast<struct sockaddr *>(&address), sizeof address) == 0);
+  CHECK(::listen(quiet, 4) == 0);
+  socklen_t size = sizeof address;
+  ::getsockname(quiet, reinterpret_cast<struct sockaddr *>(&address), &size);
+  peer.port = ntohs(address.sin_port);
+  peer.timeout_ms = 400;
+
+  const auto began = std::chrono::steady_clock::now();
+  Stream stream;
+  CHECK(stream.start(peer, "GET", "/plan") == Stream::Start::UNREACHABLE);
+  const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+  ::close(quiet);
+
+  CHECK(took.count() < 700);  // one wait for the handshake, not a second one in full
+  Bytes saved;
+  int64_t age = 0;
+  CHECK(cache.store.load(saved, age));  // still there for the next wake
 }
