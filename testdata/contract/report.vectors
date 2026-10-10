@@ -1,0 +1,149 @@
+# The check-in report (core/report.h builds it, application/devices.rs reads it). Inputs are what the display has; `query` is what it
+# must write, and the `expect_` lines are what the server must read from that query. A line left out means "none".
+#   device, failed_wakes      always sent
+#   battery: <mv> <pct> <state>   or none (no reading)         rssi: dBm, 0 when there is no reading
+#   failure: a failure name   or none                           wake_ms: how long the wake was awake, in ms, or none
+#   tls_ms, heap_min: 0 when not measured                        firmware: the version, or none
+
+[a_first_report_has_only_what_is_known]
+device: kitchen
+failed_wakes: 0
+query: &device=kitchen&failed_wakes=0
+expect_failed_wakes: 0
+
+[a_full_report_has_every_field_in_a_fixed_order]
+device: reterminal-e1003-a1b2c3
+failed_wakes: 2
+battery: 3712 47 ok
+rssi: -67
+failure: download
+wake_ms: 24400
+tls_ms: 1100
+heap_min: 61440
+firmware: 0.1.0
+query: &device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47&battery_state=ok&rssi=-67&last_failure=download&last_wake_s=24&last_tls_ms=1100&last_heap_min=61440&fw=0.1.0
+expect_failed_wakes: 2
+expect_battery_mv: 3712
+expect_battery_pct: 47
+expect_battery_state: ok
+expect_rssi: -67
+expect_failure: download
+expect_wake_s: 24
+expect_tls_ms: 1100
+expect_heap_min: 61440
+expect_firmware: 0.1.0
+
+[a_signal_that_is_not_a_reading_is_left_out]
+device: a
+failed_wakes: 0
+rssi: 5
+query: &device=a&failed_wakes=0
+expect_failed_wakes: 0
+
+[the_weakest_reading_that_is_a_reading]
+device: a
+failed_wakes: 0
+rssi: -1
+query: &device=a&failed_wakes=0&rssi=-1
+expect_failed_wakes: 0
+expect_rssi: -1
+
+[a_low_battery]
+device: a
+failed_wakes: 1
+battery: 3350 8 low
+query: &device=a&failed_wakes=1&battery_mv=3350&battery_pct=8&battery_state=low
+expect_failed_wakes: 1
+expect_battery_mv: 3350
+expect_battery_pct: 8
+expect_battery_state: low
+
+[an_empty_battery]
+device: a
+failed_wakes: 1
+battery: 3000 0 empty
+query: &device=a&failed_wakes=1&battery_mv=3000&battery_pct=0&battery_state=empty
+expect_failed_wakes: 1
+expect_battery_mv: 3000
+expect_battery_pct: 0
+expect_battery_state: empty
+
+[a_wake_that_hung]
+device: a
+failed_wakes: 3
+failure: timeout
+query: &device=a&failed_wakes=3&last_failure=timeout
+expect_failed_wakes: 3
+expect_failure: timeout
+
+[a_display_the_server_does_not_know]
+device: a
+failed_wakes: 1
+failure: unrecognised
+query: &device=a&failed_wakes=1&last_failure=unrecognised
+expect_failed_wakes: 1
+expect_failure: unrecognised
+
+[a_wake_time_rounds_down]
+device: a
+failed_wakes: 0
+wake_ms: 24499
+query: &device=a&failed_wakes=0&last_wake_s=24
+expect_failed_wakes: 0
+expect_wake_s: 24
+
+[a_wake_time_rounds_up]
+device: a
+failed_wakes: 0
+wake_ms: 24500
+query: &device=a&failed_wakes=0&last_wake_s=25
+expect_failed_wakes: 0
+expect_wake_s: 25
+
+[a_wake_time_is_held_at_what_the_server_believes]
+device: a
+failed_wakes: 0
+wake_ms: 4000000000
+query: &device=a&failed_wakes=0&last_wake_s=600
+expect_failed_wakes: 0
+expect_wake_s: 600
+
+[a_handshake_and_a_heap_past_what_the_server_believes_are_held_at_its_limits]
+device: a
+failed_wakes: 0
+tls_ms: 5000000
+heap_min: 4294967295
+query: &device=a&failed_wakes=0&last_tls_ms=120000&last_heap_min=16777216
+expect_failed_wakes: 0
+expect_tls_ms: 120000
+expect_heap_min: 16777216
+
+[a_firmware_version_with_characters_a_query_cannot_keep]
+device: a
+failed_wakes: 0
+firmware: 1.0.0+build 5&x=y
+query: &device=a&failed_wakes=0&fw=1.0.0_build_5_x_y
+expect_failed_wakes: 0
+expect_firmware: 1.0.0_build_5_x_y
+
+[a_firmware_version_past_the_longest]
+device: a
+failed_wakes: 0
+firmware: 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
+query: &device=a&failed_wakes=0&fw=11111111111111111111111111111111
+expect_failed_wakes: 0
+expect_firmware: 11111111111111111111111111111111
+
+[a_prerelease_version]
+device: a
+failed_wakes: 0
+firmware: 0.3.0-beta.1
+query: &device=a&failed_wakes=0&fw=0.3.0-beta.1
+expect_failed_wakes: 0
+expect_firmware: 0.3.0-beta.1
+
+[a_name_with_dots_hyphens_and_underscores]
+device: hall_2.upstairs-east
+failed_wakes: 0
+query: &device=hall_2.upstairs-east&failed_wakes=0
+expect_failed_wakes: 0

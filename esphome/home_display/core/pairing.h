@@ -22,6 +22,8 @@ constexpr size_t CODE_CHARACTERS = 12;
 constexpr size_t CODE_GROUP = 4;
 // Digits and letters without I, L, O and U, so nothing read off a small panel is taken for something else.
 constexpr char ALPHABET[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+// The label that starts the hash, which keeps it from being reused as some other hash.
+constexpr char HASH_LABEL[] = "home-display pairing code v1";
 
 // What the display works out and shows, from what *it* saw (never from anything the server says):
 // SHA-256("home-display pairing code v1" || SHA-256(root DER) || u64be(len(name)) || name || u64be(len(SPKI)) ||
@@ -31,7 +33,7 @@ inline std::string code(const std::vector<uint8_t> &root_der, const std::string 
                         const std::vector<uint8_t> &spki) {
   const home_display_sha256::Digest root = home_display_sha256::of(root_der);
   home_display_sha256::Hash hash;
-  hash.update("home-display pairing code v1");
+  hash.update(HASH_LABEL);
   hash.update(root);
   hash.update_length(name.size());
   hash.update(name);
