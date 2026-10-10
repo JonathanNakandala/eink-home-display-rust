@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_BIND: &str = "[::]:8080";
 const DEFAULT_DIRECTORY: &str = "served";
-const DEFAULT_INSTANCE_NAME: &str = "E-ink home display";
+const DEFAULT_INSTANCE_NAME: &str = "Home display";
 const DEFAULT_WAKE_DELAY_SECONDS: u32 = 30;
 const DEFAULT_STALE_GRACE_SECONDS: u32 = 300;
 const DEFAULT_REFRESH_COOLDOWN_SECONDS: u32 = 30;
@@ -109,7 +109,7 @@ pub struct TlsConfig {
     /// More host names and IP addresses for the server's certificate, for a browser or `curl` to connect
     /// by. Left empty, it is `<instance_name>.local` (the name announced over mDNS, with the characters a
     /// host name can't have replaced) and `localhost`. The certificate also always has the fixed name
-    /// `eink-home-display.internal`, which is what a display checks, so changing this never affects them.
+    /// `home-display.internal`, which is what a display checks, so changing this never affects them.
     #[serde(default)]
     pub names: Vec<String>,
     /// How long the server's own certificate lasts, from 1 to 3650 days. It is replaced when a third of that is left.
@@ -476,10 +476,10 @@ mod tests {
             config.certificate_names(),
             ["living-room.local", "localhost"]
         );
-        let named = parse("[tls]\nnames = [\"eink.example.net\", \"192.168.1.5\"]").unwrap();
+        let named = parse("[tls]\nnames = [\"display.example.net\", \"192.168.1.5\"]").unwrap();
         assert_eq!(
             named.certificate_names(),
-            ["eink.example.net", "192.168.1.5"]
+            ["display.example.net", "192.168.1.5"]
         );
     }
 

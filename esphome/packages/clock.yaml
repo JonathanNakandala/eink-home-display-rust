@@ -39,7 +39,7 @@ script:
   # time (every TLS connection) is tried. Run before the first of those, once Wi-Fi is up.
   - id: ensure_clock
     then:
-      - lambda: 'id(clock_ok) = eink_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
+      - lambda: 'id(clock_ok) = home_display_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
       - if:
           condition:
             lambda: 'return !id(clock_ok);'
@@ -50,9 +50,9 @@ script:
                 then:
                   - wait_until:
                       condition:
-                        lambda: 'return eink_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
+                        lambda: 'return home_display_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
                       timeout: ${clock_wait}
-            - lambda: 'id(clock_ok) = eink_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
+            - lambda: 'id(clock_ok) = home_display_clock::usable(id(sntp_time).now().timestamp, id(shown_version));'
             - if:
                 condition:
                   lambda: 'return !id(clock_ok);'

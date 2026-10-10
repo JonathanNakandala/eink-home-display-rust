@@ -1,7 +1,7 @@
 #include "check.h"
-#include "eink/core/calendar.h"
+#include "home_display/core/calendar.h"
 
-using namespace eink_calendar;
+using namespace home_display_calendar;
 
 TEST(the_epoch_is_zero) { CHECK_EQ(epoch_seconds(1970, 1, 1, 0, 0, 0), (int64_t) 0); }
 

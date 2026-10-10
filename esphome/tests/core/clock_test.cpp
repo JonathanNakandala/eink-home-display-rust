@@ -1,9 +1,9 @@
 #include <cstdint>
 
 #include "check.h"
-#include "eink/core/clock.h"
+#include "home_display/core/clock.h"
 
-using namespace eink_clock;
+using namespace home_display_clock;
 
 TEST(a_clock_that_never_was_set_is_not_plausible) {
   CHECK(!plausible(0));

@@ -132,7 +132,7 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
             body = String,
             content_type = "text/plain; version=0.0.4; charset=utf-8",
             headers(("cache-control" = String, description = "Always `no-store`.")),
-            example = json!("# HELP eink_info The running version. Always 1.\n# TYPE eink_info gauge\neink_info{version=\"0.1.0\"} 1\n")
+            example = json!("# HELP home_display_info The running version. Always 1.\n# TYPE home_display_info gauge\nhome_display_info{version=\"0.1.0\"} 1\n")
         ),
         (status = 500, description = "The server could not work its state out.")
     )
@@ -321,19 +321,21 @@ mod tests {
         );
         let text = response.text().await.unwrap();
         assert!(
-            text.contains("eink_device_battery_volts{device=\"kitchen\"} 3.35"),
+            text.contains("home_display_device_battery_volts{device=\"kitchen\"} 3.35"),
             "{text}"
         );
         assert!(
-            text.contains("eink_device_battery_state{device=\"kitchen\",state=\"low\"} 1"),
+            text.contains("home_display_device_battery_state{device=\"kitchen\",state=\"low\"} 1"),
             "{text}"
         );
         assert!(
-            text.contains("eink_device_wifi_rssi_dbm{device=\"kitchen\"} -71"),
+            text.contains("home_display_device_wifi_rssi_dbm{device=\"kitchen\"} -71"),
             "{text}"
         );
         assert!(
-            text.contains("eink_device_last_failure{device=\"kitchen\",reason=\"download\"} 1"),
+            text.contains(
+                "home_display_device_last_failure{device=\"kitchen\",reason=\"download\"} 1"
+            ),
             "{text}"
         );
     }
@@ -415,11 +417,12 @@ mod tests {
             .text()
             .await
             .unwrap();
-        assert!(metrics.contains("eink_member_state{device=\"kitchen\",state=\"member\"} 1"));
         assert!(
-            metrics
-                .contains("eink_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"}")
+            metrics.contains("home_display_member_state{device=\"kitchen\",state=\"member\"} 1")
         );
+        assert!(metrics.contains(
+            "home_display_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"}"
+        ));
     }
 
     #[tokio::test]
@@ -439,6 +442,6 @@ mod tests {
             .text()
             .await
             .unwrap();
-        assert!(!metrics.contains("eink_member"));
+        assert!(!metrics.contains("home_display_member"));
     }
 }

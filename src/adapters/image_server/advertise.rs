@@ -2,7 +2,7 @@
 //! network finds it and says where it is.
 //!
 //! It is published as an ordinary `_http._tcp` service, which every service browser
-//! lists and can open, with the `path` TXT key naming the page. The `_eink-display`
+//! lists and can open, with the `path` TXT key naming the page. The `_home-display`
 //! subtype lets a scan ask for just this server.
 //!
 //! When the server speaks HTTPS and nothing else, it is `_https._tcp` instead (RFC 6763 and the
@@ -18,8 +18,8 @@ use super::ServerSettings;
 use crate::adapters::listen::Families;
 use crate::domain::models::display::ImageFormat;
 
-const SERVICE_SUBTYPE: &str = "_eink-display._sub._http._tcp.local.";
-const SECURE_SERVICE_SUBTYPE: &str = "_eink-display._sub._https._tcp.local.";
+const SERVICE_SUBTYPE: &str = "_home-display._sub._http._tcp.local.";
+const SECURE_SERVICE_SUBTYPE: &str = "_home-display._sub._https._tcp.local.";
 /// Instance names, like any DNS label, are at most 63 bytes (RFC 6763 section 4.1.1).
 const MAX_LABEL_BYTES: usize = 63;
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -209,7 +209,7 @@ fn host_label(name: &str) -> String {
         .collect::<Vec<_>>()
         .join("-");
     if label.is_empty() {
-        return "eink-display".to_owned();
+        return "home-display".to_owned();
     }
     label
         .chars()
@@ -232,7 +232,7 @@ mod tests {
         ServerSettings {
             bind: "[::]:8080".parse().unwrap(),
             advertise: true,
-            instance_name: "E-ink home display".to_owned(),
+            instance_name: "Home display".to_owned(),
             timing: PlanTiming {
                 wake_delay: Duration::from_secs(30),
                 stale_grace: Duration::from_secs(300),
@@ -252,9 +252,9 @@ mod tests {
 
     #[test]
     fn host_labels_are_valid_dns_labels() {
-        assert_eq!(host_label("E-ink home display"), "e-ink-home-display");
+        assert_eq!(host_label("Home display"), "home-display");
         assert_eq!(host_label("  Living room!! "), "living-room");
-        assert_eq!(host_label("日本語"), "eink-display");
+        assert_eq!(host_label("日本語"), "home-display");
         assert_eq!(host_label(&"a".repeat(100)).len(), 63);
     }
 
@@ -263,10 +263,10 @@ mod tests {
         let config = settings();
         let info = service_info(&config, 8080, ImageFormat::Png, Families::Both, None).unwrap();
 
-        assert_eq!(info.get_fullname(), "E-ink home display._http._tcp.local.");
+        assert_eq!(info.get_fullname(), "Home display._http._tcp.local.");
         assert_eq!(info.get_type(), "_http._tcp.local.");
         assert_eq!(info.get_subtype().as_deref(), Some(SERVICE_SUBTYPE));
-        assert_eq!(info.get_hostname(), "e-ink-home-display.local.");
+        assert_eq!(info.get_hostname(), "home-display.local.");
         assert_eq!(info.get_port(), 8080);
         assert!(info.is_addr_auto());
         assert_eq!(info.get_property_val_str("txtvers"), Some("1"));
@@ -324,16 +324,16 @@ mod tests {
         ] {
             let (ty, sub, full) = kinds(offer);
             assert_eq!(ty, "_http._tcp.local.", "{offer:?}");
-            assert_eq!(sub, "_eink-display._sub._http._tcp.local.");
-            assert_eq!(full, "E-ink home display._http._tcp.local.");
+            assert_eq!(sub, "_home-display._sub._http._tcp.local.");
+            assert_eq!(full, "Home display._http._tcp.local.");
         }
         let (ty, sub, full) = kinds(Some(SecureOffer {
             port: 8443,
             required: true,
         }));
         assert_eq!(ty, "_https._tcp.local.");
-        assert_eq!(sub, "_eink-display._sub._https._tcp.local.");
-        assert_eq!(full, "E-ink home display._https._tcp.local.");
+        assert_eq!(sub, "_home-display._sub._https._tcp.local.");
+        assert_eq!(full, "Home display._https._tcp.local.");
     }
 
     #[test]
@@ -405,7 +405,7 @@ mod tests {
     #[ignore = "needs multicast networking"]
     async fn advertised_service_is_found_by_a_scan() {
         let config = ServerSettings {
-            instance_name: "Eink test".to_owned(),
+            instance_name: "Home display test".to_owned(),
             ..settings()
         };
         let advertisement =
@@ -416,7 +416,7 @@ mod tests {
         let resolved = tokio::time::timeout(Duration::from_secs(15), async {
             while let Ok(event) = found.recv_async().await {
                 if let ServiceEvent::ServiceResolved(service) = event
-                    && service.get_fullname().starts_with("Eink test.")
+                    && service.get_fullname().starts_with("Home display test.")
                 {
                     return Some(service);
                 }
@@ -441,7 +441,7 @@ mod tests {
     #[ignore = "needs multicast networking"]
     async fn strict_https_is_found_as_an_https_service_and_not_as_an_http_one() {
         let config = ServerSettings {
-            instance_name: "Eink strict test".to_owned(),
+            instance_name: "Home display strict test".to_owned(),
             ..settings()
         };
         let offer = SecureOffer {
@@ -462,7 +462,9 @@ mod tests {
         let found = tokio::time::timeout(Duration::from_secs(15), async {
             while let Ok(event) = secure.recv_async().await {
                 if let ServiceEvent::ServiceResolved(service) = event
-                    && service.get_fullname().starts_with("Eink strict test.")
+                    && service
+                        .get_fullname()
+                        .starts_with("Home display strict test.")
                 {
                     return Some(service);
                 }
@@ -481,7 +483,9 @@ mod tests {
         let seen_as_http = tokio::time::timeout(Duration::from_secs(4), async {
             while let Ok(event) = plain.recv_async().await {
                 if let ServiceEvent::ServiceResolved(service) = event
-                    && service.get_fullname().starts_with("Eink strict test.")
+                    && service
+                        .get_fullname()
+                        .starts_with("Home display strict test.")
                 {
                     return true;
                 }

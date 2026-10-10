@@ -2,9 +2,9 @@
 
 #include "check.h"
 #include "fake_store.h"
-#include "eink/core/credentials.h"
+#include "home_display/core/credentials.h"
 
-using namespace eink_credentials;
+using namespace home_display_credentials;
 using fakes::MemoryStore;
 using State = Credentials::State;
 

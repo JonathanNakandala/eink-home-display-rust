@@ -5,7 +5,7 @@
 substitutions:
   # The server is found over mDNS, so nothing here needs to change when its address or
   # port does. Used only until the first successful scan, or if a scan finds nothing:
-  fallback_base: "http://e-ink-home-display.local:8080"
+  fallback_base: "http://home-display.local:8080"
   # The paths the Rust app serves the image and its plan at.
   image_path: /image
   plan_path: /plan
@@ -101,21 +101,21 @@ script:
     then:
       # What is asked is the same whichever way it is sent: made once, here.
       - lambda: |-
-          eink_state::plan_target = eink_plan::target(
+          home_display_state::plan_target = home_display_plan::target(
               id(force_refresh) ? "${refresh_path}" : "${plan_path}", id(shown_version),
-              eink_telemetry::query(App.get_name().str(), id(failed_wakes),
+              home_display_telemetry::query(App.get_name().str(), id(failed_wakes),
                                     {id(battery_known), id(battery_mv), id(battery_pct),
-                                     eink_battery::state_name(eink_state::battery_state)}));
+                                     home_display_battery::state_name(home_display_state::battery_state)}));
       - if:
           condition:
-            lambda: 'return eink_state::secure_active;'
+            lambda: 'return home_display_state::secure_active;'
           then:
             # Over TLS: made by esp/secure_chip.h, and answered to handle_plan the same way. No answer is a status of 0,
             # which handle_plan takes for a plan that did not come.
             - lambda: |-
-                eink_secure::aim(id(server_ip), id(server_tls_port));  // the server may have been looked for again
-                const eink_secure::Fetched answer =
-                    eink_secure_chip::fetch(id(force_refresh) ? "POST" : "GET", eink_state::plan_target);
+                home_display_secure::aim(id(server_ip), id(server_tls_port));  // the server may have been looked for again
+                const home_display_secure::Fetched answer =
+                    home_display_secure_chip::fetch(id(force_refresh) ? "POST" : "GET", home_display_state::plan_target);
                 id(handle_plan)->execute(answer.ok() ? answer.status : 0, answer.body);
           else:
             - if:
@@ -123,7 +123,7 @@ script:
                   lambda: 'return id(force_refresh);'
                 then:
                   - http_request.post:
-                      url: !lambda 'return eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + eink_state::plan_target;'
+                      url: !lambda 'return home_display_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + home_display_state::plan_target;'
                       capture_response: true
                       max_response_buffer_size: 1024
                       on_response:
@@ -133,7 +133,7 @@ script:
                             body: !lambda 'return body;'
                 else:
                   - http_request.get:
-                      url: !lambda 'return eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + eink_state::plan_target;'
+                      url: !lambda 'return home_display_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + home_display_state::plan_target;'
                       capture_response: true
                       max_response_buffer_size: 1024
                       on_response:
@@ -157,12 +157,12 @@ script:
             id(plan_stale) = root["stale"] | false;
             id(plan_age_seconds) = root["age_seconds"] | 0;
             // The server's zone, as how far it is ahead of UTC now. Kept only if it is a real offset.
-            if (eink_plan::keeps_offset(root["utc_offset_seconds"].is<int32_t>(),
+            if (home_display_plan::keeps_offset(root["utc_offset_seconds"].is<int32_t>(),
                                         root["utc_offset_seconds"].as<int32_t>())) {
               id(utc_offset_s) = root["utc_offset_seconds"].as<int32_t>();
               id(utc_offset_known) = true;
             }
-            id(plan_sleep_ms) = eink_wake::plan_sleep_ms(root["next_seconds"].as<uint32_t>());
+            id(plan_sleep_ms) = home_display_wake::plan_sleep_ms(root["next_seconds"].as<uint32_t>());
             return true;
           });
           if (!ok)
@@ -173,9 +173,9 @@ script:
             // fail to download, and resetting now would keep that failure at the first backoff step forever.
             id(plan_received_ms) = millis();
             // The picture is also redrawn to clear a notice or to add or remove the battery label (core/plan.h).
-            id(plan_changed) = eink_plan::needs_draw(id(plan_changed), id(plan_stale),
+            id(plan_changed) = home_display_plan::needs_draw(id(plan_changed), id(plan_stale),
                                                      {id(notice_on_panel), id(low_label_on_panel), id(battery_low),
-                                                      id(prompt_on_panel) && eink_state::prompt_wanted});
+                                                      id(prompt_on_panel) && home_display_state::prompt_wanted});
           }
       - if:
           condition:
@@ -198,15 +198,15 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return eink_health::image_buffer_fits(${image_width}, ${image_height});'
+            lambda: 'return home_display_health::image_buffer_fits(${image_width}, ${image_height});'
           then:
             # Over TLS the picture is asked for with the ETag of the one on the panel, if the panel shows just that (a notice
             # or a label that has to change is not): a server with the same bytes says 304, and nothing is downloaded or drawn.
             - lambda: |-
-                eink_state::downloaded_etag.clear();
-                eink_state::image_condition =
-                    eink_state::secure_active
-                        ? eink_shown::condition(eink_plan::shows_only_the_picture(
+                home_display_state::downloaded_etag.clear();
+                home_display_state::image_condition =
+                    home_display_state::secure_active
+                        ? home_display_shown::condition(home_display_plan::shows_only_the_picture(
                               {id(notice_on_panel), id(low_label_on_panel), id(battery_low)}))
                         : "";
             - online_image.set_url:
@@ -217,27 +217,27 @@ script:
                 # Says who is asking, so the server knows which display it sent this image to.
                 url: !lambda |-
                   // Over TLS only the path matters: the address and the name checked are the ones tls/secure.h holds.
-                  if (eink_state::secure_active)
-                    return std::string("https://") + eink_tls::SERVER_NAME + "${image_path}?device=" + App.get_name().str();
-                  std::string base = eink_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
+                  if (home_display_state::secure_active)
+                    return std::string("https://") + home_display_tls::SERVER_NAME + "${image_path}?device=" + App.get_name().str();
+                  std::string base = home_display_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
                   return base + "${image_path}?device=" + App.get_name().str();
             - component.update: dashboard
           else:
             # Not the server's fault, so don't go looking for it.
-            - lambda: 'eink_state::fail_reason = eink_report::Failure::MEMORY;'
+            - lambda: 'home_display_state::fail_reason = home_display_report::Failure::MEMORY;'
             - script.execute: give_up
 
   # The server didn't answer, or answered badly. It may have moved: look once per wake, then ask again.
   - id: server_failed
     then:
       - lambda: |-
-          eink_state::fail_reason = eink_state::secure_active
-                                        ? eink_secure_wake::failure_after(eink_secure::context().last)
-                                        : eink_report::Failure::SERVER;
+          home_display_state::fail_reason = home_display_state::secure_active
+                                        ? home_display_secure_wake::failure_after(home_display_secure::context().last)
+                                        : home_display_report::Failure::SERVER;
       - if:
           condition:
             # A display that prefers HTTPS goes on over plain HTTP, and the server is told why at the next wake that gets through.
-            lambda: 'return eink_state::secure_active && eink_secure_wake::falls_back(eink_service::transport_from("${server_transport}"));'
+            lambda: 'return home_display_state::secure_active && home_display_secure_wake::falls_back(home_display_service::transport_from("${server_transport}"));'
           then:
             - script.execute: use_plain_http
             - script.execute: check_plan
@@ -262,9 +262,9 @@ script:
     then:
       - lambda: |-
           id(searched) = true;
-          eink_service::Server server;
-          constexpr auto transport = eink_service::transport_from("${server_transport}");
-          id(server_found) = eink_discovery::find(server, "${server_name}", transport);
+          home_display_service::Server server;
+          constexpr auto transport = home_display_service::transport_from("${server_transport}");
+          id(server_found) = home_display_discovery::find(server, "${server_name}", transport);
           if (!id(server_found))
             return;
           id(server_ip) = server.ip;

@@ -39,8 +39,8 @@ use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,
 };
 
-const ROOT_NAME: &str = "E-ink home display root";
-const INTERMEDIATE_NAME: &str = "E-ink home display issuing authority";
+const ROOT_NAME: &str = "Home display root";
+const INTERMEDIATE_NAME: &str = "Home display issuing authority";
 /// Long enough that it doesn't expire in the life of a display, which can't be told to trust a new root
 /// without pairing again.
 const ROOT_YEARS: i64 = 20;
@@ -301,7 +301,7 @@ impl PrivateAuthority {
         params.distinguished_name = DistinguishedName::new();
         params
             .distinguished_name
-            .push(DnType::CommonName, "E-ink home display server");
+            .push(DnType::CommonName, "Home display server");
         params.subject_alt_names = names
             .iter()
             .map(|name| match name.parse::<std::net::IpAddr>() {

@@ -1,9 +1,9 @@
 #include <string>
 
 #include "check.h"
-#include "eink/core/base64.h"
+#include "home_display/core/base64.h"
 
-using namespace eink_base64;
+using namespace home_display_base64;
 
 static Bytes bytes(const std::string &text) { return Bytes(text.begin(), text.end()); }
 

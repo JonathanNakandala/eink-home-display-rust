@@ -295,7 +295,7 @@ async fn a_display_is_paired_from_start_to_finish_with_the_real_command() {
 async fn naming_a_display_that_is_not_known_or_cannot_be_one_fails_with_a_reason() {
     let server = start().await;
     let socket = path(&server.socket);
-    let unknown = displayctl(&["--socket", socket, "approve", "ghost", "B0AJ-QTW6-Y8SA"]).await;
+    let unknown = displayctl(&["--socket", socket, "approve", "ghost", "JGWP-14YW-3BT0"]).await;
     assert!(!unknown.status.success());
     assert!(err(&unknown).contains("ghost"), "{}", err(&unknown));
     let silly = displayctl(&["--socket", socket, "revoke", "has space"]).await;

@@ -1,9 +1,9 @@
 #include <cstdint>
 
 #include "check.h"
-#include "eink/core/wake.h"
+#include "home_display/core/wake.h"
 
-using namespace eink_wake;
+using namespace home_display_wake;
 
 TEST(plan_is_held_between_a_minute_and_a_day) {
   CHECK_EQ(plan_sleep_ms(0), 60000u);

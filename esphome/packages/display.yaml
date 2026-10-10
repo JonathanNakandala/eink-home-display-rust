@@ -1,5 +1,5 @@
 # =============================================================================
-# The e-paper panel and what is on it: the picture, a notice in the corner, the battery label.
+# The e-ink panel and what is on it: the picture, a notice in the corner, the battery label.
 # =============================================================================
 substitutions:
   # The panel's size: the decoded image buffer is this many bytes (checked against PSRAM before a download).
@@ -28,7 +28,7 @@ online_image:
           condition:
             lambda: 'return cached;'
           then:
-            # The server has the picture the panel already shows (304, see eink_shown): the panel is right as it is. It is not
+            # The server has the picture the panel already shows (304, see home_display_shown): the panel is right as it is. It is not
             # drawn, since the image buffer is empty after a sleep and a draw would blank it, nor waited on.
             - logger.log: "Same picture, keeping the panel"
             - lambda: 'id(shown_version) = id(plan_version);'
@@ -42,7 +42,7 @@ online_image:
             # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.
             - lambda: |-
                 id(shown_version) = id(plan_version);
-                eink_shown::keep(eink_state::downloaded_etag);
+                home_display_shown::keep(home_display_state::downloaded_etag);
                 id(notice_on_panel) = false;
                 id(prompt_on_panel) = false;
                 id(low_label_on_panel) = id(battery_low);
@@ -51,12 +51,12 @@ online_image:
       # /plan has just answered from this address, so the server is where it should be: looking for it
       # again would find the same thing. The log line above this says what went wrong.
       - lambda: |-
-          eink_state::fail_reason =
-              eink_secure_wake::download_failure(eink_state::secure_active, eink_secure::context().last);
+          home_display_state::fail_reason =
+              home_display_secure_wake::download_failure(home_display_state::secure_active, home_display_secure::context().last);
       - if:
           condition:
             # A display that prefers HTTPS tries the download once more over plain HTTP before it gives up.
-            lambda: 'return eink_state::secure_active && eink_secure_wake::falls_back(eink_service::transport_from("${server_transport}"));'
+            lambda: 'return home_display_state::secure_active && home_display_secure_wake::falls_back(home_display_service::transport_from("${server_transport}"));'
           then:
             - script.execute: use_plain_http
             - script.execute: fetch_image

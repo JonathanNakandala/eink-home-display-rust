@@ -26,30 +26,30 @@ script:
   # run before anything has used the identity (the boot sequence in reterminal-e1003.yaml). Only for a display that pairs.
   - id: reset_gate
     then:
-      - lambda: 'eink_state::reset_hold.begin(millis(), eink_button::key0_down());'
+      - lambda: 'home_display_state::reset_hold.begin(millis(), home_display_button::key0_down());'
       - while:
           condition:
-            lambda: 'return eink_state::reset_hold.active();'
+            lambda: 'return home_display_state::reset_hold.active();'
           then:
-            - lambda: 'eink_state::hold_action = eink_state::reset_hold.update(millis(), eink_button::key0_down());'
+            - lambda: 'home_display_state::hold_action = home_display_state::reset_hold.update(millis(), home_display_button::key0_down());'
             - if:
                 condition:
-                  lambda: 'return eink_state::hold_action == eink_hold::Action::WARN;'
+                  lambda: 'return home_display_state::hold_action == home_display_hold::Action::WARN;'
                 then:
                   - lambda: |-
-                      id(notice_text) = eink_hold::warning_notice();
+                      id(notice_text) = home_display_hold::warning_notice();
                       id(show_notice) = true;
                       id(notice_on_panel) = true;
                       id(prompt_on_panel) = false;
                   - component.update: epaper_display
             - if:
                 condition:
-                  lambda: 'return eink_state::hold_action == eink_hold::Action::RESET;'
+                  lambda: 'return home_display_state::hold_action == home_display_hold::Action::RESET;'
                 then:
                   - lambda: |-
-                      const bool erased = eink_secure_chip::erase_pairing();
+                      const bool erased = home_display_secure_chip::erase_pairing();
                       ESP_LOGW("reset", "Pairing %s", erased ? "erased" : "NOT erased");
-                      id(notice_text) = eink_hold::done_notice(erased);
+                      id(notice_text) = home_display_hold::done_notice(erased);
                       id(show_notice) = true;
                       id(notice_on_panel) = true;
                       id(prompt_on_panel) = false;
@@ -62,7 +62,7 @@ script:
     then:
       - if:
           condition:
-            lambda: 'return eink_service::transport_from("${server_transport}") != eink_service::Transport::HTTP;'
+            lambda: 'return home_display_service::transport_from("${server_transport}") != home_display_service::Transport::HTTP;'
           then:
             - script.execute: secure_session
           else:
@@ -78,64 +78,64 @@ script:
           then:
             - script.execute: discover
       - lambda: |-
-          constexpr auto transport = eink_service::transport_from("${server_transport}");
-          const auto begun = eink_secure_chip::begin(transport, id(server_ip), id(server_tls_port), App.get_name().str(),
+          constexpr auto transport = home_display_service::transport_from("${server_transport}");
+          const auto begun = home_display_secure_chip::begin(transport, id(server_ip), id(server_tls_port), App.get_name().str(),
                                                      id(shown_version), "${server_root}");
-          eink_state::route = begun.verdict.route;
-          eink_state::secure_failure = begun.verdict.failure;
-          eink_state::prompt_wanted = begun.verdict.prompt;
-          eink_state::prompt_text = begun.prompt;
-          eink_state::wait_retry_s = begun.retry_after_s;
-          if (begun.verdict.failure != eink_report::Failure::NONE)
-            ESP_LOGW("secure", "Not secure: %s", eink_report::failure_label(begun.verdict.failure));
+          home_display_state::route = begun.verdict.route;
+          home_display_state::secure_failure = begun.verdict.failure;
+          home_display_state::prompt_wanted = begun.verdict.prompt;
+          home_display_state::prompt_text = begun.prompt;
+          home_display_state::wait_retry_s = begun.retry_after_s;
+          if (begun.verdict.failure != home_display_report::Failure::NONE)
+            ESP_LOGW("secure", "Not secure: %s", home_display_report::failure_label(begun.verdict.failure));
       - if:
           condition:
-            lambda: 'return eink_state::route == eink_secure_wake::Route::SECURE;'
+            lambda: 'return home_display_state::route == home_display_secure_wake::Route::SECURE;'
           then:
             - script.execute: use_tls
             - script.execute: check_plan
           else:
             - if:
                 condition:
-                  lambda: 'return eink_state::route == eink_secure_wake::Route::WAIT_FOR_OWNER;'
+                  lambda: 'return home_display_state::route == home_display_secure_wake::Route::WAIT_FOR_OWNER;'
                 then:
                   - script.execute: wait_for_owner
                 else:
                   - if:
                       condition:
-                        lambda: 'return eink_state::route == eink_secure_wake::Route::FAIL;'
+                        lambda: 'return home_display_state::route == home_display_secure_wake::Route::FAIL;'
                       then:
-                        - lambda: 'eink_state::fail_reason = eink_state::secure_failure;'
+                        - lambda: 'home_display_state::fail_reason = home_display_state::secure_failure;'
                         - script.execute: give_up
                       else:
                         # Plain HTTP: the transport prefers HTTPS and it did not work out. The server hears why at the next wake
                         # that gets through.
                         - lambda: |-
-                            if (eink_state::secure_failure != eink_report::Failure::NONE)
-                              eink_telemetry::set_failure(eink_state::secure_failure);
+                            if (home_display_state::secure_failure != home_display_report::Failure::NONE)
+                              home_display_telemetry::set_failure(home_display_state::secure_failure);
                         - script.execute: check_plan
 
   # This wake speaks TLS: the picture comes through esp/secure_http.h.
   - id: use_tls
     then:
       - lambda: |-
-          eink_state::secure_active = true;
-          id(dashboard).set_parent(&eink_secure::http());
+          home_display_state::secure_active = true;
+          id(dashboard).set_parent(&home_display_secure::http());
 
   # Back to the stock component and plain HTTP, for the rest of this wake.
   - id: use_plain_http
     then:
       - lambda: |-
           ESP_LOGW("secure", "Falling back to plain HTTP");
-          eink_telemetry::set_failure(eink_state::fail_reason);
-          eink_state::secure_active = false;
+          home_display_telemetry::set_failure(home_display_state::fail_reason);
+          home_display_state::secure_active = false;
           id(dashboard).set_parent(id(stock_http));
 
   # The pairing code in the corner, for the owner to type in at the server.
   - id: show_prompt
     then:
       - lambda: |-
-          id(notice_text) = eink_state::prompt_text;
+          id(notice_text) = home_display_state::prompt_text;
           id(show_notice) = true;
           id(notice_on_panel) = true;
           id(prompt_on_panel) = true;
@@ -148,8 +148,8 @@ script:
     then:
       - script.stop: wake_watchdog
       - lambda: |-
-          eink_telemetry::set_failure(eink_state::secure_failure);
-          id(plan_sleep_ms) = eink_secure_wake::wait_sleep_ms(eink_state::wait_retry_s);
+          home_display_telemetry::set_failure(home_display_state::secure_failure);
+          id(plan_sleep_ms) = home_display_secure_wake::wait_sleep_ms(home_display_state::wait_retry_s);
           id(plan_received_ms) = 0;  // not the plan's sleep, so not shortened by the time the wake took
           ESP_LOGI("secure", "Waiting for the owner to approve this display; asking again in %u s",
                    (unsigned) (id(plan_sleep_ms) / 1000));

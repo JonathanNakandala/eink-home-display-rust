@@ -1,7 +1,7 @@
 #include "check.h"
-#include "eink/core/plan.h"
+#include "home_display/core/plan.h"
 
-using namespace eink_plan;
+using namespace home_display_plan;
 
 static const Screen CLEAN{false, false, false};
 

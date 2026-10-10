@@ -1,9 +1,9 @@
 #include <string>
 
 #include "check.h"
-#include "eink/core/body.h"
+#include "home_display/core/body.h"
 
-using namespace eink_body;
+using namespace home_display_body;
 
 // All of `raw` in pieces of `step` bytes; returns the body and leaves the response for inspection.
 static std::string run(Response &r, const std::string &raw, size_t step, bool close = true) {

@@ -79,7 +79,7 @@ pub struct Handles {
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "E-ink home display server",
+        title = "Home display server",
         description = "What displays and monitors ask of the server that serves the dashboard image."
     ),
     tags(

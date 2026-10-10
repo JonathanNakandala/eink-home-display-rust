@@ -38,7 +38,7 @@ deep_sleep:
     mode: ANY_LOW
 
 globals:
-  # Why this wake failed is `eink_state::fail_reason` (esp/state.h): typed, which a global can't be.
+  # Why this wake failed is `home_display_state::fail_reason` (esp/state.h): typed, which a global can't be.
 
   # Wakes in a row that failed. Drives the backoff; 0 after a wake that finished with the image current.
   - id: failed_wakes
@@ -92,7 +92,7 @@ script:
             - script.execute: begin_server
           else:
             # Without Wi-Fi there is no point asking the server, or looking for it.
-            - lambda: 'eink_state::fail_reason = eink_report::Failure::WIFI;'
+            - lambda: 'home_display_state::fail_reason = home_display_report::Failure::WIFI;'
             - script.execute: give_up
 
   # The image is current (just drawn, or already on the panel): say so if the server is behind, then sleep.
@@ -102,11 +102,11 @@ script:
       - script.stop: wake_watchdog
       - lambda: |-
           id(failed_wakes) = 0;
-          eink_telemetry::clear_failure();
+          home_display_telemetry::clear_failure();
       - if:
           condition:
             # The owner still has to type the code in at the server (a display that prefers HTTPS goes on without it).
-            lambda: 'return eink_state::prompt_wanted && !id(prompt_on_panel);'
+            lambda: 'return home_display_state::prompt_wanted && !id(prompt_on_panel);'
           then:
             - script.execute: show_prompt
       - if:
@@ -115,7 +115,7 @@ script:
             lambda: 'return id(plan_stale) && !id(notice_on_panel);'
           then:
             - lambda: |-
-                id(notice_text) = eink_format::stale_notice(id(plan_age_seconds));
+                id(notice_text) = home_display_format::stale_notice(id(plan_age_seconds));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
                 id(prompt_on_panel) = false;
@@ -131,12 +131,12 @@ script:
             lambda: 'return !id(maintenance);'
           then:
             # How long this wake was awake, which the next one tells the server (it costs battery).
-            - lambda: 'eink_telemetry::record_wake(millis(), eink_secure::context().first_handshake_ms);'
+            - lambda: 'home_display_telemetry::record_wake(millis(), home_display_secure::context().first_handshake_ms);'
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: !lambda |-
                   // The server counted from when it answered; this takes off what the wake has used since.
-                  return eink_wake::sleep_after(id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms}),
+                  return home_display_wake::sleep_after(id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms}),
                                                 id(plan_received_ms), millis());
 
   # Backstop for a wake that hangs (a server that accepts the connection and goes quiet). Without it the
@@ -151,7 +151,7 @@ script:
           condition:
             lambda: 'return !id(maintenance);'
           then:
-            - lambda: 'eink_state::fail_reason = eink_report::Failure::TIMEOUT;'
+            - lambda: 'home_display_state::fail_reason = home_display_report::Failure::TIMEOUT;'
             - logger.log:
                 level: WARN
                 format: "The wake didn't finish in ${wake_timeout}: giving up"
@@ -162,17 +162,17 @@ script:
   - id: backoff
     then:
       - lambda: |-
-          id(failed_wakes) = eink_wake::count_failure(id(failed_wakes));
+          id(failed_wakes) = home_display_wake::count_failure(id(failed_wakes));
           // 1st failure: sleep_duration, 2nd: twice that, and so on, up to max_backoff_ms.
-          id(plan_sleep_ms) = eink_wake::backoff_ms(id(failed_wakes), ${sleep_duration_ms}, ${max_backoff_ms});
+          id(plan_sleep_ms) = home_display_wake::backoff_ms(id(failed_wakes), ${sleep_duration_ms}, ${max_backoff_ms});
           // Not the server's plan, so not shortened by the time the wake took.
           id(plan_received_ms) = 0;
           // Told to the server by the next wake that gets through.
-          eink_telemetry::set_failure(eink_state::fail_reason);
+          home_display_telemetry::set_failure(home_display_state::fail_reason);
           ESP_LOGW("backoff", "Failure %u in a row (%s); sleeping %u s", (unsigned) id(failed_wakes),
-                   eink_report::failure_label(eink_state::fail_reason), (unsigned) (id(plan_sleep_ms) / 1000));
+                   home_display_report::failure_label(home_display_state::fail_reason), (unsigned) (id(plan_sleep_ms) / 1000));
 
-  # Nothing worked: the picture stays on the panel (e-paper keeps it). The first failure in a row
+  # Nothing worked: the picture stays on the panel (e-ink keeps it). The first failure in a row
   # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time
   # (doubling, up to max_backoff_ms), so a server that is down doesn't drain the battery.
   - id: give_up
@@ -198,7 +198,7 @@ script:
             - lambda: |-
                 // What went wrong, in a few words (the log has the detail), and when, if the time can be told.
                 auto now = id(sntp_time).now();
-                id(notice_text) = eink_format::failure_notice(eink_state::fail_reason, now.is_valid(), now.timestamp,
+                id(notice_text) = home_display_format::failure_notice(home_display_state::fail_reason, now.is_valid(), now.timestamp,
                                                               id(utc_offset_known), id(utc_offset_s));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;

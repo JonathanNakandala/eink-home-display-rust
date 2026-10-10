@@ -9,14 +9,14 @@
 
 #include "fuzz.h"
 
-#include "eink/core/body.h"
+#include "home_display/core/body.h"
 
 namespace {
 
 struct Result {
-  eink_body::State state;
+  home_display_body::State state;
   int status;
-  eink_body::Framing framing;
+  home_display_body::Framing framing;
   size_t content_length;
   std::string body;
   size_t body_bytes;
@@ -24,7 +24,7 @@ struct Result {
 };
 
 Result follow(const uint8_t *in, size_t length, size_t piece, bool closes) {
-  eink_body::Response response;
+  home_display_body::Response response;
   std::string body;
   for (size_t at = 0; at < length;) {
     const size_t take = std::min(piece, length - at);
@@ -32,12 +32,13 @@ Result follow(const uint8_t *in, size_t length, size_t piece, bool closes) {
     FUZZ_REQUIRE(used <= take);
     at += take;
     if (used < take) {  // it ended (done or failed) and the rest belongs to nothing
-      FUZZ_REQUIRE(response.state() == eink_body::State::DONE || response.state() == eink_body::State::FAILED);
+      FUZZ_REQUIRE(response.state() == home_display_body::State::DONE ||
+                   response.state() == home_display_body::State::FAILED);
       break;
     }
   }
   // An ended response takes no more.
-  if (response.state() == eink_body::State::DONE || response.state() == eink_body::State::FAILED) {
+  if (response.state() == home_display_body::State::DONE || response.state() == home_display_body::State::FAILED) {
     const uint8_t more[] = {'x', 'y'};
     std::string extra;
     FUZZ_REQUIRE(response.feed(more, sizeof more, extra) == 0);
@@ -48,11 +49,12 @@ Result follow(const uint8_t *in, size_t length, size_t piece, bool closes) {
   FUZZ_REQUIRE(body.size() == response.body_bytes());
   if (response.has_length()) {
     FUZZ_REQUIRE(body.size() <= response.content_length());
-    if (response.state() == eink_body::State::DONE)
+    if (response.state() == home_display_body::State::DONE)
       FUZZ_REQUIRE(body.size() == response.content_length());
   }
   if (closes)
-    FUZZ_REQUIRE(response.state() == eink_body::State::DONE || response.state() == eink_body::State::FAILED);
+    FUZZ_REQUIRE(response.state() == home_display_body::State::DONE ||
+                 response.state() == home_display_body::State::FAILED);
   Result result{response.state(),
                 response.status(),
                 response.framing(),

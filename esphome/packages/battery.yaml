@@ -86,7 +86,7 @@ globals:
     restore_value: no
     initial_value: '0'
 
-  # Its state and what to do about it are `eink_state::battery_state` and `battery_action` (esp/state.h): typed,
+  # Its state and what to do about it are `home_display_state::battery_state` and `battery_action` (esp/state.h): typed,
   # which a global can't be.
 
 script:
@@ -98,10 +98,10 @@ script:
           // sample() is the voltage at the pin, before the sensor's filters, so undo the divider here.
           float v = id(battery_voltage).sample() * ${battery_divider}f;
           // What the reading means, and the latches and what to do about them, are worked out in core/battery.h.
-          auto battery = eink_battery::assess(v, id(battery_halted), id(battery_low), ${battery_low_v},
+          auto battery = home_display_battery::assess(v, id(battery_halted), id(battery_low), ${battery_low_v},
                                               ${battery_empty_v}, ${battery_resume_v});
           id(battery_known) = battery.known;
-          eink_state::battery_action = battery.verdict.action;
+          home_display_state::battery_action = battery.verdict.action;
           if (!battery.known) {
             // No battery, or a bad reading: never a reason to stop.
             ESP_LOGW("battery", "Unusable reading (%.2f V); carrying on", v);
@@ -111,11 +111,11 @@ script:
           id(battery_pct) = battery.pct;
           id(battery_halted) = battery.verdict.halted;
           id(battery_low) = battery.verdict.low;
-          eink_state::battery_state = battery.verdict.state;
-          ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), eink_battery::state_name(eink_state::battery_state));
+          home_display_state::battery_state = battery.verdict.state;
+          ESP_LOGI("battery", "%.2f V, %d%%, %s", v, id(battery_pct), home_display_battery::state_name(home_display_state::battery_state));
       - if:
           condition:
-            lambda: 'return eink_state::battery_action == eink_battery::Action::HALT_NOW;'
+            lambda: 'return home_display_state::battery_action == home_display_battery::Action::HALT_NOW;'
           then:
             - logger.log: "Battery empty: showing the notice and stopping"
             - lambda: |-
@@ -129,7 +129,7 @@ script:
           else:
             - if:
                 condition:
-                  lambda: 'return eink_state::battery_action == eink_battery::Action::STILL_HALTED;'
+                  lambda: 'return home_display_state::battery_action == home_display_battery::Action::STILL_HALTED;'
                 then:
                   - logger.log: "Battery still empty: sleeping"
                   - script.execute: battery_sleep
@@ -143,7 +143,7 @@ script:
           condition:
             lambda: 'return !id(maintenance);'
           then:
-            - lambda: 'eink_telemetry::record_wake(millis(), eink_secure::context().first_handshake_ms);'
+            - lambda: 'home_display_telemetry::record_wake(millis(), home_display_secure::context().first_handshake_ms);'
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: ${battery_halt_sleep_ms}ms

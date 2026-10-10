@@ -1,8 +1,8 @@
 #include "check.h"
-#include "eink/core/etag.h"
-#include "eink/core/plan.h"
+#include "home_display/core/etag.h"
+#include "home_display/core/plan.h"
 
-using namespace eink_etag;
+using namespace home_display_etag;
 
 static const char *SERVER_ETAG = "\"0123456789abcdef0123456789abcdef\"";
 
@@ -73,8 +73,8 @@ TEST(the_etag_is_asked_with_only_when_the_panel_shows_just_the_picture) {
 }
 
 TEST(the_panel_shows_just_the_picture_unless_a_notice_or_a_label_is_on_it) {
-  using eink_plan::Screen;
-  using eink_plan::shows_only_the_picture;
+  using home_display_plan::Screen;
+  using home_display_plan::shows_only_the_picture;
   CHECK(shows_only_the_picture(Screen{false, false, false}));
   CHECK(shows_only_the_picture(Screen{false, true, true}));    // the label is there and should be
   CHECK(!shows_only_the_picture(Screen{true, false, false}));  // a notice

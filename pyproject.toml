@@ -7,7 +7,7 @@
 #
 # `make -C esphome check` does the same through Poetry.
 [project]
-name = "eink-home-display-firmware-tooling"
+name = "home-display-firmware-tooling"
 version = "0.0.0"
 description = "Pinned build tools for the ESPHome firmware in esphome/. Not a Python package."
 authors = [{ name = "Jonathan Nakandala" }]

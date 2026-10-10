@@ -1,9 +1,9 @@
 #include <string>
 
 #include "check.h"
-#include "eink/core/session_cache.h"
+#include "home_display/core/session_cache.h"
 
-using namespace eink_session_cache;
+using namespace home_display_session_cache;
 
 static Bytes blob(size_t n, uint8_t v = 7) { return Bytes(n, v); }
 static const Bytes ROOT = {0x30, 0x03, 0x02, 0x01, 0x01};

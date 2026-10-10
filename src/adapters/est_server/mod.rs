@@ -51,7 +51,7 @@ use crate::domain::services::certificate_authority::CertificateAuthority;
 /// which never changes. The certificate's trust still comes from the authority a display has pinned; the
 /// name is what tells the server's certificate from a display's, which has none. (`.internal` is
 /// reserved for private use, so it can never belong to anyone else.)
-pub const SERVER_NAME: &str = "eink-home-display.internal";
+pub const SERVER_NAME: &str = "home-display.internal";
 
 /// RFC 9266: the label, and no context, whose exported value identifies one TLS 1.3 connection.
 const BINDING_LABEL: &[u8] = b"EXPORTER-Channel-Binding";

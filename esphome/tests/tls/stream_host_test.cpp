@@ -7,10 +7,10 @@
 #include <string>
 
 #include "host_support.h"
-#include "eink/tls/secure.h"
+#include "home_display/tls/secure.h"
 
 using namespace support;
-using eink_stream::Stream;
+using home_display_stream::Stream;
 
 namespace {
 
@@ -88,7 +88,7 @@ TEST(a_connection_that_goes_quiet_is_an_error_and_not_a_wait_for_ever) {
   Display d("host-stream-stall");
   join_as(d);
   Stream stream;
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.timeout_ms = 1500;
   CHECK(stream.start(peer, "GET", "/stall") == Stream::Start::OK);
   std::string body;
@@ -119,7 +119,7 @@ TEST(a_display_the_server_has_revoked_is_turned_away) {
 TEST(a_server_that_does_not_chain_to_the_root_is_refused_before_anything_is_sent) {
   Display d("host-stream-middle");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.root = someone_elses_root();
   Stream stream;
   CHECK(stream.start(peer, "GET", "/image") == Stream::Start::REFUSED);
@@ -128,7 +128,7 @@ TEST(a_server_that_does_not_chain_to_the_root_is_refused_before_anything_is_sent
 TEST(nothing_listening_is_unreachable) {
   Display d("host-stream-gone");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.port = 1;
   Stream stream;
   CHECK(stream.start(peer, "GET", "/image") == Stream::Start::UNREACHABLE);
@@ -148,36 +148,36 @@ TEST(a_stream_can_be_used_again_after_it_is_closed) {
 TEST(a_small_request_is_fetched_whole_with_its_status_and_headers) {
   Display d("host-fetch");
   join_as(d);
-  eink_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
-                   &d.identity.private_key());
-  const eink_secure::Fetched plan = eink_secure::fetch("GET", "/plan?have=1&device=host-fetch");
+  home_display_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
+                           &d.identity.private_key());
+  const home_display_secure::Fetched plan = home_display_secure::fetch("GET", "/plan?have=1&device=host-fetch");
   CHECK(plan.ok());
   CHECK_EQ(plan.status, 200);
   CHECK(plan.body.find("\"utc_offset_seconds\":3600") != std::string::npos);
 
-  const eink_secure::Fetched who = eink_secure::fetch("GET", "/who");
+  const home_display_secure::Fetched who = home_display_secure::fetch("GET", "/who");
   CHECK_EQ(who.body, "host-fetch");  // known by its certificate
 
-  const eink_secure::Fetched missing = eink_secure::fetch("GET", "/nothing");
+  const home_display_secure::Fetched missing = home_display_secure::fetch("GET", "/nothing");
   CHECK(missing.ok());
   CHECK_EQ(missing.status, 404);
-  eink_secure::forget();
+  home_display_secure::forget();
 }
 
 TEST(a_body_longer_than_the_limit_is_not_a_plan) {
   Display d("host-fetch-long");
   join_as(d);
-  eink_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
-                   &d.identity.private_key());
-  const eink_secure::Fetched big = eink_secure::fetch("GET", "/big/100000");
+  home_display_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
+                           &d.identity.private_key());
+  const home_display_secure::Fetched big = home_display_secure::fetch("GET", "/big/100000");
   CHECK(!big.ok());
   CHECK(big.body.empty());
-  eink_secure::forget();
+  home_display_secure::forget();
 }
 
 TEST(nothing_is_sent_until_the_script_has_said_where_the_server_is) {
-  eink_secure::forget();
-  const eink_secure::Fetched none = eink_secure::fetch("GET", "/plan");
+  home_display_secure::forget();
+  const home_display_secure::Fetched none = home_display_secure::fetch("GET", "/plan");
   CHECK(!none.ok());
   CHECK(none.start == Stream::Start::UNREACHABLE);
 }
@@ -185,44 +185,44 @@ TEST(nothing_is_sent_until_the_script_has_said_where_the_server_is) {
 TEST(how_the_last_request_got_on_is_kept_for_the_script_to_classify) {
   Display d("host-fetch-class");
   join_as(d);
-  eink_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
-                   &d.identity.private_key());
-  eink_secure::fetch("GET", "/plan");
-  CHECK(eink_secure::context().last == Stream::Start::OK);
-  eink_secure::use(server_ip(), server_port(), someone_elses_root(), d.identity.certificate_der,
-                   &d.identity.private_key());
-  eink_secure::fetch("GET", "/plan");
-  CHECK(eink_secure::context().last == Stream::Start::REFUSED);
-  eink_secure::use(server_ip(), 1, d.identity.stored, d.identity.certificate_der, &d.identity.private_key());
-  eink_secure::fetch("GET", "/plan");
-  CHECK(eink_secure::context().last == Stream::Start::UNREACHABLE);
-  eink_secure::forget();
+  home_display_secure::use(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der,
+                           &d.identity.private_key());
+  home_display_secure::fetch("GET", "/plan");
+  CHECK(home_display_secure::context().last == Stream::Start::OK);
+  home_display_secure::use(server_ip(), server_port(), someone_elses_root(), d.identity.certificate_der,
+                           &d.identity.private_key());
+  home_display_secure::fetch("GET", "/plan");
+  CHECK(home_display_secure::context().last == Stream::Start::REFUSED);
+  home_display_secure::use(server_ip(), 1, d.identity.stored, d.identity.certificate_der, &d.identity.private_key());
+  home_display_secure::fetch("GET", "/plan");
+  CHECK(home_display_secure::context().last == Stream::Start::UNREACHABLE);
+  home_display_secure::forget();
 }
 
 TEST(the_server_can_be_moved_without_losing_what_the_display_holds) {
   Display d("host-aim");
   join_as(d);
-  eink_secure::use(server_ip(), 1, d.identity.stored, d.identity.certificate_der, &d.identity.private_key());
-  CHECK(!eink_secure::fetch("GET", "/plan").ok());  // nothing at port 1
-  eink_secure::aim(server_ip(), server_port());
-  CHECK(eink_secure::fetch("GET", "/plan").ok());
-  eink_secure::aim(0, 0);
-  CHECK(!eink_secure::context().ready);
-  eink_secure::forget();
+  home_display_secure::use(server_ip(), 1, d.identity.stored, d.identity.certificate_der, &d.identity.private_key());
+  CHECK(!home_display_secure::fetch("GET", "/plan").ok());  // nothing at port 1
+  home_display_secure::aim(server_ip(), server_port());
+  CHECK(home_display_secure::fetch("GET", "/plan").ok());
+  home_display_secure::aim(0, 0);
+  CHECK(!home_display_secure::context().ready);
+  home_display_secure::forget();
 }
 
 TEST(a_small_request_refuses_a_reply_bigger_than_its_limit) {
   Display d("host-stream-limit");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
-  const auto parsed = eink_stream::parse(peer);
+  home_display_stream::Peer peer = peer_of(d);
+  const auto parsed = home_display_stream::parse(peer);
   const auto ask = [&](size_t limit, const char *path) {
-    eink_tls::Session session;
-    CHECK(session.open(peer.ip, peer.port, &parsed->trust, &parsed->own, peer.key) == eink_tls::Open::OK);
+    home_display_tls::Session session;
+    CHECK(session.open(peer.ip, peer.port, &parsed->trust, &parsed->own, peer.key) == home_display_tls::Open::OK);
     return session.request("GET", path, "", "", limit);
   };
   // Within the limit it is the answer; over it there is none, rather than a heap filled by whatever the server sends.
-  const eink_http::Response fits = ask(64 * 1024, "/big/20000");
+  const home_display_http::Response fits = ask(64 * 1024, "/big/20000");
   CHECK_EQ(fits.status, 200);
   CHECK_EQ(fits.body.size(), 20000u);
   CHECK_EQ(ask(4 * 1024, "/big/20000").status, 0);
@@ -231,7 +231,7 @@ TEST(a_small_request_refuses_a_reply_bigger_than_its_limit) {
 TEST(a_server_that_never_stops_trickling_is_given_up_on_at_the_deadline) {
   Display d("host-stream-trickle");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.timeout_ms = 1500;  // every wait is far shorter than this: a byte comes every 100 ms
   peer.deadline_ms = 1000;
   Stream stream;
@@ -249,7 +249,7 @@ TEST(a_server_that_never_stops_trickling_is_given_up_on_at_the_deadline) {
 TEST(a_deadline_given_for_one_request_replaces_the_peers) {
   Display d("host-stream-timing");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.deadline_ms = 60000;
   Stream stream;
   const auto began = std::chrono::steady_clock::now();
@@ -263,7 +263,7 @@ TEST(a_deadline_given_for_one_request_replaces_the_peers) {
 TEST(a_request_within_its_deadline_is_unaffected) {
   Display d("host-stream-inside");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.deadline_ms = 30000;
   Stream stream;
   CHECK(stream.start(peer, "GET", "/big/50000") == Stream::Start::OK);
@@ -276,7 +276,7 @@ TEST(a_request_within_its_deadline_is_unaffected) {
 TEST(a_picture_the_server_says_the_display_has_is_a_304_with_no_body) {
   Display d("host-stream-304");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
 
   // Asked without, it is sent whole, with the name of its bytes.
   Stream first;
@@ -305,7 +305,7 @@ TEST(a_picture_the_server_says_the_display_has_is_a_304_with_no_body) {
 TEST(a_connection_says_how_long_its_handshake_took_and_the_wake_keeps_the_first) {
   Display d("host-stream-handshake");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
 
   Stream stream;
   CHECK_EQ(stream.handshake_ms(), 0u);  // nothing yet
@@ -315,15 +315,15 @@ TEST(a_connection_says_how_long_its_handshake_took_and_the_wake_keeps_the_first)
   CHECK_EQ(stream.handshake_ms(), 0u);
 
   // Through the wake's own entry: the first connection's time is kept, and the next does not replace it.
-  const eink_stream::Peer root = peer_of(d);
-  eink_secure::use(root.ip, root.port, root.root, root.certificate, root.key);
-  CHECK_EQ(eink_secure::context().first_handshake_ms, 0u);
-  CHECK(eink_secure::fetch("GET", "/who").ok());
-  const uint32_t first = eink_secure::context().first_handshake_ms;
+  const home_display_stream::Peer root = peer_of(d);
+  home_display_secure::use(root.ip, root.port, root.root, root.certificate, root.key);
+  CHECK_EQ(home_display_secure::context().first_handshake_ms, 0u);
+  CHECK(home_display_secure::fetch("GET", "/who").ok());
+  const uint32_t first = home_display_secure::context().first_handshake_ms;
   CHECK(first >= 1 && first < 10000);
-  eink_secure::context().first_handshake_ms = first + 12345;  // so a replacement would show
-  CHECK(eink_secure::fetch("GET", "/who").ok());
-  CHECK_EQ(eink_secure::context().first_handshake_ms, first + 12345);
-  eink_secure::forget();
-  CHECK_EQ(eink_secure::context().first_handshake_ms, 0u);
+  home_display_secure::context().first_handshake_ms = first + 12345;  // so a replacement would show
+  CHECK(home_display_secure::fetch("GET", "/who").ok());
+  CHECK_EQ(home_display_secure::context().first_handshake_ms, first + 12345);
+  home_display_secure::forget();
+  CHECK_EQ(home_display_secure::context().first_handshake_ms, 0u);
 }

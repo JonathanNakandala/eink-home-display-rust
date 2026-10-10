@@ -3,7 +3,7 @@
 //! custom integration. Everything is derived from the same `Status` that `/status` serves, so the
 //! two can't disagree.
 //!
-//! Conventions followed: a `eink_` prefix, base units (seconds, volts), `_timestamp_seconds` for
+//! Conventions followed: a `home_display_` prefix, base units (seconds, volts), `_timestamp_seconds` for
 //! a point in time, one gauge per state value (1 for the current state, 0 for the others) so an
 //! alert is a plain comparison, and label values escaped.
 
@@ -28,10 +28,10 @@ const HEALTH_STATES: [(Health, &str); 5] = [
 pub fn handshakes(out: &mut String, (full, resumed): (u64, u64)) {
     let _ = writeln!(
         out,
-        "# HELP eink_tls_handshakes_total TLS connections accepted since the service started, by how they began.\n\
-         # TYPE eink_tls_handshakes_total counter\n\
-         eink_tls_handshakes_total{{kind=\"full\"}} {full}\n\
-         eink_tls_handshakes_total{{kind=\"resumed\"}} {resumed}"
+        "# HELP home_display_tls_handshakes_total TLS connections accepted since the service started, by how they began.\n\
+         # TYPE home_display_tls_handshakes_total counter\n\
+         home_display_tls_handshakes_total{{kind=\"full\"}} {full}\n\
+         home_display_tls_handshakes_total{{kind=\"resumed\"}} {resumed}"
     );
 }
 
@@ -41,56 +41,68 @@ pub fn render(status: &Status) -> String {
         let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} gauge");
     };
 
-    gauge(&mut out, "eink_info", "The running version. Always 1.");
-    let _ = writeln!(out, "eink_info{{version=\"{}\"}} 1", escape(status.version));
+    gauge(
+        &mut out,
+        "home_display_info",
+        "The running version. Always 1.",
+    );
+    let _ = writeln!(
+        out,
+        "home_display_info{{version=\"{}\"}} 1",
+        escape(status.version)
+    );
 
     gauge(
         &mut out,
-        "eink_render_state",
+        "home_display_render_state",
         "1 for the service's current state, 0 for the others.",
     );
     for (state, name) in HEALTH_STATES {
         let _ = writeln!(
             out,
-            "eink_render_state{{state=\"{name}\"}} {}",
+            "home_display_render_state{{state=\"{name}\"}} {}",
             u8::from(status.state == state)
         );
     }
-    gauge(&mut out, "eink_rendering", "1 while a render is running.");
-    let _ = writeln!(out, "eink_rendering {}", u8::from(status.rendering));
     gauge(
         &mut out,
-        "eink_render_consecutive_failures",
+        "home_display_rendering",
+        "1 while a render is running.",
+    );
+    let _ = writeln!(out, "home_display_rendering {}", u8::from(status.rendering));
+    gauge(
+        &mut out,
+        "home_display_render_consecutive_failures",
         "Renders that failed in a row.",
     );
     let _ = writeln!(
         out,
-        "eink_render_consecutive_failures {}",
+        "home_display_render_consecutive_failures {}",
         status.consecutive_failures
     );
     gauge(
         &mut out,
-        "eink_uptime_seconds",
+        "home_display_uptime_seconds",
         "Seconds since the service started.",
     );
-    let _ = writeln!(out, "eink_uptime_seconds {}", status.uptime_seconds);
+    let _ = writeln!(out, "home_display_uptime_seconds {}", status.uptime_seconds);
     if let Some(image) = &status.image {
         gauge(
             &mut out,
-            "eink_image_age_seconds",
+            "home_display_image_age_seconds",
             "Seconds since the served image was rendered.",
         );
-        let _ = writeln!(out, "eink_image_age_seconds {}", image.age_seconds);
+        let _ = writeln!(out, "home_display_image_age_seconds {}", image.age_seconds);
     }
     if let Some(success) = &status.last_success {
         gauge(
             &mut out,
-            "eink_last_render_success_timestamp_seconds",
+            "home_display_last_render_success_timestamp_seconds",
             "When a render last succeeded.",
         );
         let _ = writeln!(
             out,
-            "eink_last_render_success_timestamp_seconds {}",
+            "home_display_last_render_success_timestamp_seconds {}",
             success.at.timestamp()
         );
     }
@@ -98,7 +110,7 @@ pub fn render(status: &Status) -> String {
     if !status.sources.is_empty() {
         gauge(
             &mut out,
-            "eink_source_state",
+            "home_display_source_state",
             "1 for a source's state on the last render, 0 for the others.",
         );
         for source in &status.sources {
@@ -110,7 +122,7 @@ pub fn render(status: &Status) -> String {
             for state in ["fresh", "stale", "unavailable"] {
                 let _ = writeln!(
                     out,
-                    "eink_source_state{{source=\"{}\",state=\"{state}\"}} {}",
+                    "home_display_source_state{{source=\"{}\",state=\"{state}\"}} {}",
                     escape(&source.name),
                     u8::from(state == current)
                 );
@@ -121,7 +133,7 @@ pub fn render(status: &Status) -> String {
     if !status.members.is_empty() {
         gauge(
             &mut out,
-            "eink_member_state",
+            "home_display_member_state",
             "1 for where the display stands in the certificate authority, 0 for the other states.",
         );
         for member in &status.members {
@@ -129,21 +141,21 @@ pub fn render(status: &Status) -> String {
             for state in ["pending", "approved", "member", "rejected", "revoked"] {
                 let _ = writeln!(
                     out,
-                    "eink_member_state{{device=\"{name}\",state=\"{state}\"}} {}",
+                    "home_display_member_state{{device=\"{name}\",state=\"{state}\"}} {}",
                     u8::from(member.state == state)
                 );
             }
         }
         gauge(
             &mut out,
-            "eink_member_certificate_expiry_timestamp_seconds",
+            "home_display_member_certificate_expiry_timestamp_seconds",
             "When the latest certificate a member was given ends. Alert on this being soon: a display renews with a third of its life left, so one that is close to the end has stopped renewing. Once past, it gets a new one by itself when switched on.",
         );
         for member in &status.members {
             if let Some(at) = member.certificate_not_after {
                 let _ = writeln!(
                     out,
-                    "eink_member_certificate_expiry_timestamp_seconds{{device=\"{}\"}} {}",
+                    "home_display_member_certificate_expiry_timestamp_seconds{{device=\"{}\"}} {}",
                     escape(&member.name),
                     at.timestamp()
                 );
@@ -151,14 +163,14 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_member_certificate_renewal_overdue",
+            "home_display_member_certificate_renewal_overdue",
             "1 if a member's certificate should have been renewed by now and has not been (about 63 days after it was issued, for a 90-day certificate). Alert on this: the display has stopped renewing, and the certificate will run out. 0 for the rest, and once it has run out.",
         );
         for member in &status.members {
             if member.certificate_not_after.is_some() {
                 let _ = writeln!(
                     out,
-                    "eink_member_certificate_renewal_overdue{{device=\"{}\"}} {}",
+                    "home_display_member_certificate_renewal_overdue{{device=\"{}\"}} {}",
                     escape(&member.name),
                     u8::from(member.renewal_overdue)
                 );
@@ -166,26 +178,26 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_member_replacement_waiting",
+            "home_display_member_replacement_waiting",
             "1 if a different key is waiting for the owner to approve it taking the display's name.",
         );
         for member in &status.members {
             let _ = writeln!(
                 out,
-                "eink_member_replacement_waiting{{device=\"{}\"}} {}",
+                "home_display_member_replacement_waiting{{device=\"{}\"}} {}",
                 escape(&member.name),
                 u8::from(member.replacement_waiting)
             );
         }
         gauge(
             &mut out,
-            "eink_member_changing_keys",
+            "home_display_member_changing_keys",
             "1 if the display has been given a certificate for a new key and has not used it yet.",
         );
         for member in &status.members {
             let _ = writeln!(
                 out,
-                "eink_member_changing_keys{{device=\"{}\"}} {}",
+                "home_display_member_changing_keys{{device=\"{}\"}} {}",
                 escape(&member.name),
                 u8::from(member.changing_keys)
             );
@@ -194,82 +206,82 @@ pub fn render(status: &Status) -> String {
     if !status.devices.is_empty() {
         gauge(
             &mut out,
-            "eink_device_last_seen_timestamp_seconds",
+            "home_display_device_last_seen_timestamp_seconds",
             "When the display last checked in.",
         );
         for device in &status.devices {
             let _ = writeln!(
                 out,
-                "eink_device_last_seen_timestamp_seconds{{device=\"{}\"}} {}",
+                "home_display_device_last_seen_timestamp_seconds{{device=\"{}\"}} {}",
                 escape(device.name.as_str()),
                 device.last_seen.timestamp()
             );
         }
         gauge(
             &mut out,
-            "eink_device_overdue",
+            "home_display_device_overdue",
             "1 if the display is later than it was told to be.",
         );
         for device in &status.devices {
             let _ = writeln!(
                 out,
-                "eink_device_overdue{{device=\"{}\"}} {}",
+                "home_display_device_overdue{{device=\"{}\"}} {}",
                 escape(device.name.as_str()),
                 u8::from(device.overdue)
             );
         }
         gauge(
             &mut out,
-            "eink_device_failed_wakes",
+            "home_display_device_failed_wakes",
             "Wakes in a row that failed, for any reason.",
         );
         for device in &status.devices {
             if let Some(failed) = device.failed_wakes {
                 let _ = writeln!(
                     out,
-                    "eink_device_failed_wakes{{device=\"{}\"}} {failed}",
+                    "home_display_device_failed_wakes{{device=\"{}\"}} {failed}",
                     escape(device.name.as_str())
                 );
             }
         }
         gauge(
             &mut out,
-            "eink_device_wifi_rssi_dbm",
+            "home_display_device_wifi_rssi_dbm",
             "The display's Wi-Fi signal strength at its last check-in.",
         );
         for device in &status.devices {
             if let Some(dbm) = device.wifi_rssi_dbm {
                 let _ = writeln!(
                     out,
-                    "eink_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}",
+                    "home_display_device_wifi_rssi_dbm{{device=\"{}\"}} {dbm}",
                     escape(device.name.as_str())
                 );
             }
         }
         gauge(
             &mut out,
-            "eink_device_last_wake_seconds",
+            "home_display_device_last_wake_seconds",
             "How long the display's previous wake was awake.",
         );
         for device in &status.devices {
             if let Some(seconds) = device.last_wake_seconds {
                 let _ = writeln!(
                     out,
-                    "eink_device_last_wake_seconds{{device=\"{}\"}} {seconds}",
+                    "home_display_device_last_wake_seconds{{device=\"{}\"}} {seconds}",
                     escape(device.name.as_str())
                 );
             }
         }
         gauge(
             &mut out,
-            "eink_device_firmware_info",
+            "home_display_device_firmware_info",
             "The firmware version the display runs, as a label. Always 1.",
         );
         for device in &status.devices {
             if let Some(firmware) = &device.firmware {
                 let _ = writeln!(
                     out,
-                    "eink_device_firmware_info{{device=\"{}\",firmware=\"{}\"}} 1",
+                    "home_display_device_firmware_info{{device=\"{}\",firmware=\"{}\"}} 1",
                     escape(device.name.as_str()),
                     escape(firmware)
                 );
@@ -277,14 +289,14 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_last_tls_seconds",
+            "home_display_device_last_tls_seconds",
             "How long the display's first TLS handshake of its previous wake took, as the display timed it.",
         );
         for device in &status.devices {
             if let Some(ms) = device.last_tls_milliseconds {
                 let _ = writeln!(
                     out,
-                    "eink_device_last_tls_seconds{{device=\"{}\"}} {}",
+                    "home_display_device_last_tls_seconds{{device=\"{}\"}} {}",
                     escape(device.name.as_str()),
                     f64::from(ms) / 1000.0
                 );
@@ -292,14 +304,14 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_last_heap_min_bytes",
+            "home_display_device_last_heap_min_bytes",
             "The least free heap the display had during its previous wake: how close the handshake came to running it out.",
         );
         for device in &status.devices {
             if let Some(bytes) = device.last_heap_min_bytes {
                 let _ = writeln!(
                     out,
-                    "eink_device_last_heap_min_bytes{{device=\"{}\"}} {bytes}",
+                    "home_display_device_last_heap_min_bytes{{device=\"{}\"}} {bytes}",
                     escape(device.name.as_str())
                 );
             }
@@ -307,30 +319,30 @@ pub fn render(status: &Status) -> String {
         // The server's own view of the display's TLS connections (HTTPS only), which the display cannot misreport.
         let _ = writeln!(
             out,
-            "# HELP eink_device_tls_handshakes_total A display's TLS connections since the service started, by how they began.\n\
-             # TYPE eink_device_tls_handshakes_total counter"
+            "# HELP home_display_device_tls_handshakes_total A display's TLS connections since the service started, by how they began.\n\
+             # TYPE home_display_device_tls_handshakes_total counter"
         );
         for device in &status.devices {
             if let Some(connection) = &device.connection {
                 let name = escape(device.name.as_str());
                 let _ = writeln!(
                     out,
-                    "eink_device_tls_handshakes_total{{device=\"{name}\",kind=\"full\"}} {}\n\
-                     eink_device_tls_handshakes_total{{device=\"{name}\",kind=\"resumed\"}} {}",
+                    "home_display_device_tls_handshakes_total{{device=\"{name}\",kind=\"full\"}} {}\n\
+                     home_display_device_tls_handshakes_total{{device=\"{name}\",kind=\"resumed\"}} {}",
                     connection.full_handshakes, connection.resumed_handshakes
                 );
             }
         }
         gauge(
             &mut out,
-            "eink_device_tls_last_resumed",
+            "home_display_device_tls_last_resumed",
             "1 if the display's latest TLS connection resumed a session, 0 if it began with a full handshake.",
         );
         for device in &status.devices {
             if let Some(connection) = &device.connection {
                 let _ = writeln!(
                     out,
-                    "eink_device_tls_last_resumed{{device=\"{}\"}} {}",
+                    "home_display_device_tls_last_resumed{{device=\"{}\"}} {}",
                     escape(device.name.as_str()),
                     u8::from(connection.last_resumed)
                 );
@@ -338,14 +350,14 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_tls_last_handshake_seconds",
+            "home_display_device_tls_last_handshake_seconds",
             "How long the display's latest TLS handshake took, as the server saw it: from accepting the connection to its end, so it includes the display's own work and the network between.",
         );
         for device in &status.devices {
             if let Some(connection) = &device.connection {
                 let _ = writeln!(
                     out,
-                    "eink_device_tls_last_handshake_seconds{{device=\"{}\"}} {}",
+                    "home_display_device_tls_last_handshake_seconds{{device=\"{}\"}} {}",
                     escape(device.name.as_str()),
                     f64::from(connection.last_handshake_milliseconds) / 1000.0
                 );
@@ -353,20 +365,20 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_last_failure",
+            "home_display_device_last_failure",
             "1 for why the display's last failed wake failed (none if it didn't), 0 for the others.",
         );
         for device in &status.devices {
             let name = escape(device.name.as_str());
             let _ = writeln!(
                 out,
-                "eink_device_last_failure{{device=\"{name}\",reason=\"none\"}} {}",
+                "home_display_device_last_failure{{device=\"{name}\",reason=\"none\"}} {}",
                 u8::from(device.last_failure.is_none())
             );
             for reason in FailureReason::ALL {
                 let _ = writeln!(
                     out,
-                    "eink_device_last_failure{{device=\"{name}\",reason=\"{}\"}} {}",
+                    "home_display_device_last_failure{{device=\"{name}\",reason=\"{}\"}} {}",
                     reason.as_str(),
                     u8::from(device.last_failure == Some(reason))
                 );
@@ -374,14 +386,14 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_battery_volts",
+            "home_display_device_battery_volts",
             "The display's battery voltage.",
         );
         for device in &status.devices {
             if let Some(mv) = device.battery_millivolts {
                 let _ = writeln!(
                     out,
-                    "eink_device_battery_volts{{device=\"{}\"}} {}",
+                    "home_display_device_battery_volts{{device=\"{}\"}} {}",
                     escape(device.name.as_str()),
                     f64::from(mv) / 1000.0
                 );
@@ -389,14 +401,14 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_battery_ratio",
+            "home_display_device_battery_ratio",
             "The display's battery charge, 0 to 1.",
         );
         for device in &status.devices {
             if let Some(pct) = device.battery_percent {
                 let _ = writeln!(
                     out,
-                    "eink_device_battery_ratio{{device=\"{}\"}} {}",
+                    "home_display_device_battery_ratio{{device=\"{}\"}} {}",
                     escape(device.name.as_str()),
                     f64::from(pct) / 100.0
                 );
@@ -404,7 +416,7 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
-            "eink_device_battery_state",
+            "home_display_device_battery_state",
             "1 for the display's battery state, 0 for the others.",
         );
         for device in &status.devices {
@@ -412,7 +424,7 @@ pub fn render(status: &Status) -> String {
                 for state in BatteryState::ALL {
                     let _ = writeln!(
                         out,
-                        "eink_device_battery_state{{device=\"{}\",state=\"{}\"}} {}",
+                        "home_display_device_battery_state{{device=\"{}\",state=\"{}\"}} {}",
                         escape(device.name.as_str()),
                         state.as_str(),
                         u8::from(state == current)
@@ -449,10 +461,10 @@ mod tests {
         handshakes(&mut out, (7, 42));
         assert_eq!(
             out,
-            "# HELP eink_tls_handshakes_total TLS connections accepted since the service started, by how they began.\n\
-             # TYPE eink_tls_handshakes_total counter\n\
-             eink_tls_handshakes_total{kind=\"full\"} 7\n\
-             eink_tls_handshakes_total{kind=\"resumed\"} 42\n"
+            "# HELP home_display_tls_handshakes_total TLS connections accepted since the service started, by how they began.\n\
+             # TYPE home_display_tls_handshakes_total counter\n\
+             home_display_tls_handshakes_total{kind=\"full\"} 7\n\
+             home_display_tls_handshakes_total{kind=\"resumed\"} 42\n"
         );
     }
 
@@ -538,16 +550,16 @@ mod tests {
     fn exposes_where_each_display_stands_in_the_authority() {
         let text = render(&status());
         for line in [
-            "eink_member_state{device=\"kitchen\",state=\"member\"} 1",
-            "eink_member_state{device=\"kitchen\",state=\"pending\"} 0",
-            "eink_member_state{device=\"hall\",state=\"pending\"} 1",
-            "eink_member_state{device=\"hall\",state=\"member\"} 0",
-            "eink_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"} 1798200000",
-            "eink_member_certificate_renewal_overdue{device=\"kitchen\"} 1",
-            "eink_member_replacement_waiting{device=\"hall\"} 1",
-            "eink_member_replacement_waiting{device=\"kitchen\"} 0",
-            "eink_member_changing_keys{device=\"kitchen\"} 1",
-            "eink_member_changing_keys{device=\"hall\"} 0",
+            "home_display_member_state{device=\"kitchen\",state=\"member\"} 1",
+            "home_display_member_state{device=\"kitchen\",state=\"pending\"} 0",
+            "home_display_member_state{device=\"hall\",state=\"pending\"} 1",
+            "home_display_member_state{device=\"hall\",state=\"member\"} 0",
+            "home_display_member_certificate_expiry_timestamp_seconds{device=\"kitchen\"} 1798200000",
+            "home_display_member_certificate_renewal_overdue{device=\"kitchen\"} 1",
+            "home_display_member_replacement_waiting{device=\"hall\"} 1",
+            "home_display_member_replacement_waiting{device=\"kitchen\"} 0",
+            "home_display_member_changing_keys{device=\"kitchen\"} 1",
+            "home_display_member_changing_keys{device=\"hall\"} 0",
         ] {
             assert!(
                 text.lines().any(|l| l == line),
@@ -563,37 +575,37 @@ mod tests {
     fn says_nothing_about_the_authority_when_there_are_no_members() {
         let mut plain = status();
         plain.members.clear();
-        assert!(!render(&plain).contains("eink_member"));
+        assert!(!render(&plain).contains("home_display_member"));
     }
 
     #[test]
     fn exposes_service_and_device_gauges() {
         let text = render(&status());
         for line in [
-            "eink_render_state{state=\"degraded\"} 1",
-            "eink_render_state{state=\"ok\"} 0",
-            "eink_image_age_seconds 90",
-            "eink_uptime_seconds 3600",
-            "eink_device_overdue{device=\"kitchen\"} 1",
-            "eink_device_failed_wakes{device=\"kitchen\"} 2",
-            "eink_device_wifi_rssi_dbm{device=\"kitchen\"} -71",
-            "eink_device_last_wake_seconds{device=\"kitchen\"} 24",
-            "eink_device_firmware_info{device=\"kitchen\",firmware=\"0.2.0\"} 1",
-            "eink_device_last_tls_seconds{device=\"kitchen\"} 1.1",
-            "eink_device_last_heap_min_bytes{device=\"kitchen\"} 61440",
-            "eink_device_tls_handshakes_total{device=\"kitchen\",kind=\"full\"} 1",
-            "eink_device_tls_handshakes_total{device=\"kitchen\",kind=\"resumed\"} 4",
-            "eink_device_tls_last_resumed{device=\"kitchen\"} 1",
-            "eink_device_tls_last_handshake_seconds{device=\"kitchen\"} 0.25",
-            "eink_device_last_failure{device=\"kitchen\",reason=\"download\"} 1",
-            "eink_device_last_failure{device=\"kitchen\",reason=\"wifi\"} 0",
-            "eink_device_last_failure{device=\"kitchen\",reason=\"none\"} 0",
-            "eink_device_battery_volts{device=\"kitchen\"} 3.712",
-            "eink_device_battery_ratio{device=\"kitchen\"} 0.47",
-            "eink_device_battery_state{device=\"kitchen\",state=\"low\"} 1",
-            "eink_device_battery_state{device=\"kitchen\",state=\"empty\"} 0",
-            "eink_source_state{source=\"TURNPIKE \\\"LANE\\\"\",state=\"stale\"} 1",
-            "eink_info{version=\"1.2.3\"} 1",
+            "home_display_render_state{state=\"degraded\"} 1",
+            "home_display_render_state{state=\"ok\"} 0",
+            "home_display_image_age_seconds 90",
+            "home_display_uptime_seconds 3600",
+            "home_display_device_overdue{device=\"kitchen\"} 1",
+            "home_display_device_failed_wakes{device=\"kitchen\"} 2",
+            "home_display_device_wifi_rssi_dbm{device=\"kitchen\"} -71",
+            "home_display_device_last_wake_seconds{device=\"kitchen\"} 24",
+            "home_display_device_firmware_info{device=\"kitchen\",firmware=\"0.2.0\"} 1",
+            "home_display_device_last_tls_seconds{device=\"kitchen\"} 1.1",
+            "home_display_device_last_heap_min_bytes{device=\"kitchen\"} 61440",
+            "home_display_device_tls_handshakes_total{device=\"kitchen\",kind=\"full\"} 1",
+            "home_display_device_tls_handshakes_total{device=\"kitchen\",kind=\"resumed\"} 4",
+            "home_display_device_tls_last_resumed{device=\"kitchen\"} 1",
+            "home_display_device_tls_last_handshake_seconds{device=\"kitchen\"} 0.25",
+            "home_display_device_last_failure{device=\"kitchen\",reason=\"download\"} 1",
+            "home_display_device_last_failure{device=\"kitchen\",reason=\"wifi\"} 0",
+            "home_display_device_last_failure{device=\"kitchen\",reason=\"none\"} 0",
+            "home_display_device_battery_volts{device=\"kitchen\"} 3.712",
+            "home_display_device_battery_ratio{device=\"kitchen\"} 0.47",
+            "home_display_device_battery_state{device=\"kitchen\",state=\"low\"} 1",
+            "home_display_device_battery_state{device=\"kitchen\",state=\"empty\"} 0",
+            "home_display_source_state{source=\"TURNPIKE \\\"LANE\\\"\",state=\"stale\"} 1",
+            "home_display_info{version=\"1.2.3\"} 1",
         ] {
             assert!(
                 text.lines().any(|l| l == line),
@@ -623,8 +635,8 @@ mod tests {
         bare.devices.clear();
         bare.sources.clear();
         let text = render(&bare);
-        assert!(!text.contains("eink_image_age_seconds"));
-        assert!(!text.contains("eink_device"));
-        assert!(!text.contains("eink_source_state"));
+        assert!(!text.contains("home_display_image_age_seconds"));
+        assert!(!text.contains("home_display_device"));
+        assert!(!text.contains("home_display_source_state"));
     }
 }

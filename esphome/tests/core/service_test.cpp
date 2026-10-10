@@ -1,9 +1,9 @@
 #include <string>
 
 #include "check.h"
-#include "eink/core/service.h"
+#include "home_display/core/service.h"
 
-using namespace eink_service;
+using namespace home_display_service;
 
 // 192.168.1.20, as lwIP stores it.
 static const uint32_t IP = 192u | (168u << 8) | (1u << 16) | (20u << 24);
@@ -11,7 +11,7 @@ static const uint32_t IP = 192u | (168u << 8) | (1u << 16) | (20u << 24);
 // What the server announces for each of its `transport` settings (advertise.rs).
 static Announcement http_only() {
   Announcement a;
-  a.instance = "E-ink home display";
+  a.instance = "Home display";
   a.port = 8080;
   a.ip = IP;
   a.txtvers = "1";
@@ -118,7 +118,7 @@ TEST(an_answer_with_no_address_or_port_cannot_be_used) {
 TEST(a_named_server_is_picked_from_several) {
   Server server;
   Announcement a = http_only();
-  CHECK(accept(a, "E-ink home display", Transport::HTTP, server));
+  CHECK(accept(a, "Home display", Transport::HTTP, server));
   CHECK(!accept(a, "Kitchen", Transport::HTTP, server));
   CHECK(accept(a, "", Transport::HTTP, server));  // empty takes the first
 }

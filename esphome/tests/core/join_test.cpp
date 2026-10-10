@@ -2,14 +2,14 @@
 
 #include "check.h"
 #include "fakes.h"
-#include "eink/core/join.h"
+#include "home_display/core/join.h"
 
 using namespace fakes;
-using eink_join::Joiner;
-using eink_join::Outcome;
-using eink_pairing::Answer;
-using eink_pairing::Standing;
-using eink_report::Failure;
+using home_display_join::Joiner;
+using home_display_join::Outcome;
+using home_display_pairing::Answer;
+using home_display_pairing::Standing;
+using home_display_report::Failure;
 
 static const int64_t START = 1791463200;
 static const int64_t DAY = 86400;
@@ -69,7 +69,7 @@ TEST(a_new_display_fetches_the_root_makes_its_key_and_asks_then_waits_showing_th
   CHECK(!out.paired);
   CHECK(w.identity.last == Answer::PENDING);
   // The code is the one worked out from the root it saw and its own key.
-  CHECK_EQ(out.code, eink_pairing::code(ROOT, "kitchen", w.identity.key_spki));
+  CHECK_EQ(out.code, home_display_pairing::code(ROOT, "kitchen", w.identity.key_spki));
   CHECK_EQ(w.est.enrolled_against, ROOT);
 }
 
@@ -178,7 +178,7 @@ TEST(an_expired_display_the_server_does_not_know_waits_for_the_owner_and_loses_n
   CHECK(out.standing == Standing::NOT_RECOGNISED);
   CHECK(out.failure == Failure::UNRECOGNISED);
   CHECK(!out.paired);
-  CHECK_EQ(out.code, eink_pairing::code(ROOT, "kitchen", w.identity.key_spki));
+  CHECK_EQ(out.code, home_display_pairing::code(ROOT, "kitchen", w.identity.key_spki));
   // Pairing is removed only by the owner, never by an error.
   CHECK(w.identity.key && w.identity.certificate && w.identity.stored == ROOT);
   CHECK(w.identity.last == Answer::REFUSED);
@@ -236,7 +236,7 @@ TEST(a_root_built_into_the_firmware_is_never_fetched_and_always_the_one_trusted)
   const Outcome out = w.run();
   CHECK_EQ(w.est.roots_fetched, 0);
   CHECK(w.est.enrolled_against == OTHER_ROOT);
-  CHECK_EQ(out.code, eink_pairing::code(OTHER_ROOT, "kitchen", w.identity.key_spki));
+  CHECK_EQ(out.code, home_display_pairing::code(OTHER_ROOT, "kitchen", w.identity.key_spki));
   // A stored root does not beat it.
   World x;
   x.identity.compiled = OTHER_ROOT;

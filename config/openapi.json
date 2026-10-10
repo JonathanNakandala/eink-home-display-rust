@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "E-ink home display server",
+    "title": "Home display server",
     "description": "What displays and monitors ask of the server that serves the dashboard image.",
     "version": "0.1.0"
   },
@@ -186,7 +186,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "example": "# HELP eink_info The running version. Always 1.\n# TYPE eink_info gauge\neink_info{version=\"0.1.0\"} 1\n"
+                "example": "# HELP home_display_info The running version. Always 1.\n# TYPE home_display_info gauge\nhome_display_info{version=\"0.1.0\"} 1\n"
               }
             }
           },
