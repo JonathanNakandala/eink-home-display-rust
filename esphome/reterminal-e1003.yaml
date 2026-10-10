@@ -25,6 +25,7 @@
 #   display.yaml  the e-paper panel, the picture, the notice in the corner
 #   secure.yaml   joining the server's authority and speaking TLS to it (when server_transport is not http)
 #   wake.yaml     how a wake ends: sleeping, backoff, the watchdog, the maintenance button
+#   version.yaml  the firmware's version, which release-please changes
 # =============================================================================
 substitutions:
   device_name: reterminal-e1003
@@ -33,6 +34,11 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
+  # The firmware's version (packages/version.yaml, set by the release): compiled in, logged at boot, shown by the ESPHome
+  # dashboard and sent to the server in every check-in.
+  project:
+    name: home-display.esphome-firmware
+    version: ${firmware_version}
   # Appends the last three bytes of the chip's MAC address to the name (reterminal-e1003-a1b2c3). The MAC is
   # burned into the chip, so the name is unique to this display and survives flashing, and the same file can be
   # flashed to several displays without them sharing a name. The server tells displays apart by this name: it is
@@ -69,6 +75,7 @@ esphome:
       - script.execute: battery_gate
 
 packages:
+  version: !include packages/version.yaml
   board: !include packages/board.yaml
   battery: !include packages/battery.yaml
   clock: !include packages/clock.yaml

@@ -262,6 +262,21 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
+            "eink_device_firmware_info",
+            "The firmware version the display runs, as a label. Always 1.",
+        );
+        for device in &status.devices {
+            if let Some(firmware) = &device.firmware {
+                let _ = writeln!(
+                    out,
+                    "eink_device_firmware_info{{device=\"{}\",firmware=\"{}\"}} 1",
+                    escape(device.name.as_str()),
+                    escape(firmware)
+                );
+            }
+        }
+        gauge(
+            &mut out,
             "eink_device_last_tls_seconds",
             "How long the display's first TLS handshake of its previous wake took, as the display timed it.",
         );
@@ -476,6 +491,7 @@ mod tests {
                 last_wake_seconds: Some(24),
                 last_tls_milliseconds: Some(1100),
                 last_heap_min_bytes: Some(61_440),
+                firmware: Some("0.2.0".to_owned()),
                 connection: Some(crate::application::devices::ConnectionStatus {
                     full_handshakes: 1,
                     resumed_handshakes: 4,
@@ -562,6 +578,7 @@ mod tests {
             "eink_device_failed_wakes{device=\"kitchen\"} 2",
             "eink_device_wifi_rssi_dbm{device=\"kitchen\"} -71",
             "eink_device_last_wake_seconds{device=\"kitchen\"} 24",
+            "eink_device_firmware_info{device=\"kitchen\",firmware=\"0.2.0\"} 1",
             "eink_device_last_tls_seconds{device=\"kitchen\"} 1.1",
             "eink_device_last_heap_min_bytes{device=\"kitchen\"} 61440",
             "eink_device_tls_handshakes_total{device=\"kitchen\",kind=\"full\"} 1",

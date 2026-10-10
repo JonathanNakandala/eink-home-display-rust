@@ -1,16 +1,28 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "rust",
+  "separate-pull-requests": true,
+  "always-update": true,
   "pull-request-header": " ",
   "pull-request-footer": " ",
-  "always-update": true,
+  "include-component-in-tag": true,
   "component-no-space": true,
+  "pull-request-title-pattern": "chore(${component}): release ${version}",
   "packages": {
     ".": {
+      "release-type": "rust",
       "package-name": "eink-home-display-rust",
       "bump-minor-pre-major": true,
       "draft": false,
-      "prerelease": false
+      "prerelease": false,
+      "exclude-paths": ["esphome"]
+    },
+    "esphome": {
+      "release-type": "simple",
+      "package-name": "home-display-esphome-firmware",
+      "bump-minor-pre-major": true,
+      "draft": false,
+      "prerelease": false,
+      "extra-files": ["/esphome/packages/version.yaml"]
     }
   }
 }

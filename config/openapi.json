@@ -328,6 +328,16 @@
               "minimum": 0
             },
             "example": 61440
+          },
+          {
+            "name": "fw",
+            "in": "query",
+            "description": "The version of the firmware the display runs, as released (letters, digits, `.`, `-` and `_`, at most 32).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "0.2.0"
           }
         ],
         "responses": {
@@ -575,6 +585,16 @@
               "minimum": 0
             },
             "example": 61440
+          },
+          {
+            "name": "fw",
+            "in": "query",
+            "description": "The version of the firmware the display runs, as released (letters, digits, `.`, `-` and `_`, at most 32).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "0.2.0"
           }
         ],
         "responses": {
@@ -916,6 +936,13 @@
             "format": "int32",
             "description": "The least free heap it had during that wake, in bytes.",
             "minimum": 0
+          },
+          "firmware": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version of the firmware it runs, as it said."
           },
           "connection": {
             "oneOf": [

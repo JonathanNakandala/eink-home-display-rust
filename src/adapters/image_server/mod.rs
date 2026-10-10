@@ -464,6 +464,7 @@ mod api_description {
                     last_wake_seconds: Some(24),
                     last_tls_milliseconds: Some(1100),
                     last_heap_min_bytes: Some(61_440),
+                    firmware: Some("0.1.0".to_owned()),
                     connection: None,
                     last_image: Some(DeliveryStatus {
                         format,

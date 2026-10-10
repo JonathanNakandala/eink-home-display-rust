@@ -75,6 +75,7 @@ lint:
 	$(POETRY) run ruff check scripts
 	$(POETRY) run ruff format --check scripts
 	python3 scripts/check_layers.py
+	python3 scripts/check_release.py
 
 .PHONY: format
 format:

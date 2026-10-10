@@ -262,7 +262,7 @@ mod tests {
     /// `a_full_report_has_every_field_in_a_fixed_order`). The two halves are written and tested apart, so this
     /// is what stops a renamed field or a changed range on one side going unnoticed on the other.
     const FIRMWARE_REPORT: &str = "&device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47\
-        &battery_state=ok&rssi=-67&last_failure=download&last_wake_s=24&last_tls_ms=1100&last_heap_min=61440";
+        &battery_state=ok&rssi=-67&last_failure=download&last_wake_s=24&last_tls_ms=1100&last_heap_min=61440&fw=0.1.0";
 
     #[tokio::test]
     async fn the_exact_report_the_firmware_builds_is_understood() {
@@ -295,6 +295,7 @@ mod tests {
         assert_eq!(device["last_wake_seconds"], 24);
         assert_eq!(device["last_tls_milliseconds"], 1100);
         assert_eq!(device["last_heap_min_bytes"], 61440);
+        assert_eq!(device["firmware"], "0.1.0");
     }
 
     #[tokio::test]

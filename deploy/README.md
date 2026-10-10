@@ -328,7 +328,8 @@ cannot misstate it): how many resumed a TLS session and how many were full hands
 how long its handshake took, from accepting the connection to the end of it (`connection` in `/status`; `eink_device_tls_*`
 in `/metrics`). The time includes the display's own work and the network between, so a slow chip shows. The display adds
 what only it knows, in the same check-in: how long its first handshake took as it timed it (`last_tls_milliseconds`) and the
-least free heap it had during the wake (`last_heap_min_bytes`), which the first run on a device needs. A display that
+least free heap it had during the wake (`last_heap_min_bytes`), which the first run on a device needs. It also says
+which firmware release it runs (`firmware`, and `eink_device_firmware_info`), and the log notes when that changes. A display that
 keeps beginning with a full handshake is not resuming: look at `eink_device_tls_last_resumed`.
 
 The server also knows when it told the display to come back, so it can tell one that is asleep from one that

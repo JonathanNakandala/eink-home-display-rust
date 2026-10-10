@@ -103,11 +103,28 @@ struct Battery {
   const char *state;
 };
 
+// The longest firmware version told to the server, which holds the same limit.
+constexpr size_t MAX_FIRMWARE_CHARS = 32;
+
+// A version as it goes in a query string: letters, digits, dots and hyphens as they are, anything else (a "+" would
+// mean a space) as an underscore, and no more than the server takes. A release is "0.2.0", or "0.3.0-beta.1".
+inline std::string firmware_token(const std::string &version) {
+  std::string out;
+  for (const char c : version) {
+    if (out.size() == MAX_FIRMWARE_CHARS)
+      break;
+    const bool plain =
+        (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '.' || c == '-';
+    out += plain ? c : '_';
+  }
+  return out;
+}
+
 // The query-string tail: who this is, how it is doing, and how the last wake went. `rssi_dbm` is left out when
 // it is not a reading (0 or more); the last wake's figures are left out until there has been one, and the handshake
-// time and heap when they were not measured.
+// time and heap when they were not measured, and the firmware's version when it has one.
 inline std::string query(const std::string &device, unsigned failed_wakes, const Battery &battery, int rssi_dbm,
-                         const Last &last) {
+                         const Last &last, const std::string &firmware = "") {
   std::string out = "&device=" + device + "&failed_wakes=" + std::to_string(failed_wakes);
   if (battery.known) {
     out += "&battery_mv=" + std::to_string(battery.millivolts) + "&battery_pct=" + std::to_string(battery.percent) +
@@ -123,6 +140,8 @@ inline std::string query(const std::string &device, unsigned failed_wakes, const
     out += "&last_tls_ms=" + std::to_string(last.tls_ms);
   if (last.heap_min_bytes != 0)
     out += "&last_heap_min=" + std::to_string(last.heap_min_bytes);
+  if (!firmware.empty())
+    out += "&fw=" + firmware_token(firmware);
   return out;
 }
 

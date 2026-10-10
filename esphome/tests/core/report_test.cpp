@@ -25,9 +25,18 @@ TEST(a_full_report_has_every_field_in_a_fixed_order) {
   set_failure(last, Failure::DOWNLOAD);
   set_wake(last, 24400);
   set_connection(last, 1100, 61440);
-  CHECK_EQ(query("reterminal-e1003-a1b2c3", 2, GOOD, -67, last),
+  CHECK_EQ(query("reterminal-e1003-a1b2c3", 2, GOOD, -67, last, "0.1.0"),
            "&device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47&battery_state=ok"
-           "&rssi=-67&last_failure=download&last_wake_s=24&last_tls_ms=1100&last_heap_min=61440");
+           "&rssi=-67&last_failure=download&last_wake_s=24&last_tls_ms=1100&last_heap_min=61440&fw=0.1.0");
+}
+
+TEST(the_firmware_version_is_told_only_when_there_is_one_and_only_in_characters_a_query_keeps) {
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, EMPTY).find("fw="), std::string::npos);
+  CHECK_EQ(firmware_token("0.2.0"), "0.2.0");
+  CHECK_EQ(firmware_token("0.3.0-beta.1"), "0.3.0-beta.1");
+  CHECK_EQ(firmware_token("1.0.0+build 5&x=y"), "1.0.0_build_5_x_y");  // nothing that would end the value or add a key
+  CHECK_EQ(firmware_token(std::string(100, '1')).size(), MAX_FIRMWARE_CHARS);
+  CHECK(query("a", 0, NONE_KNOWN, 0, EMPTY, "1.0.0+x").find("&fw=1.0.0_x") != std::string::npos);
 }
 
 TEST(the_handshake_time_and_the_heap_are_told_only_when_they_were_measured) {
