@@ -484,6 +484,8 @@ mod api_description {
                     renewal_overdue: false,
                     changing_keys: true,
                     replacement_waiting: true,
+                    profile: None,
+                    replacement_profile: None,
                 },
                 MemberStatus {
                     name: "hall".to_owned(),
@@ -494,6 +496,8 @@ mod api_description {
                     renewal_overdue: false,
                     changing_keys: false,
                     replacement_waiting: false,
+                    profile: None,
+                    replacement_profile: None,
                 },
             ],
             next_render: Some(at(12)),

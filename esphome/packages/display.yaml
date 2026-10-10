@@ -8,6 +8,8 @@ substitutions:
   # What the device can decode, as an Accept header: the server sends one of these, preferring its own
   # choice (display.image_format) among equals. Weight one to rank it, e.g. "image/png, image/bmp;q=0.5".
   accept_formats: "image/bmp, image/png, image/qoi"
+  # How many greys the panel shows (GC16: 16). Said to the server when the display asks to join.
+  grey_levels: "16"
   # How long the panel needs to finish drawing before power is cut.
   eink_refresh_settle: 15s
 

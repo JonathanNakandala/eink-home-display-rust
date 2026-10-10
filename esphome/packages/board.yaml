@@ -1,6 +1,11 @@
 # =============================================================================
 # The ESP32-S3 board: framework, PSRAM, logging, over-the-air updates and Wi-Fi.
 # =============================================================================
+substitutions:
+  # What the display says it is when it asks to join (core/profile.h): the owner sees it before approving. The model of this
+  # board; plain letters, digits, spaces and . _ - : +, at most 32.
+  device_model: "reTerminal E1003"
+
 esp32:
   board: seeed_xiao_esp32s3
   framework:

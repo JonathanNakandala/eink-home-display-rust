@@ -16,3 +16,15 @@ hash_label: home-display pairing code v1
 failure_names: wifi,server,download,memory,timeout,clock,certificate,approval,unrecognised
 battery_states: ok,low,empty
 firmware_version_longest: 32
+
+[the_profile]
+oid: 2.25.110978727574289354506863863824604692215
+oid_der: 06146981a6fddcedfd99c281b7889cc98dbbae9dfd77
+version: 1
+model_chars: 32
+firmware_chars: 32
+format_chars: 16
+max_formats: 8
+max_pixels: 20000
+min_levels: 2
+max_levels: 256

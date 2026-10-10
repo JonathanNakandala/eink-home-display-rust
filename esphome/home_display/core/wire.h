@@ -16,4 +16,8 @@ constexpr const char *SERVER_NAME = "home-display.internal";
 constexpr const char *BINDING_LABEL = "EXPORTER-Channel-Binding";
 constexpr size_t BINDING_LENGTH = 32;
 
+// The private OID of the extension in which a display says what it is, in a certificate request, in the dotted form
+// (the bytes are core/der.h's `oid_profile`).
+constexpr const char *PROFILE_OID = "2.25.110978727574289354506863863824604692215";
+
 }  // namespace home_display_wire

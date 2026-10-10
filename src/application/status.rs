@@ -18,6 +18,7 @@ use super::devices::DeviceStatus;
 use super::plan::{PlanTiming, is_stale, version_of};
 use crate::domain::models::freshness::format_age;
 use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
+use crate::domain::models::profile::DeviceProfile;
 use crate::domain::models::render_report::{RenderReport, SourceReport};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::render_observer::RenderObserver;
@@ -71,6 +72,48 @@ pub struct ImageStatus {
     pub version: u32,
 }
 
+/// What a display said it is when it asked to join: its model, panel, image formats and firmware. Self-asserted, so it is text
+/// for the owner and never a reason to let a display in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, ToSchema)]
+pub struct ProfileStatus {
+    /// What the display is.
+    #[schema(examples("reTerminal E1003"), max_length = 32)]
+    pub model: String,
+    /// The release of its firmware.
+    #[schema(examples("0.2.0"), max_length = 32)]
+    pub firmware: String,
+    /// The panel in pixels.
+    pub panel_width: u32,
+    pub panel_height: u32,
+    /// How many greys it shows.
+    pub grey_levels: u32,
+    /// The image formats it can decode.
+    pub formats: Vec<String>,
+}
+
+impl From<&DeviceProfile> for ProfileStatus {
+    fn from(profile: &DeviceProfile) -> Self {
+        Self {
+            model: profile.model.clone(),
+            firmware: profile.firmware.clone(),
+            panel_width: profile.width,
+            panel_height: profile.height,
+            grey_levels: profile.levels,
+            formats: profile.formats.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for ProfileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}, {}x{}, {} greys, firmware {}",
+            self.model, self.panel_width, self.panel_height, self.grey_levels, self.firmware
+        )
+    }
+}
+
 /// A display and where it stands in the certificate authority, for the owner to see trouble weeks before it
 /// is one: a display that stopped renewing shows as a certificate running out.
 #[derive(Debug, Serialize, ToSchema)]
@@ -95,6 +138,10 @@ pub struct MemberStatus {
     pub changing_keys: bool,
     /// A different key is waiting for the owner to approve it taking this display's name.
     pub replacement_waiting: bool,
+    /// What the display said it is when it last asked, if it said.
+    pub profile: Option<ProfileStatus>,
+    /// What the key that is waiting to take the name says it is, if there is one and it said.
+    pub replacement_profile: Option<ProfileStatus>,
 }
 
 impl MemberStatus {
@@ -115,6 +162,12 @@ impl MemberStatus {
                 .is_some_and(|s| renewal_overdue(chrono::Duration::seconds(s), lifetime)),
             changing_keys: pairing.rollover.is_some(),
             replacement_waiting: pairing.replacement.is_some(),
+            profile: pairing.profile.as_ref().map(ProfileStatus::from),
+            replacement_profile: pairing
+                .replacement
+                .as_ref()
+                .and_then(|replacement| replacement.profile.as_ref())
+                .map(ProfileStatus::from),
         }
     }
 }
@@ -541,6 +594,46 @@ mod tests {
     }
 
     #[test]
+    fn what_a_display_said_it_is_is_shown_with_its_waiting_key_s_own() {
+        use crate::domain::models::pairing::{PublicKey, Replacement};
+        use crate::domain::models::profile::DeviceProfile;
+        let profile = |model: &str| {
+            DeviceProfile::new(model, "0.2.0", 1872, 1404, 16, vec!["png".to_owned()]).unwrap()
+        };
+        let mut member = pairing(PairingState::Enrolled {
+            serial: "01".to_owned(),
+            not_after: at(12, 0, 0).to_utc() + chrono::Duration::days(60),
+        });
+        assert_eq!(
+            MemberStatus::of(&member, at(12, 0, 0), LIFETIME).profile,
+            None
+        );
+        member.profile = Some(profile("Member Model"));
+        member.replacement = Some(Replacement {
+            key: PublicKey::from_der(vec![3; 91]),
+            approved: false,
+            requested_at: at(10, 0, 0).to_utc(),
+            profile: Some(profile("Waiting Model")),
+        });
+        let status = MemberStatus::of(&member, at(12, 0, 0), LIFETIME);
+        let own = status.profile.unwrap();
+        assert_eq!(
+            (
+                own.model.as_str(),
+                own.panel_width,
+                own.panel_height,
+                own.grey_levels
+            ),
+            ("Member Model", 1872, 1404, 16)
+        );
+        assert_eq!(
+            own.to_string(),
+            "Member Model, 1872x1404, 16 greys, firmware 0.2.0"
+        );
+        assert_eq!(status.replacement_profile.unwrap().model, "Waiting Model");
+    }
+
+    #[test]
     fn a_display_that_is_not_a_member_has_no_certificate_end() {
         for (state, name) in [
             (PairingState::Pending, "pending"),
@@ -569,6 +662,7 @@ mod tests {
             key: PublicKey::from_der(vec![3; 91]),
             approved: false,
             requested_at: at(10, 0, 0).to_utc(),
+            profile: None,
         });
         let status = MemberStatus::of(&changing, at(12, 0, 0), LIFETIME);
         assert!(status.changing_keys && status.replacement_waiting);

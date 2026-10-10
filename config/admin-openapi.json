@@ -752,6 +752,28 @@
           "replacement_waiting": {
             "type": "boolean",
             "description": "A different key is waiting for the owner to approve it taking this member's name, as when a display was\nreflashed and lost its key. The member carries on meanwhile."
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileStatus",
+                "description": "What the display said it is when it last asked: its model, panel, image formats and firmware. Self-asserted: for\nthe owner to see before approving, never a reason to approve."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replacement_profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileStatus",
+                "description": "What the key that is waiting to take this member's name says it is, if there is one and it said."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -835,6 +857,60 @@
             ],
             "maximum": 240,
             "minimum": 1
+          }
+        }
+      },
+      "ProfileStatus": {
+        "type": "object",
+        "description": "What a display said it is when it asked to join: its model, panel, image formats and firmware. Self-asserted, so it is text\nfor the owner and never a reason to let a display in.",
+        "required": [
+          "model",
+          "firmware",
+          "panel_width",
+          "panel_height",
+          "grey_levels",
+          "formats"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "What the display is.",
+            "examples": [
+              "reTerminal E1003"
+            ],
+            "maxLength": 32
+          },
+          "firmware": {
+            "type": "string",
+            "description": "The release of its firmware.",
+            "examples": [
+              "0.2.0"
+            ],
+            "maxLength": 32
+          },
+          "panel_width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The panel in pixels.",
+            "minimum": 0
+          },
+          "panel_height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "grey_levels": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many greys it shows.",
+            "minimum": 0
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The image formats it can decode."
           }
         }
       },

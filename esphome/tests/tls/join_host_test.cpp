@@ -6,6 +6,7 @@
 #include <string>
 
 #include "host_support.h"
+#include "home_display/core/profile.h"
 
 using home_display_join::Joiner;
 using home_display_join::Outcome;
@@ -251,4 +252,43 @@ TEST(a_display_whose_pairing_is_erased_asks_again_with_a_new_key_and_the_owner_a
   CHECK(d.wake().paired);
   CHECK(d.held().key != before.key);
   CHECK(d.held().certificate != before.certificate);
+}
+
+TEST(a_display_says_what_it_is_the_owner_sees_it_before_approving_and_a_newer_firmware_updates_it) {
+  using home_display_profile::Profile;
+  Rebooting d("host-profile");
+  d.profile = home_display_profile::encode(Profile{"reTerminal E1003", "0.2.0", 1872, 1404, 16, {"bmp", "png", "qoi"}});
+  CHECK(!d.profile.empty());
+
+  // Asking: the owner can see which display it is before typing its code.
+  const Outcome waiting = d.wake();
+  CHECK(waiting.standing == Standing::WAITING);
+  const std::string asked = ctl_output("displays list");
+  CHECK(asked.find("host-profile") != std::string::npos);
+  CHECK(asked.find("reTerminal E1003, 1872x1404, 16 greys, firmware 0.2.0") != std::string::npos);
+
+  // Approved and a member, it is still said.
+  CHECK_EQ(ctl("approve host-profile " + waiting.code), 0);
+  CHECK(d.wake().paired);
+  CHECK(ctl_output("displays list").find("firmware 0.2.0") != std::string::npos);
+
+  // A newer firmware says so when it renews its certificate.
+  d.profile = home_display_profile::encode(Profile{"reTerminal E1003", "0.3.0", 1872, 1404, 16, {"bmp", "png", "qoi"}});
+  d.clock.offset = 61 * DAY;
+  CHECK(d.wake().paired);
+  CHECK_EQ(d.renewed, 1);
+  const std::string renewed = ctl_output("displays list");
+  CHECK(renewed.find("firmware 0.3.0") != std::string::npos);
+  CHECK(renewed.find("firmware 0.2.0") == std::string::npos);
+}
+
+TEST(a_display_that_says_nothing_is_just_as_welcome) {
+  Rebooting d("host-noprofile");
+  const Outcome waiting = d.wake();
+  CHECK(waiting.standing == Standing::WAITING);
+  CHECK_EQ(ctl("approve host-noprofile " + waiting.code), 0);
+  CHECK(d.wake().paired);
+  const std::string listed = ctl_output("displays list");
+  CHECK(listed.find("host-noprofile") != std::string::npos);
+  CHECK(listed.find("greys") == std::string::npos);
 }

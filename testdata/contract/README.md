@@ -12,7 +12,7 @@ bytes, and a vector that one side reads differently fails there.
 | `pairing_code.vectors` | root, name, key -> the code the display shows and the server compares | `esphome/scripts/make_vectors.py`, from the specification |
 | `base64.vectors` | bytes <-> the base64 EST puts on the wire | `make_vectors.py` |
 | `report.vectors` | what the display writes in its check-in, and what the server must read from it | by hand |
-| `csr.vectors` | the certificate request the display builds, and that the server reads and verifies | OpenSSL, below |
+| `csr.vectors` | the certificate request the display builds (with the profile it sends: model, panel, formats, firmware), and that the server reads and verifies, including profiles it must leave out | `make_vectors.py --csr`, below |
 
 ## Format
 
@@ -33,15 +33,11 @@ the vector, unless the vector is what is wrong.
 
 ## The request vectors
 
-A real signature needs a key; this one was made once and thrown away (nothing is protected by it):
+`python3 esphome/scripts/make_vectors.py --csr` makes them, with a DER encoder of its own (neither the firmware's nor the server's)
+and a real ECDSA P-256 / SHA-256 signature from OpenSSL, on a key made for the run and thrown away (nothing is protected by it).
+It writes new signatures each time, so the file changes whenever it is run: do it when a case is added or the format changes.
 
-```sh
-openssl ecparam -name prime256v1 -genkey -noout -out key.pem
-openssl ec -in key.pem -pubout -outform DER -out spki.der            # 91 bytes: the `spki`
-# build `tbs` for each case with home_display_der::request_info (core/der.h), then sign it:
-openssl dgst -sha256 -sign key.pem -out case.sig case.tbs
-# and assemble: home_display_der::request(info, signature)
-```
-
-The `tbs` and `request` the firmware builds today are what is in the file, so the firmware test is a regression test of its
-encoder; the server's test is the independent half: its X.509 parser and signature check read what the firmware wrote.
+Eleven cases. Five are requests the display builds itself (`display_builds: yes`), with and without the channel binding and with and
+without a profile: the display's tests build them from the same inputs and must get the same bytes. Six carry a profile the server
+must leave out (given twice, a newer version, not DER, text it will not show, a part missing, an impossible panel): only the server's
+tests read those, and must still accept the request and its signature, with no profile.

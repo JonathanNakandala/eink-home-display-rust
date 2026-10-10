@@ -8,12 +8,17 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
-use crate::adapters::certificate_authority::request;
+use crate::adapters::certificate_authority::request::{
+    self, PROFILE_OID, PROFILE_OID_VALUE, PROFILE_VERSION,
+};
 use crate::adapters::est_server::{BINDING_LABEL, BINDING_LEN, SERVER_NAME};
-use crate::application::devices::{BatteryState, FIRMWARE_CHARS, FailureReason, RawTelemetry};
+use crate::application::devices::{BatteryState, FailureReason, RawTelemetry};
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::{
     ALPHABET, Fingerprint, GROUP, HASH_LABEL, LENGTH, PairingCode, PublicKey,
+};
+use crate::domain::models::profile::{
+    FIRMWARE_CHARS, FORMAT_CHARS, LEVELS, MAX_FORMATS, MAX_PIXELS, MODEL_CHARS,
 };
 
 /// One case of a vector file: its name, and its `key: value` lines in order.
@@ -133,6 +138,22 @@ fn the_certificate_request_the_display_builds_is_read_and_its_signature_accepted
             "case {}",
             case.name
         );
+        // What the server read of the display's profile, in the form the vectors write it.
+        let profile = read.profile.as_ref().map_or_else(
+            || "none".to_owned(),
+            |p| {
+                format!(
+                    "{}|{}|{}|{}|{}|{}",
+                    p.model,
+                    p.firmware,
+                    p.width,
+                    p.height,
+                    p.levels,
+                    p.formats.join(",")
+                )
+            },
+        );
+        assert_eq!(profile, case.need("profile"), "case {}", case.name);
         let binding = read.channel_binding.as_deref().map(to_hex);
         let expected = match case.need("binding") {
             "none" => None,
@@ -266,5 +287,61 @@ fn the_names_and_numbers_both_sides_share_are_what_the_vectors_say() {
     assert_eq!(
         FIRMWARE_CHARS.to_string(),
         report.need("firmware_version_longest")
+    );
+
+    let profile = &cases[3];
+    assert_eq!(PROFILE_OID, profile.need("oid"));
+    // The same OID as bytes: the tag, the length, and the value the server compares.
+    assert_eq!(
+        format!("0614{}", to_hex(&PROFILE_OID_VALUE)),
+        profile.need("oid_der")
+    );
+    assert_eq!(PROFILE_VERSION.to_string(), profile.need("version"));
+    assert_eq!(MODEL_CHARS.to_string(), profile.need("model_chars"));
+    assert_eq!(FIRMWARE_CHARS.to_string(), profile.need("firmware_chars"));
+    assert_eq!(FORMAT_CHARS.to_string(), profile.need("format_chars"));
+    assert_eq!(MAX_FORMATS.to_string(), profile.need("max_formats"));
+    assert_eq!(MAX_PIXELS.to_string(), profile.need("max_pixels"));
+    assert_eq!(LEVELS.start().to_string(), profile.need("min_levels"));
+    assert_eq!(LEVELS.end().to_string(), profile.need("max_levels"));
+}
+
+/// A profile is read and not copied: nothing a display says about itself reaches the certificate it is given.
+#[test]
+fn what_a_display_says_it_is_is_not_put_in_its_certificate() {
+    use crate::adapters::certificate_authority::PrivateAuthority;
+    use crate::domain::services::certificate_authority::CertificateAuthority;
+    use chrono::TimeZone;
+    use x509_parser::prelude::FromDer;
+
+    let now = chrono::Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap();
+    let authority = PrivateAuthority::generate(now).unwrap().0;
+    let case = vectors!("csr.vectors")
+        .into_iter()
+        .find(|c| c.name == "with_binding_and_profile")
+        .expect("the vectors have a request with a profile");
+    let request = request::read(&from_hex(case.need("request"))).unwrap();
+    assert!(request.profile.is_some());
+    let certificate = authority
+        .issue(&request, now, now + chrono::Duration::days(90))
+        .unwrap();
+    let (_, parsed) =
+        x509_parser::certificate::X509Certificate::from_der(&certificate.der).unwrap();
+    assert!(
+        parsed
+            .extensions()
+            .iter()
+            .all(|e| e.oid.as_bytes() != PROFILE_OID_VALUE),
+        "the profile was copied into the certificate"
+    );
+    assert_eq!(
+        parsed
+            .subject()
+            .iter_common_name()
+            .next()
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "reterminal-e1003-a1b2c3"
     );
 }

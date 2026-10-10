@@ -759,7 +759,9 @@ async fn nothing_that_comes_back_from_the_api_is_a_code_a_key_or_a_certificate()
             "certificate_not_after",
             "changing_keys",
             "name",
+            "profile",
             "renewal_overdue",
+            "replacement_profile",
             "replacement_waiting",
             "state",
             "waiting_since"
@@ -1322,6 +1324,8 @@ fn entry(state: DisplayState) -> DisplayEntry {
         renewal_overdue: false,
         changing_keys: false,
         replacement_waiting: false,
+        profile: None,
+        replacement_profile: None,
     }
 }
 
@@ -1385,13 +1389,41 @@ fn each_state_says_what_to_do_about_it() {
         "{text}"
     );
 
+    // What a display said it is is in the words, so the owner sees it before approving and when looking at a member.
+    let model = |name: &str| crate::application::status::ProfileStatus {
+        model: name.to_owned(),
+        firmware: "0.2.0".to_owned(),
+        panel_width: 1872,
+        panel_height: 1404,
+        grey_levels: 16,
+        formats: vec!["png".to_owned()],
+    };
+    let mut asking = entry(DisplayState::Waiting);
+    asking.waiting_since = Some(now - Duration::minutes(3));
+    asking.profile = Some(model("reTerminal E1003"));
+    let text = say(&asking);
+    assert!(
+        text.contains("asked 3 min ago (reTerminal E1003, 1872x1404, 16 greys, firmware 0.2.0). Check the code"),
+        "{text}"
+    );
+    let mut known = member.clone();
+    known.certificate_expired = false;
+    known.profile = Some(model("Member Model"));
+    assert!(
+        say(&known).contains("(Member Model, 1872x1404"),
+        "{}",
+        say(&known)
+    );
+
     member.changing_keys = true;
     member.replacement_waiting = true;
+    member.replacement_profile = Some(model("Reflashed Model"));
     member.waiting_since = Some(now - Duration::minutes(10));
     let text = say(&member);
     assert!(text.contains("changing to a new key"), "{text}");
     assert!(
-        text.contains("another key asked 10 min ago") && text.contains("reject"),
+        text.contains("another key asked 10 min ago to take its name (Reflashed Model, 1872x1404")
+            && text.contains("reject"),
         "{text}"
     );
 }

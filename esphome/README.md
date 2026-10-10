@@ -153,6 +153,35 @@ it downloads and draws the new image, then sleeps until the next scheduled rende
   (2.4 s), longer on a Raspberry Pi or a cold Chrome. There is no on-screen "refreshing" message.
 - If the server can't be reached, the usual lookup, retry and failure notice apply.
 
+### What the display says it is
+
+When it asks to join, and again each time it renews its certificate (about every two months), the display says what it is: its
+**model**, its **panel** (width, height, how many greys), the **image formats** it can decode and its **firmware** release. The
+owner sees it before typing a code, so it is clear which display is asking:
+
+```
+$ displayctl displays list
+reterminal-e1003-a1b2c3   waiting   asked 2 min ago (reTerminal E1003, 1872x1404, 16 greys, firmware 0.2.0). Check the code on its own panel, then approve it
+```
+
+- **Where it comes from:** substitutions, so there is nothing to keep in step by hand: `device_model` ([packages/board.yaml](packages/board.yaml)),
+  `image_width`, `image_height`, `grey_levels` and `accept_formats` ([packages/display.yaml](packages/display.yaml)), and the firmware
+  version ([packages/version.yaml](packages/version.yaml)). [core/profile.h](home_display/core/profile.h) turns them into DER.
+- **How it travels:** in the certificate request the display already sends, as an extension under a private OID
+  (`2.25.<UUID>`, which needs no registration) in the `extensionRequest` attribute (RFC 2985), so it is signed with the rest of the
+  request and arrives on the connection the request was made on. Nothing new is sent and no new request is made.
+- **What the server does:** keeps it with the display (`pairings.json`), shows it in `displays list`, in `/status` (`members`),
+  in `/metrics` (`home_display_member_info`) and in the log when a display asks to join. A key waiting to take a member's name
+  (a reflashed display) has its own profile, shown beside the member's, so the owner can tell a new display from the one it replaces.
+- **How far it is trusted:** not at all for deciding anything. It is the display's own word, and the pairing code does not cover
+  it, so it is text for the owner: bounded (32 characters for the model and firmware, 8 formats, a panel up to 20,000 pixels,
+  2 to 256 greys), plain characters only, and shown escaped. A profile that does not pass is **left out and the request goes on**:
+  a mistake in the firmware can never keep a display from joining. It is read, never copied into the certificate (a test checks).
+- **Compatibility:** an older firmware says nothing and is exactly as welcome; the version of the profile is in it, and a server
+  that finds a newer one than it knows leaves it out.
+- **Tested against each other:** the requests in `testdata/contract/csr.vectors` (built by an encoder of their own, signed with
+  OpenSSL) carry profiles, bad ones too, and both the firmware's and the server's tests read them.
+
 ### Versions and releases
 
 The firmware is released on its own, as `home-display-firmware-esphome` (the firmware, for ESPHome), beside the server (`home-display-server`), by
