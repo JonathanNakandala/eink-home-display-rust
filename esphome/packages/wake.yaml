@@ -119,8 +119,8 @@ script:
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
                 id(prompt_on_panel) = false;
-            - component.update: epaper_display
-            - delay: ${refresh_settle}
+            - component.update: eink_display
+            - delay: ${eink_refresh_settle}
       - script.execute: sleep_now
 
   # Sleeps for as long as the server asked, or sleep_duration if it never answered.
@@ -136,8 +136,11 @@ script:
                 id: deep_sleep_1
                 sleep_duration: !lambda |-
                   // The server counted from when it answered; this takes off what the wake has used since.
-                  return home_display_wake::sleep_after(id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms}),
-                                                id(plan_received_ms), millis());
+                  const uint32_t ms = home_display_wake::sleep_after(
+                      id(plan_sleep_ms) ? id(plan_sleep_ms) : (uint32_t) (${sleep_duration_ms}), id(plan_received_ms), millis());
+                  // A day of sleep spends the memory that the server has no HTTPS (core/no_https.h).
+                  home_display_no_https::slept(ms);
+                  return ms;
 
   # Backstop for a wake that hangs (a server that accepts the connection and goes quiet). Without it the
   # only way out is `run_duration`, which sleeps the normal time and counts nothing, so each wake would burn
@@ -203,6 +206,6 @@ script:
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
                 id(prompt_on_panel) = false;
-            - component.update: epaper_display
-            - delay: ${refresh_settle}
+            - component.update: eink_display
+            - delay: ${eink_refresh_settle}
       - script.execute: sleep_now

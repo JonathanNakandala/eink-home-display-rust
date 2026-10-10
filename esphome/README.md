@@ -423,8 +423,14 @@ owner approves it.
 
 Limits worth knowing:
 
-- A display set to `prefer-https` against a server that does not serve HTTPS looks for it on every wake (about 2.5 s of radio),
-  since it never learns an HTTPS port. Set it to `http` for such a server.
+- A display set to `prefer-https` against a server that does not serve HTTPS **remembers that for a day**
+  ([core/no_https.h](home_display/core/no_https.h)). The first search that finds the server without an HTTPS port is
+  remembered, in RTC memory; the wakes after it go to plain HTTP at once, without waiting for the clock (up to 20 s of radio),
+  without the search (about 2.5 s) and without reporting a failure; a day later it looks again, so a server that has been set up
+  for HTTPS since is found. The day is counted in sleep, so it needs no clock, and a power loss forgets it (one more search).
+  Only a search that *found* the server and saw no HTTPS port is remembered: a server that was not found, or whose HTTPS did not
+  answer, is tried again at the next wake. A display set to `https` never remembers: it is waiting for the server to offer it.
+  If the server never will, `http` says so and spends nothing.
 - The flash grows by about 26 KB over what the TLS options cost, whatever `server_transport` is, as the code is part of the
   wake script even when it is not used.
 - `server_root` (the owner's root in the firmware, in `secrets.yaml`) is read as the base64 of the DER, one line.

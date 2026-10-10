@@ -41,7 +41,7 @@ script:
                       id(show_notice) = true;
                       id(notice_on_panel) = true;
                       id(prompt_on_panel) = false;
-                  - component.update: epaper_display
+                  - component.update: eink_display
             - if:
                 condition:
                   lambda: 'return home_display_state::hold_action == home_display_hold::Action::RESET;'
@@ -53,8 +53,8 @@ script:
                       id(show_notice) = true;
                       id(notice_on_panel) = true;
                       id(prompt_on_panel) = false;
-                  - component.update: epaper_display
-                  - delay: ${refresh_settle}
+                  - component.update: eink_display
+                  - delay: ${eink_refresh_settle}
             - delay: 100ms
 
   # The start of a wake's dealings with the server: plain, or after joining.
@@ -68,8 +68,24 @@ script:
           else:
             - script.execute: check_plan
 
-  # Gets the clock, finds the server, joins if need be, and goes on by the route core/secure_wake.h chooses.
+  # A display that prefers HTTPS leaves it alone while it remembers that the server it found has none (core/no_https.h): plain
+  # HTTP at once, with no wait for the clock, no search for an HTTPS port that is not there, and no failure to report.
   - id: secure_session
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return home_display_secure_wake::leaves_https_alone(home_display_service::transport_from("${server_transport}"),
+                                                                  home_display_no_https::remembers()) &&
+                     id(server_ip) != 0;
+          then:
+            - logger.log: "The server has no HTTPS (remembered): plain HTTP, and not looking again yet"
+            - script.execute: check_plan
+          else:
+            - script.execute: secure_attempt
+
+  # Gets the clock, finds the server, joins if need be, and goes on by the route core/secure_wake.h chooses.
+  - id: secure_attempt
     then:
       - script.execute: ensure_clock
       - if:
@@ -139,8 +155,8 @@ script:
           id(show_notice) = true;
           id(notice_on_panel) = true;
           id(prompt_on_panel) = true;
-      - component.update: epaper_display
-      - delay: ${refresh_settle}
+      - component.update: eink_display
+      - delay: ${eink_refresh_settle}
 
   # https only, and nothing can be done until the owner approves the display: show the code, and sleep for as long as the server
   # said before asking again. Not a failure, so it does not count towards the backoff and the owner is not kept waiting.

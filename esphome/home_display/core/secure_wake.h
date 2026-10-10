@@ -60,6 +60,29 @@ inline Verdict decide(home_display_service::Transport transport, bool addressabl
   return {Route::PLAIN, failure, owner};
 }
 
+// Whether this wake leaves HTTPS alone, without looking for the server's HTTPS port, waiting for the clock or telling
+// anyone it failed: a display that prefers HTTPS, while it remembers that the server it found has none
+// (core/no_https.h).
+inline bool leaves_https_alone(home_display_service::Transport transport, bool remembered_no_https) {
+  return transport == home_display_service::Transport::PREFER_HTTPS && remembered_no_https;
+}
+
+// What a search for the server changes in what is remembered.
+enum class Memo : uint8_t {
+  KEEP,      // as it was
+  REMEMBER,  // the server was found, and has no HTTPS
+  FORGET,    // the server was found, and has HTTPS
+};
+
+// Only a display that prefers HTTPS remembers, and only from a search that found the server: one that found nothing
+// says nothing about whether it serves HTTPS, and a display set to `https` is waiting for the server to offer it and
+// must go on looking.
+inline Memo after_search(home_display_service::Transport transport, bool found, uint16_t tls_port) {
+  if (!found || transport != home_display_service::Transport::PREFER_HTTPS)
+    return Memo::KEEP;
+  return tls_port == 0 ? Memo::REMEMBER : Memo::FORGET;
+}
+
 // A request over TLS failed while the display was paired. `last` is how it got on
 // (home_display_secure::context().last).
 inline home_display_report::Failure failure_after(home_display_link::Start last) {

@@ -265,6 +265,9 @@ script:
           home_display_service::Server server;
           constexpr auto transport = home_display_service::transport_from("${server_transport}");
           id(server_found) = home_display_discovery::find(server, "${server_name}", transport);
+          // A server found without HTTPS is remembered for a day by a display that prefers it (core/no_https.h).
+          home_display_no_https::apply(
+              home_display_secure_wake::after_search(transport, id(server_found), id(server_found) ? server.tls_port : 0));
           if (!id(server_found))
             return;
           id(server_ip) = server.ip;
