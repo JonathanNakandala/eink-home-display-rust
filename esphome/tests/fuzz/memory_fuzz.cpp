@@ -7,6 +7,7 @@
 #include "fuzz.h"
 
 #include "home_display/core/etag.h"
+#include "home_display/core/no_https.h"
 #include "home_display/core/session_cache.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -45,5 +46,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   FUZZ_REQUIRE(kept.size() <= home_display_etag::CAPACITY);
   FUZZ_REQUIRE(kept.empty() || home_display_etag::valid(kept));
   FUZZ_REQUIRE(home_display_etag::condition(etag, false).empty());
+
+  // The "no HTTPS" memory, from the first eight bytes: whatever it holds, sleeping never makes it more than a day, and
+  // a memory that is not ours is not believed.
+  home_display_no_https::Memory memory = {};
+  std::memcpy(&memory, data, std::min(size, sizeof memory));
+  const bool ours = memory.magic == home_display_no_https::MAGIC;
+  const uint32_t before = memory.remaining_ms;
+  home_display_no_https::slept(memory, size > 8 ? data[8] * 1000u : 1000u);
+  FUZZ_REQUIRE(memory.remaining_ms <= before);
+  if (!ours)
+    FUZZ_REQUIRE(!home_display_no_https::remembers(memory));
   return 0;
 }

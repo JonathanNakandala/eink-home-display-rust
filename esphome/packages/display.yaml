@@ -9,7 +9,7 @@ substitutions:
   # choice (display.image_format) among equals. Weight one to rank it, e.g. "image/png, image/bmp;q=0.5".
   accept_formats: "image/bmp, image/png, image/qoi"
   # How long the panel needs to finish drawing before power is cut.
-  refresh_settle: 15s
+  eink_refresh_settle: 15s
 
 online_image:
   - id: dashboard
@@ -35,8 +35,8 @@ online_image:
             - script.execute: after_image
           else:
             - logger.log: "Image downloaded, drawing"
-            - component.update: epaper_display
-            - delay: ${refresh_settle}
+            - component.update: eink_display
+            - delay: ${eink_refresh_settle}
             # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
             # refresh would leave the device believing it shows an image it doesn't, and the next wake would
             # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.
@@ -71,15 +71,15 @@ font:
     glyphs: " :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 spi:
-  id: epaper_spi_bus
+  id: eink_spi_bus
   clk_pin: GPIO7
   mosi_pin: GPIO9
   miso_pin: GPIO8
 
 display:
   - platform: it8951
-    id: epaper_display
-    spi_id: epaper_spi_bus
+    id: eink_display
+    spi_id: eink_spi_bus
     model: seeed-reterminal-e1003
     update_interval: never
     grayscale: true
@@ -92,7 +92,7 @@ display:
     lambda: |-
       if (id(show_notice)) {
         // Only this corner is refreshed; the rest of the panel keeps its picture.
-        eink_notice::draw(*id(epaper_display), id(notice_font), id(notice_text));
+        eink_notice::draw(*id(eink_display), id(notice_font), id(notice_text));
       } else {
         it.image(0, 0, id(dashboard));
         // Drawn into the same refresh as the picture, so it costs nothing extra.

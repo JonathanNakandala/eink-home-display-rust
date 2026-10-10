@@ -100,3 +100,80 @@ TEST(waiting_for_the_owner_sleeps_as_the_server_said_within_the_usual_bounds) {
   CHECK_EQ(wait_sleep_ms(5), 60000u);              // never less than a minute
   CHECK_EQ(wait_sleep_ms(10 * 86400), 86400000u);  // never more than a day
 }
+
+// ---- a display that prefers HTTPS remembers a server that has none (core/no_https.h)
+// --------------------------------------
+
+#include "home_display/core/no_https.h"
+
+TEST(a_display_that_prefers_https_leaves_it_alone_only_while_it_remembers_the_server_has_none) {
+  using home_display_secure_wake::leaves_https_alone;
+  using home_display_service::Transport;
+  CHECK(leaves_https_alone(Transport::PREFER_HTTPS, true));
+  CHECK(!leaves_https_alone(Transport::PREFER_HTTPS, false));
+  // A display set to https is waiting for the server to offer it, so it never stops looking; plain http never looks.
+  CHECK(!leaves_https_alone(Transport::HTTPS, true));
+  CHECK(!leaves_https_alone(Transport::HTTP, true));
+}
+
+TEST(only_a_search_that_found_the_server_changes_what_is_remembered_and_only_for_a_display_that_prefers_https) {
+  using home_display_secure_wake::after_search;
+  using home_display_secure_wake::Memo;
+  using home_display_service::Transport;
+  CHECK(after_search(Transport::PREFER_HTTPS, true, 0) == Memo::REMEMBER);
+  CHECK(after_search(Transport::PREFER_HTTPS, true, 8443) == Memo::FORGET);
+  // Nothing was found: that says nothing about HTTPS.
+  CHECK(after_search(Transport::PREFER_HTTPS, false, 0) == Memo::KEEP);
+  CHECK(after_search(Transport::PREFER_HTTPS, false, 8443) == Memo::KEEP);
+  // The others do not remember.
+  CHECK(after_search(Transport::HTTPS, true, 0) == Memo::KEEP);
+  CHECK(after_search(Transport::HTTP, true, 0) == Memo::KEEP);
+}
+
+TEST(what_is_remembered_lasts_a_day_of_sleep_and_then_the_display_looks_again) {
+  using namespace home_display_no_https;
+  Memory memory = EMPTY;
+  CHECK(!remembers(memory));
+  remember(memory);
+  CHECK(remembers(memory));
+  // A day of 10-minute sleeps: remembered through all but the last.
+  const uint32_t ten_minutes = 10u * 60 * 1000;
+  uint32_t slept_so_far = 0;
+  while (slept_so_far + ten_minutes < REMEMBER_MS) {
+    slept(memory, ten_minutes);
+    slept_so_far += ten_minutes;
+    CHECK(remembers(memory));
+  }
+  slept(memory, ten_minutes);  // takes it to or past a day
+  CHECK(!remembers(memory));
+}
+
+TEST(one_long_sleep_spends_it_at_once_and_a_sleep_does_nothing_to_what_is_not_remembered) {
+  using namespace home_display_no_https;
+  Memory memory = EMPTY;
+  slept(memory, 5000);
+  CHECK(!remembers(memory));
+  CHECK_EQ(memory.remaining_ms, 0u);  // not made into something by sleeping
+  remember(memory);
+  slept(memory, 0);
+  CHECK_EQ(memory.remaining_ms, REMEMBER_MS);
+  slept(memory, 0xFFFFFFFFu);
+  CHECK(!remembers(memory));
+  CHECK_EQ(memory.remaining_ms, 0u);
+}
+
+TEST(memory_another_firmware_left_is_not_believed_and_remembering_again_starts_a_new_day) {
+  using namespace home_display_no_https;
+  Memory odd = {0xDEADBEEF, 12345};
+  CHECK(!remembers(odd));
+  slept(odd, 100);
+  CHECK_EQ(odd.remaining_ms, 12345u);  // not touched: it is not ours
+  Memory memory = EMPTY;
+  remember(memory);
+  slept(memory, REMEMBER_MS - 1);
+  CHECK(remembers(memory));
+  remember(memory);  // a search that finds it again
+  CHECK_EQ(memory.remaining_ms, REMEMBER_MS);
+  forget(memory);
+  CHECK(!remembers(memory));
+}
