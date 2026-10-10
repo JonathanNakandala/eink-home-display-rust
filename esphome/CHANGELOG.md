@@ -1,0 +1,75 @@
+# Changelog
+
+## [0.2.0](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-firmware-esphome-v0.1.0...home-display-firmware-esphome-v0.2.0) (2026-10-10)
+
+
+### Features
+
+* Add a streaming TLS client, and the picture's download through it ([75f4c05](https://github.com/JonathanNakandala/eink-home-display-rust/commit/75f4c05970288a62aedfdb59c20453a2cc7d7eec))
+* Add the display's identity over that record, and over NVS on the chip ([fbb9eb3](https://github.com/JonathanNakandala/eink-home-display-rust/commit/fbb9eb398d3baaa71e8cefbf47f4a46976fe71e7))
+* Add the display's TLS and EST client on mbedTLS ([73d4aba](https://github.com/JonathanNakandala/eink-home-display-rust/commit/73d4abaeb464d458b3df0d04e613c73dcc421027))
+* Add the firmware's pairing decisions as headers tested on a computer ([734bdd1](https://github.com/JonathanNakandala/eink-home-display-rust/commit/734bdd147aef0e9f46722da6e96863074a67ab75))
+* Add the four ways a secure display can fail to the failure reasons ([1f86cfd](https://github.com/JonathanNakandala/eink-home-display-rust/commit/1f86cfd31367b8ecfcd1f8ce3ea34aa3082f501a))
+* Add the pure parts of the display's EST client, tested on a computer ([c779e8a](https://github.com/JonathanNakandala/eink-home-display-rust/commit/c779e8a1de78762f6a5ce1d9e14219ea0ab2e3e6))
+* Advertise the image server over mDNS so a scan finds it ([a5d5a2d](https://github.com/JonathanNakandala/eink-home-display-rust/commit/a5d5a2d3683faa7990e265d814545302d9c3cf7d))
+* Choose how a wake reaches the server, and join at its start ([3908540](https://github.com/JonathanNakandala/eink-home-display-rust/commit/390854073c428bb895db8135d8a5509592c9e2a8))
+* Describe every image-server endpoint in the OpenAPI document ([5f13068](https://github.com/JonathanNakandala/eink-home-display-rust/commit/5f1306813f59010fc351696fc4e4338cda00c201))
+* **esphome:** Name each display from its MAC address and send it on every request ([a5f3912](https://github.com/JonathanNakandala/eink-home-display-rust/commit/a5f391274e845a924757dcfc1c442d1e1125be51))
+* **esphome:** Send the signal, the last wake's time, and why a wake failed ([94aa6c4](https://github.com/JonathanNakandala/eink-home-display-rust/commit/94aa6c4568cced99bc333a522069b8a4418c0256))
+* Fuzz the parsers that read bytes nobody here wrote, and fix what it found ([376450c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/376450caa411ea449d8f21e28d584e467b1e4af2))
+* Have a display say what it is when it asks to join ([834d762](https://github.com/JonathanNakandala/eink-home-display-rust/commit/834d7622c2bab6482610b8ba2888f353a8c554fc))
+* Hold each TLS exchange to a deadline, as well as each wait ([dcfedac](https://github.com/JonathanNakandala/eink-home-display-rust/commit/dcfedace544aedddf3d8fd55c729409b7293605c))
+* Hold the button for ten seconds to reset the display's pairing ([2ea7a7c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/2ea7a7ce19974a8e6f5842522b93a51ae0ce09c1))
+* Join and speak TLS in the wake script ([f71090c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/f71090c6c636d25f543d60ee08cc04db3f55fd3f))
+* Keep a display paired through time off, reflashes and key changes ([811cbc9](https://github.com/JonathanNakandala/eink-home-display-rust/commit/811cbc91fa4b56a36f8bf213f8c322a8d81d4c69))
+* Keep a TLS session between connections and wakes ([df81e6f](https://github.com/JonathanNakandala/eink-home-display-rust/commit/df81e6ffa4573a4b304b77a0fcb85a3a82a7b93a))
+* Keep the display's key, root and certificate in flash that survives a power cut ([7d982a7](https://github.com/JonathanNakandala/eink-home-display-rust/commit/7d982a74a6dcf640c76b0faf567631ad4c8fa21c))
+* Let the firmware find a server that serves HTTPS ([3494f87](https://github.com/JonathanNakandala/eink-home-display-rust/commit/3494f87399b5fa26b05a8704428bfd22b8507537))
+* Let the reTerminal find the image server itself ([7ffaabf](https://github.com/JonathanNakandala/eink-home-display-rust/commit/7ffaabfee3810eff7886222ea529d14814b27c91))
+* Let user choose plain HTTP, HTTPS, or both ([ecbf1f6](https://github.com/JonathanNakandala/eink-home-display-rust/commit/ecbf1f6419104beb702cd14a45e64e0459823a5f))
+* Listen on IPv4 and IPv6 and announce both over mDNS ([c5f3673](https://github.com/JonathanNakandala/eink-home-display-rust/commit/c5f3673c5c36e5c0e7bbeb91a0332e3554338f32))
+* Make the authority a root and an intermediate ([5e3e09d](https://github.com/JonathanNakandala/eink-home-display-rust/commit/5e3e09d539d69d3e1db7871e032d2c7d8bb83da1))
+* Make the pairing code 12 characters and keep it out of the log ([a66d6c2](https://github.com/JonathanNakandala/eink-home-display-rust/commit/a66d6c2aee3564a87f95608bd65511fbc569adb7))
+* Make the reTerminal sleep on the server's schedule and survive outages ([eedf4e0](https://github.com/JonathanNakandala/eink-home-display-rust/commit/eedf4e0622dd384e93c2b9ebca60889eaa3ca2df))
+* Negotiate the image format from the Accept header ([83a7dc5](https://github.com/JonathanNakandala/eink-home-display-rust/commit/83a7dc54a9b4e466b2af5a01bb4f88de01ce8abf))
+* Read an HTTP response as it arrives, whatever the pieces ([3edc7b9](https://github.com/JonathanNakandala/eink-home-display-rust/commit/3edc7b9c434208e678b8b339ad9ec5bd47f05b13))
+* Release the firmware on its own, and tell the server which release a display runs ([e750160](https://github.com/JonathanNakandala/eink-home-display-rust/commit/e750160cd9168fcc20f46aa765e81f7520a96034))
+* Remember for a day that a server has no HTTPS, and name the e-ink panel's pieces ([29e180d](https://github.com/JonathanNakandala/eink-home-display-rust/commit/29e180d3a42b9a3a58e43e9e17be8082d87cbdf8))
+* Resume the TLS session on the display's data connections ([fb25e1b](https://github.com/JonathanNakandala/eink-home-display-rust/commit/fb25e1bcb9bd96aa0ccc458de074ca4a67a6f78d))
+* Run a wake's joining against interfaces, so it is tested on a computer ([12b77d1](https://github.com/JonathanNakandala/eink-home-display-rust/commit/12b77d173ef7e1c214307d72266cf5e0d1faace3))
+* Run the display's TLS against the real server on a computer ([97162d8](https://github.com/JonathanNakandala/eink-home-display-rust/commit/97162d8304a302ab99b52df72463c8ccbf7f62b7))
+* Run the firmware's joining against the real server on a computer ([5762427](https://github.com/JonathanNakandala/eink-home-display-rust/commit/5762427f9c2b7757adc267a879e9fee004399156))
+* Serve QOI as a third image format ([7b65bbd](https://github.com/JonathanNakandala/eink-home-display-rust/commit/7b65bbd45b3969d22faa29e5f6844108396361a9))
+* Serve the rendered image to the reTerminal E1003 ([228cd23](https://github.com/JonathanNakandala/eink-home-display-rust/commit/228cd23a3d5b86d07e21b9897cfcf5701af85529))
+* Set the display's clock from an ordered list of NTP servers ([970547c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/970547cc507c973921f91399c2479a971bf50a1a))
+* Show when the last update failed on the reTerminal's panel ([1209c16](https://github.com/JonathanNakandala/eink-home-display-rust/commit/1209c169aaf6764eedf4779d417dbcbb0b7b8af0))
+* Skip the download and the refresh for a picture the server says is the same ([4a13e22](https://github.com/JonathanNakandala/eink-home-display-rust/commit/4a13e22ba246da54f729488096c8d1139c9dac4e))
+* Stop the reTerminal at a low battery and report its health to the server ([0174935](https://github.com/JonathanNakandala/eink-home-display-rust/commit/0174935520568b8832828c7b70eb08b4b9363e10))
+* Take the display's timezone from the server's plan ([a53f7cc](https://github.com/JonathanNakandala/eink-home-display-rust/commit/a53f7ccce7512016bbeb5ac038db7c0989c58f07))
+* Tell apart why a reTerminal wake failed and act on each cause ([e7cd85c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/e7cd85c32df3240f1fe946779f7d22cbcc0f16a0))
+* Tell how each display's TLS connections begin and what they cost ([d554079](https://github.com/JonathanNakandala/eink-home-display-rust/commit/d554079eae59f15aa4368797ae536440f49480bb))
+* Tell the display what is rendered, when to return and if it is stale ([0eac7af](https://github.com/JonathanNakandala/eink-home-display-rust/commit/0eac7afe2ee4246e6e1c41752063c44196e17e0d))
+* Write the pairing code in Crockford Base32 ([c244a6c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/c244a6c3848dd40fc89a7a903c72a2e55bcebdc9))
+
+
+### Bug Fixes
+
+* Add the percent sign to the notice font ([bedfcff](https://github.com/JonathanNakandala/eink-home-display-rust/commit/bedfcff41cffc4aa6d50462f5ef1e0a814117581))
+* Announce an HTTPS-only server as _https._tcp ([4f7f8fa](https://github.com/JonathanNakandala/eink-home-display-rust/commit/4f7f8fa37a7cd39f8640cf5eee6c717c7012e470))
+* Back off after a hung wake, and wake when the server planned ([dfa6cba](https://github.com/JonathanNakandala/eink-home-display-rust/commit/dfa6cba9c54242459c5f813c71a92a5ade5ef432))
+* Check an issued certificate through the intermediate the server presented ([7d9e442](https://github.com/JonathanNakandala/eink-home-display-rust/commit/7d9e442273a849da392dfd5e9036fdfb37291dc9))
+* Don't blame a certificate for a network that failed, nor drop a good session ([b767e68](https://github.com/JonathanNakandala/eink-home-display-rust/commit/b767e6808010c553e21db89e2e4bf8303e3eb24a))
+* Download the image once, and keep maintenance mode after the button is released ([3963610](https://github.com/JonathanNakandala/eink-home-display-rust/commit/39636106c948174c04b1b20ff99177e477b19838))
+* Find the host test programs where cargo put them ([3055447](https://github.com/JonathanNakandala/eink-home-display-rust/commit/305544707d049e153ce77e7d20669135afec9648))
+* Make the RTC variables one object whatever includes the header ([a217b8f](https://github.com/JonathanNakandala/eink-home-display-rust/commit/a217b8f6a21e1a651164b36f3b0b0062d35299a6))
+* Never tell a display to sleep longer than it will ([e2e8aad](https://github.com/JonathanNakandala/eink-home-display-rust/commit/e2e8aad9fe2366bcd93794cd3b71cdb2401f4564))
+* Only record the shown version once the reTerminal has drawn it ([17544d0](https://github.com/JonathanNakandala/eink-home-display-rust/commit/17544d0a177ba1c437c154bb8dd4435506416b07))
+* Read the battery at its real voltage in the wake gate ([38ea38e](https://github.com/JonathanNakandala/eink-home-display-rust/commit/38ea38ef034d0a4f4ac32bb3b30a8ff1b573df36))
+* Read the battery before Wi-Fi starts ([dff8e53](https://github.com/JonathanNakandala/eink-home-display-rust/commit/dff8e53db23580044aebfea028fec8eb85d5cba0))
+
+
+### Performance Improvements
+
+* Don't copy the peer to change a request's timeout ([61cfe3d](https://github.com/JonathanNakandala/eink-home-display-rust/commit/61cfe3d034af77c7f29d9dd2536afe290a85249a))
+* Move past the body bytes handed on instead of erasing them ([29a87a1](https://github.com/JonathanNakandala/eink-home-display-rust/commit/29a87a1de0a10cf19596ae519acb765a094b8653))
+* Parse the root and certificate once for a wake's requests ([84163e9](https://github.com/JonathanNakandala/eink-home-display-rust/commit/84163e9a1f215c9dafc68bcba5fcb04fbc8d0177))
