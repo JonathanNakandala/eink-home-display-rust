@@ -34,6 +34,18 @@ const PERCENT: std::ops::RangeInclusive<u32> = 0..=100;
 const TLS_MILLISECONDS: std::ops::RangeInclusive<u32> = 1..=120_000;
 /// The lowest free heap a display saw during a wake. The chip has under a megabyte; anything past 16 MB is a misread.
 const HEAP_BYTES: std::ops::RangeInclusive<u32> = 1..=16_777_216;
+/// The longest firmware version kept. A release is `0.2.0` or `0.3.0-beta.1`; it is text the display chose, shown to the
+/// owner, so it is held to letters, digits, dots and hyphens and a short length.
+const FIRMWARE_CHARS: usize = 32;
+
+fn firmware_version(text: &str) -> Option<String> {
+    let usable = !text.is_empty()
+        && text.len() <= FIRMWARE_CHARS
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
+    usable.then(|| text.to_owned())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -178,6 +190,9 @@ pub struct RawTelemetry {
     /// came to running it out.
     #[param(value_type = Option<u32>, example = 61440)]
     pub last_heap_min: Option<String>,
+    /// The version of the firmware the display runs, as released (letters, digits, `.`, `-` and `_`, at most 32).
+    #[param(value_type = Option<String>, example = "0.2.0")]
+    pub fw: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,6 +207,7 @@ pub struct Telemetry {
     pub last_wake_seconds: Option<u32>,
     pub last_tls_milliseconds: Option<u32>,
     pub last_heap_min_bytes: Option<u32>,
+    pub firmware: Option<String>,
 }
 
 impl RawTelemetry {
@@ -218,6 +234,7 @@ impl RawTelemetry {
                 .filter(|ms| TLS_MILLISECONDS.contains(ms)),
             last_heap_min_bytes: number(&self.last_heap_min)
                 .filter(|bytes| HEAP_BYTES.contains(bytes)),
+            firmware: self.fw.as_deref().and_then(firmware_version),
         }
     }
 }
@@ -248,6 +265,8 @@ pub struct DeviceStatus {
     pub last_tls_milliseconds: Option<u32>,
     /// The least free heap it had during that wake, in bytes.
     pub last_heap_min_bytes: Option<u32>,
+    /// The version of the firmware it runs, as it said.
+    pub firmware: Option<String>,
     /// How its TLS connections have begun, as the server saw them: resumed or full, and how long the handshake
     /// took. Empty for a display that has not connected over TLS since the server started.
     pub connection: Option<ConnectionStatus>,
@@ -353,8 +372,20 @@ impl DeviceBoard {
                         describe_failure(reason, telemetry.failed_wakes)
                     );
                 }
+                if let Some(firmware) = &telemetry.firmware {
+                    log::info!("Display {:?} runs firmware {firmware}", telemetry.device);
+                }
             }
             Some(before) => {
+                if let (Some(was), Some(now_runs)) =
+                    (&before.telemetry.firmware, &telemetry.firmware)
+                    && was != now_runs
+                {
+                    log::info!(
+                        "Display {:?} now runs firmware {now_runs} (it ran {was})",
+                        telemetry.device
+                    );
+                }
                 if before.telemetry.last_failure != telemetry.last_failure {
                     match telemetry.last_failure {
                         Some(reason) => log::warn!(
@@ -445,6 +476,7 @@ impl DeviceBoard {
                 last_wake_seconds: record.telemetry.last_wake_seconds,
                 last_tls_milliseconds: record.telemetry.last_tls_milliseconds,
                 last_heap_min_bytes: record.telemetry.last_heap_min_bytes,
+                firmware: record.telemetry.firmware.clone(),
                 connection: None,
                 last_image: record.delivery.map(|delivery| DeliveryStatus {
                     format: delivery.format,
@@ -506,6 +538,7 @@ mod tests {
             last_wake_s: get("last_wake_s"),
             last_tls_ms: get("last_tls_ms"),
             last_heap_min: get("last_heap_min"),
+            fw: get("fw"),
         }
     }
 
@@ -525,6 +558,7 @@ mod tests {
             last_wake_seconds: Some(21),
             last_tls_milliseconds: Some(1100),
             last_heap_min_bytes: Some(61_440),
+            firmware: Some("0.1.0".to_owned()),
         }
     }
 
@@ -540,8 +574,10 @@ mod tests {
             ("last_wake_s", "24"),
             ("last_tls_ms", "1100"),
             ("last_heap_min", "61440"),
+            ("fw", "0.3.0-beta.1"),
         ])
         .parse(id("reterminal-e1003"));
+        assert_eq!(parsed.firmware.as_deref(), Some("0.3.0-beta.1"));
         assert_eq!(parsed.last_tls_milliseconds, Some(1100));
         assert_eq!(parsed.last_heap_min_bytes, Some(61_440));
         assert_eq!(parsed.wifi_rssi_dbm, Some(-67));
@@ -566,8 +602,10 @@ mod tests {
             ("last_wake_s", "99999"),
             ("last_tls_ms", "0"),
             ("last_heap_min", "4294967295"),
+            ("fw", "1.0 <script>"),
         ])
         .parse(id("kitchen"));
+        assert_eq!(parsed.firmware, None);
         assert_eq!(parsed.last_tls_milliseconds, None);
         assert_eq!(parsed.last_heap_min_bytes, None);
         assert_eq!(

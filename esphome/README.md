@@ -153,6 +153,38 @@ it downloads and draws the new image, then sleeps until the next scheduled rende
   (2.4 s), longer on a Raspberry Pi or a cold Chrome. There is no on-screen "refreshing" message.
 - If the server can't be reached, the usual lookup, retry and failure notice apply.
 
+### Versions and releases
+
+The firmware is released on its own, as `home-display-esphome-firmware`, beside the server (`eink-home-display-rust`), by
+[release-please](../.github/release-please/config.json) in the repository's two packages:
+
+| | Server | Firmware |
+|---|---|---|
+| Path | `.` (minus `esphome/`) | `esphome/` |
+| Tag | `eink-home-display-rust-vX.Y.Z` | `home-display-esphome-firmware-vX.Y.Z` |
+| Changelog | `CHANGELOG.md` | `esphome/CHANGELOG.md` |
+| Version kept in | `Cargo.toml` | `esphome/version.txt` and [packages/version.yaml](packages/version.yaml) |
+
+Each package has its own release pull request, made from the conventional commits (`feat:`, `fix:`, …) that changed files in
+its path: a commit that changes only `esphome/` releases only the firmware; one that changes both releases both. Merging the
+pull request tags the release and writes the changelog. `make lint` checks the setup (`scripts/check_release.py`) so a
+hand-edited version or a dropped marker is found before GitHub finds it.
+
+**The version is in the firmware.** `packages/version.yaml` holds `firmware_version` (release-please finds the line by its
+`x-release-please-version` comment), `esphome: project:` compiles it in (the boot log says `Project
+home-display.esphome-firmware version 0.1.0`, and the ESPHome dashboard shows it), and every check-in carries it as `fw`, so
+`/status` and `/metrics` (`eink_device_firmware_info`) say which release each display runs, and the server logs when a
+display's changes.
+
+**To use a release:** check out its tag, put your `secrets.yaml` beside it, and `make -C esphome compile` (or `run`). The
+secrets (Wi-Fi, over-the-air password, an optional `server_root`) are yours, so what is released is the source at that tag,
+not a binary. A release is also only the firmware tree: the server's version that goes with it is the one in the
+changelog's notes.
+
+**The first release:** release-please needs a starting point for each package. After merging the setup, tag the commit that is
+the baseline for each (`git tag eink-home-display-rust-v0.1.0 <sha>` and `git tag home-display-esphome-firmware-v0.1.0 <sha>`,
+then push the tags), or the first release pull request will list every commit in the repository's history.
+
 ### Resetting a display's pairing
 
 Hold KEY0 (the same right green button) from the moment the display wakes. After **five seconds** the panel says

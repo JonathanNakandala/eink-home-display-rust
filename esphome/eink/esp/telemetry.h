@@ -14,6 +14,7 @@
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esphome/components/wifi/wifi_component.h"
+#include "esphome/core/defines.h"
 
 #include "eink/core/report.h"
 
@@ -48,8 +49,18 @@ inline int rssi() {
   return wifi == nullptr ? 0 : (int) wifi->wifi_rssi();
 }
 
+// The version of the firmware: the release it was built from (packages/version.yaml), compiled in by `esphome:
+// project:`.
+inline const char *firmware_version() {
+#ifdef ESPHOME_PROJECT_VERSION
+  return ESPHOME_PROJECT_VERSION;
+#else
+  return "";
+#endif
+}
+
 inline std::string query(const std::string &device, unsigned failed_wakes, const eink_report::Battery &battery) {
-  return eink_report::query(device, failed_wakes, battery, rssi(), get());
+  return eink_report::query(device, failed_wakes, battery, rssi(), get(), firmware_version());
 }
 
 }  // namespace eink_telemetry

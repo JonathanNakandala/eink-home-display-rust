@@ -17,7 +17,7 @@ if touches '(\.rs$|^Cargo\.(toml|lock)$)'; then
     cargo clippy --all-targets -- -D warnings
 fi
 
-if touches '^(esphome/|pyproject\.toml$|poetry\.lock$|\.yamllint\.yaml$)'; then
+if touches '^(esphome/|pyproject\.toml$|poetry\.lock$|\.yamllint\.yaml$|\.github/release-please/)'; then
     # Poetry is how the firmware's tools are installed (see pyproject.toml). Without it these can't run, which
     # is said out loud and not skipped quietly.
     export PATH="$HOME/.local/bin:$PATH"
