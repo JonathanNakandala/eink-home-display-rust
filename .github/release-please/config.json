@@ -10,7 +10,7 @@
   "packages": {
     ".": {
       "release-type": "rust",
-      "package-name": "eink-home-display-rust",
+      "package-name": "home-display-server",
       "bump-minor-pre-major": true,
       "draft": false,
       "prerelease": false,
@@ -18,7 +18,7 @@
     },
     "esphome": {
       "release-type": "simple",
-      "package-name": "home-display-esphome-firmware",
+      "package-name": "home-display-firmware-esphome",
       "bump-minor-pre-major": true,
       "draft": false,
       "prerelease": false,

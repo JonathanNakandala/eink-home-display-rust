@@ -37,7 +37,7 @@ esphome:
   # The firmware's version (packages/version.yaml, set by the release): compiled in, logged at boot, shown by the ESPHome
   # dashboard and sent to the server in every check-in.
   project:
-    name: home-display.esphome-firmware
+    name: home-display.firmware-esphome
     version: ${firmware_version}
   # Appends the last three bytes of the chip's MAC address to the name (reterminal-e1003-a1b2c3). The MAC is
   # burned into the chip, so the name is unique to this display and survives flashing, and the same file can be

@@ -155,13 +155,13 @@ it downloads and draws the new image, then sleeps until the next scheduled rende
 
 ### Versions and releases
 
-The firmware is released on its own, as `home-display-esphome-firmware`, beside the server (`eink-home-display-rust`), by
+The firmware is released on its own, as `home-display-firmware-esphome` (the firmware, for ESPHome), beside the server (`home-display-server`), by
 [release-please](../.github/release-please/config.json) in the repository's two packages:
 
 | | Server | Firmware |
 |---|---|---|
 | Path | `.` (minus `esphome/`) | `esphome/` |
-| Tag | `eink-home-display-rust-vX.Y.Z` | `home-display-esphome-firmware-vX.Y.Z` |
+| Tag | `home-display-server-vX.Y.Z` | `home-display-firmware-esphome-vX.Y.Z` |
 | Changelog | `CHANGELOG.md` | `esphome/CHANGELOG.md` |
 | Version kept in | `Cargo.toml` | `esphome/version.txt` and [packages/version.yaml](packages/version.yaml) |
 
@@ -172,7 +172,7 @@ hand-edited version or a dropped marker is found before GitHub finds it.
 
 **The version is in the firmware.** `packages/version.yaml` holds `firmware_version` (release-please finds the line by its
 `x-release-please-version` comment), `esphome: project:` compiles it in (the boot log says `Project
-home-display.esphome-firmware version 0.1.0`, and the ESPHome dashboard shows it), and every check-in carries it as `fw`, so
+home-display.firmware-esphome version 0.1.0`, and the ESPHome dashboard shows it), and every check-in carries it as `fw`, so
 `/status` and `/metrics` (`eink_device_firmware_info`) say which release each display runs, and the server logs when a
 display's changes.
 
@@ -182,7 +182,7 @@ not a binary. A release is also only the firmware tree: the server's version tha
 changelog's notes.
 
 **The first release:** release-please needs a starting point for each package. After merging the setup, tag the commit that is
-the baseline for each (`git tag eink-home-display-rust-v0.1.0 <sha>` and `git tag home-display-esphome-firmware-v0.1.0 <sha>`,
+the baseline for each (`git tag home-display-server-v0.1.0 <sha>` and `git tag home-display-firmware-esphome-v0.1.0 <sha>`,
 then push the tags), or the first release pull request will list every commit in the repository's history.
 
 ### Resetting a display's pairing
