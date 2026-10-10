@@ -262,6 +262,82 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
+            "eink_device_last_tls_seconds",
+            "How long the display's first TLS handshake of its previous wake took, as the display timed it.",
+        );
+        for device in &status.devices {
+            if let Some(ms) = device.last_tls_milliseconds {
+                let _ = writeln!(
+                    out,
+                    "eink_device_last_tls_seconds{{device=\"{}\"}} {}",
+                    escape(device.name.as_str()),
+                    f64::from(ms) / 1000.0
+                );
+            }
+        }
+        gauge(
+            &mut out,
+            "eink_device_last_heap_min_bytes",
+            "The least free heap the display had during its previous wake: how close the handshake came to running it out.",
+        );
+        for device in &status.devices {
+            if let Some(bytes) = device.last_heap_min_bytes {
+                let _ = writeln!(
+                    out,
+                    "eink_device_last_heap_min_bytes{{device=\"{}\"}} {bytes}",
+                    escape(device.name.as_str())
+                );
+            }
+        }
+        // The server's own view of the display's TLS connections (HTTPS only), which the display cannot misreport.
+        let _ = writeln!(
+            out,
+            "# HELP eink_device_tls_handshakes_total A display's TLS connections since the service started, by how they began.\n\
+             # TYPE eink_device_tls_handshakes_total counter"
+        );
+        for device in &status.devices {
+            if let Some(connection) = &device.connection {
+                let name = escape(device.name.as_str());
+                let _ = writeln!(
+                    out,
+                    "eink_device_tls_handshakes_total{{device=\"{name}\",kind=\"full\"}} {}\n\
+                     eink_device_tls_handshakes_total{{device=\"{name}\",kind=\"resumed\"}} {}",
+                    connection.full_handshakes, connection.resumed_handshakes
+                );
+            }
+        }
+        gauge(
+            &mut out,
+            "eink_device_tls_last_resumed",
+            "1 if the display's latest TLS connection resumed a session, 0 if it began with a full handshake.",
+        );
+        for device in &status.devices {
+            if let Some(connection) = &device.connection {
+                let _ = writeln!(
+                    out,
+                    "eink_device_tls_last_resumed{{device=\"{}\"}} {}",
+                    escape(device.name.as_str()),
+                    u8::from(connection.last_resumed)
+                );
+            }
+        }
+        gauge(
+            &mut out,
+            "eink_device_tls_last_handshake_seconds",
+            "How long the display's latest TLS handshake took, as the server saw it: from accepting the connection to its end, so it includes the display's own work and the network between.",
+        );
+        for device in &status.devices {
+            if let Some(connection) = &device.connection {
+                let _ = writeln!(
+                    out,
+                    "eink_device_tls_last_handshake_seconds{{device=\"{}\"}} {}",
+                    escape(device.name.as_str()),
+                    f64::from(connection.last_handshake_milliseconds) / 1000.0
+                );
+            }
+        }
+        gauge(
+            &mut out,
             "eink_device_last_failure",
             "1 for why the display's last failed wake failed (none if it didn't), 0 for the others.",
         );
@@ -398,6 +474,15 @@ mod tests {
                 wifi_rssi_dbm: Some(-71),
                 last_failure: Some(FailureReason::Download),
                 last_wake_seconds: Some(24),
+                last_tls_milliseconds: Some(1100),
+                last_heap_min_bytes: Some(61_440),
+                connection: Some(crate::application::devices::ConnectionStatus {
+                    full_handshakes: 1,
+                    resumed_handshakes: 4,
+                    last_resumed: true,
+                    last_handshake_milliseconds: 250,
+                    last_at: at(),
+                }),
                 last_image: None,
             }],
             members: vec![
@@ -477,6 +562,12 @@ mod tests {
             "eink_device_failed_wakes{device=\"kitchen\"} 2",
             "eink_device_wifi_rssi_dbm{device=\"kitchen\"} -71",
             "eink_device_last_wake_seconds{device=\"kitchen\"} 24",
+            "eink_device_last_tls_seconds{device=\"kitchen\"} 1.1",
+            "eink_device_last_heap_min_bytes{device=\"kitchen\"} 61440",
+            "eink_device_tls_handshakes_total{device=\"kitchen\",kind=\"full\"} 1",
+            "eink_device_tls_handshakes_total{device=\"kitchen\",kind=\"resumed\"} 4",
+            "eink_device_tls_last_resumed{device=\"kitchen\"} 1",
+            "eink_device_tls_last_handshake_seconds{device=\"kitchen\"} 0.25",
             "eink_device_last_failure{device=\"kitchen\",reason=\"download\"} 1",
             "eink_device_last_failure{device=\"kitchen\",reason=\"wifi\"} 0",
             "eink_device_last_failure{device=\"kitchen\",reason=\"none\"} 0",

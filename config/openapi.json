@@ -304,6 +304,30 @@
               "minimum": 0
             },
             "example": 24
+          },
+          {
+            "name": "last_tls_ms",
+            "in": "query",
+            "description": "How long the display's first TLS handshake of the wake before this one took, in milliseconds, as the\ndisplay timed it (the server also times them, from its side: `connection` in `/status`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "example": 1100
+          },
+          {
+            "name": "last_heap_min",
+            "in": "query",
+            "description": "The least free heap the display had during the wake before this one, in bytes: how close the handshake\ncame to running it out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "example": 61440
           }
         ],
         "responses": {
@@ -527,6 +551,30 @@
               "minimum": 0
             },
             "example": 24
+          },
+          {
+            "name": "last_tls_ms",
+            "in": "query",
+            "description": "How long the display's first TLS handshake of the wake before this one took, in milliseconds, as the\ndisplay timed it (the server also times them, from its side: `connection` in `/status`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "example": 1100
+          },
+          {
+            "name": "last_heap_min",
+            "in": "query",
+            "description": "The least free heap the display had during the wake before this one, in bytes: how close the handshake\ncame to running it out.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "example": 61440
           }
         ],
         "responses": {
@@ -685,6 +733,43 @@
           "empty"
         ]
       },
+      "ConnectionStatus": {
+        "type": "object",
+        "description": "How a display's TLS connections have begun since the server started, from the server's side: it cannot be\nmisreported by the display, and the time includes the display's own work and the network between.",
+        "required": [
+          "full_handshakes",
+          "resumed_handshakes",
+          "last_resumed",
+          "last_handshake_milliseconds",
+          "last_at"
+        ],
+        "properties": {
+          "full_handshakes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resumed_handshakes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_resumed": {
+            "type": "boolean",
+            "description": "Whether the latest connection resumed a session (which saves the certificate exchange and signatures)."
+          },
+          "last_handshake_milliseconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "From accepting the latest connection to the end of its handshake.",
+            "minimum": 0
+          },
+          "last_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "DeliveryStatus": {
         "type": "object",
         "description": "The last image a display was sent: which format, how big, and when.",
@@ -813,6 +898,35 @@
             "format": "int32",
             "description": "How long the wake before that one was awake, which is what costs battery.",
             "minimum": 0
+          },
+          "last_tls_milliseconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How long its first TLS handshake of the wake before took, as the display timed it.",
+            "minimum": 0
+          },
+          "last_heap_min_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The least free heap it had during that wake, in bytes.",
+            "minimum": 0
+          },
+          "connection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionStatus",
+                "description": "How its TLS connections have begun, as the server saw them: resumed or full, and how long the handshake\ntook. Empty for a display that has not connected over TLS since the server started."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_image": {
             "oneOf": [

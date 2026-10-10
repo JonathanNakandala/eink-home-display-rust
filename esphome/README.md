@@ -531,7 +531,7 @@ of a typical Li-ion cell, not measured on your battery: check the real voltage a
 device halts, and the cell's own protection cut-off, before relying on them.
 
 Each check-in also sends the server `device`, `battery_mv`, `battery_pct`, `battery_state`,
-`failed_wakes`, `rssi` (Wi-Fi signal, dBm), `last_failure` and `last_wake_s`, which feed `/status` and
+`failed_wakes`, `rssi` (Wi-Fi signal, dBm), `last_failure`, `last_wake_s`, `last_tls_ms` and `last_heap_min`, which feed `/status` and
 `/metrics` (see [deploy/README.md](../deploy/README.md)). [esp/telemetry.h](eink/esp/telemetry.h) builds them.
 
 `last_failure` is the `fail_reason` of the most recent failed wake (the table above), and `last_wake_s` is how
@@ -541,6 +541,15 @@ powered through deep sleep, so no flash is written; a power loss forgets them, w
 RTC memory also survives a software reset such as an update over the air, so a marker checks it was written by
 this layout before it is believed. `last_failure` is left out until a wake has failed and after the next one
 succeeds; `last_wake_s` is left out until there has been a wake.
+
+`last_tls_ms` is how long the previous wake's **first TLS handshake** took, as the display timed it (from `tls/tls.h`; a
+resumed handshake is shorter than a full one, and on the chip most of either is the chip's own work), and
+`last_heap_min` is the **least free internal heap** during that wake, in bytes, read from ESP-IDF's low-water mark
+(`heap_caps_get_minimum_free_size`), which covers the handshake because a wake starts at boot. They are what the first run
+on a device needs to know: whether the handshake fits in memory, and how much time it costs. Either is left out when it
+was not measured (a wake over plain HTTP has no handshake). The server also times every handshake from its own side and
+knows whether it resumed (`connection` in `/status`), which the display cannot misreport; the two together say whether a
+slow handshake is the chip or the network.
 
 ### When the download fails
 

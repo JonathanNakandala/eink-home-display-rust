@@ -10,6 +10,7 @@ use chrono::DateTime;
 use chrono_tz::Tz;
 
 use super::{Published, metrics, server_error};
+use crate::application::devices::ConnectionStatus;
 use crate::application::status::{MemberStatus, Status};
 
 /// When the served image was written; None before the first render.
@@ -100,6 +101,13 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
             .status
             .status(now, rendered_at, &published.schedule, published.timing)?;
     status.devices = published.handles.devices.snapshot(now);
+    if let Some(handshakes) = &published.handles.handshakes {
+        for device in &mut status.devices {
+            device.connection = handshakes
+                .device(&device.name)
+                .map(|seen| ConnectionStatus::of(&seen, now.timezone()));
+        }
+    }
     if let Some(enrollment) = &published.handles.members {
         status.members = enrollment
             .pairings()
