@@ -22,6 +22,7 @@ use tokio::sync::Mutex;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::{Pairing, PairingState, PublicKey, Replacement, Rollover};
+use crate::domain::models::profile::DeviceProfile;
 use crate::domain::services::pairing_store::PairingStore;
 
 const FILE: &str = "pairings.json";
@@ -185,6 +186,49 @@ struct Record {
     rollover: Option<RolloverRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     replacement: Option<ReplacementRecord>,
+    /// What the display said it is. Also added after version 1 first shipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile: Option<ProfileRecord>,
+}
+
+/// What a display said it is (domain/models/profile.rs), as it is kept in the file.
+#[derive(Serialize, Deserialize)]
+struct ProfileRecord {
+    model: String,
+    firmware: String,
+    width: u32,
+    height: u32,
+    levels: u32,
+    formats: Vec<String>,
+}
+
+impl ProfileRecord {
+    fn of(profile: &DeviceProfile) -> Self {
+        Self {
+            model: profile.model.clone(),
+            firmware: profile.firmware.clone(),
+            width: profile.width,
+            height: profile.height,
+            levels: profile.levels,
+            formats: profile.formats.clone(),
+        }
+    }
+
+    /// Read back through the same rules as a profile from a display: a profile that does not pass them is left out and
+    /// the display is kept, since the file is the server's own and what it says about a display is not worth refusing to
+    /// start over.
+    fn read(self, device: &DeviceId) -> Option<DeviceProfile> {
+        DeviceProfile::new(
+            &self.model,
+            &self.firmware,
+            self.width,
+            self.height,
+            self.levels,
+            self.formats,
+        )
+        .inspect_err(|e| log::warn!("Ignoring the profile kept for {device}: {e}"))
+        .ok()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -198,6 +242,8 @@ struct ReplacementRecord {
     key: String,
     approved: bool,
     requested_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile: Option<ProfileRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -242,7 +288,9 @@ impl From<&BTreeMap<DeviceId, Pairing>> for File {
                         key: STANDARD.encode(r.key.as_der()),
                         approved: r.approved,
                         requested_at: r.requested_at,
+                        profile: r.profile.as_ref().map(ProfileRecord::of),
                     }),
+                    profile: p.profile.as_ref().map(ProfileRecord::of),
                 })
                 .collect(),
         }
@@ -299,9 +347,11 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, Pairing>> {
                             )?),
                             approved: r.approved,
                             requested_at: r.requested_at,
+                            profile: r.profile.and_then(|profile| profile.read(&device)),
                         })
                     })
                     .transpose()?,
+                profile: record.profile.and_then(|profile| profile.read(&device)),
                 device,
             };
         if pairings.insert(pairing.device.clone(), pairing).is_some() {
@@ -348,8 +398,59 @@ mod tests {
             key: other,
             approved: true,
             requested_at: at(4),
+            profile: None,
         });
         member
+    }
+
+    fn profile(model: &str) -> DeviceProfile {
+        DeviceProfile::new(
+            model,
+            "0.2.0",
+            1872,
+            1404,
+            16,
+            vec!["bmp".to_owned(), "png".to_owned()],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_profile_survives_the_file_and_so_does_the_one_of_a_waiting_key() {
+        let mut member = Pairing::new(
+            DeviceId::parse("kitchen").unwrap(),
+            PublicKey::from_der(vec![1; 91]),
+            PairingState::Pending,
+            at(1),
+        );
+        member.profile = Some(profile("reTerminal E1003"));
+        member.replacement = Some(Replacement {
+            key: PublicKey::from_der(vec![9; 91]),
+            approved: false,
+            requested_at: at(4),
+            profile: Some(profile("Other Model")),
+        });
+        let mut all = BTreeMap::new();
+        all.insert(member.device.clone(), member.clone());
+        let bytes = serde_json::to_vec_pretty(&File::from(&all)).unwrap();
+        let read = parse(&bytes).unwrap();
+        assert_eq!(read[&member.device], member);
+    }
+
+    #[test]
+    fn a_file_from_before_profiles_is_read_as_having_none() {
+        let old = r#"{"version":1,"pairings":[{"device":"kitchen","key":"AQID","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z"}]}"#;
+        let read = parse(old.as_bytes()).unwrap();
+        assert!(read[&DeviceId::parse("kitchen").unwrap()].profile.is_none());
+    }
+
+    #[test]
+    fn a_profile_in_the_file_that_does_not_pass_the_rules_is_dropped_and_the_display_is_kept() {
+        let odd = r#"{"version":1,"pairings":[{"device":"kitchen","key":"AQID","state":{"state":"pending"},"requested_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z","profile":{"model":"<script>","firmware":"0.2.0","width":1,"height":1,"levels":16,"formats":[]}}]}"#;
+        let read = parse(odd.as_bytes()).unwrap();
+        let kitchen = &read[&DeviceId::parse("kitchen").unwrap()];
+        assert!(kitchen.profile.is_none());
+        assert!(matches!(kitchen.state, PairingState::Pending));
     }
 
     #[tokio::test]

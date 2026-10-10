@@ -191,7 +191,9 @@ display goes like this:
 1. **Open the window:** `displayctl -c config.toml window open` (15 minutes; give a number up to 240 for longer).
 2. **Start the display.** It asks to join and shows a pairing code on its own panel. The server logs
    `<name> asked to join`.
-3. **See who is waiting:** `displayctl -c config.toml displays list`.
+3. **See who is waiting:** `displayctl -c config.toml displays list`. A display says what it is when it asks (its model, its panel
+   size and greys, its firmware), so the line reads `asked 2 min ago (reTerminal E1003, 1872x1404, 16 greys, firmware 0.2.0)`:
+   check that it is the display you expect before you type its code. It is the display's own word, not a check; the code is.
 4. **Approve it with the code from its panel:**
    `displayctl -c config.toml approve <name> <code>`. Type the code from the panel, in any case, with or without the
    dashes; `I` and `L` are read as `1`, `O` as `0`. **The server never shows the code**, and nothing here will print

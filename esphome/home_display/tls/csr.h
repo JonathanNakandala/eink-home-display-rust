@@ -26,13 +26,15 @@ inline Bytes public_key(mbedtls_pk_context &key) {
 }
 
 // A request for `name`, signed with ECDSA and SHA-256. A non-empty `binding` (the connection's RFC 9266 value) goes in
-// as the challenge password, in base64, which is how the server reads it. Empty if it could not be signed.
-inline Bytes request(mbedtls_pk_context &key, const std::string &name, const Bytes &binding) {
+// as the challenge password, in base64, which is how the server reads it. A `profile` (core/profile.h, already DER)
+// goes in as an extension. Empty if it could not be signed.
+inline Bytes request(mbedtls_pk_context &key, const std::string &name, const Bytes &binding,
+                     const Bytes &profile = {}) {
   const Bytes spki = public_key(key);
   if (spki.empty())
     return {};
   const Bytes info =
-      home_display_der::request_info(name, spki, binding.empty() ? "" : home_display_base64::encode(binding));
+      home_display_der::request_info(name, spki, binding.empty() ? "" : home_display_base64::encode(binding), profile);
   unsigned char hash[32];
   if (mbedtls_sha256(info.data(), info.size(), hash, 0) != 0)
     return {};

@@ -17,6 +17,7 @@ class MemoryIdentity : public home_display_tls::TlsIdentity {
   ~MemoryIdentity() override { mbedtls_pk_free(&key_); }
 
   home_display_ports::Bytes compiled;
+  home_display_ports::Bytes profile;  // what it says it is (core/profile.h, as DER), sent in its requests; empty: nothing
   home_display_ports::Bytes stored;
   home_display_ports::Bytes certificate_der;
   home_display_ports::Lifetime life;
@@ -43,7 +44,7 @@ class MemoryIdentity : public home_display_tls::TlsIdentity {
   }
   home_display_ports::Bytes spki() override { return home_display_csr::public_key(key_); }
   home_display_ports::Bytes csr(const std::string &name, const home_display_ports::Bytes &binding) override {
-    return home_display_csr::request(key_, name, binding);
+    return home_display_csr::request(key_, name, binding, profile);
   }
   mbedtls_pk_context &private_key() override { return key_; }
 

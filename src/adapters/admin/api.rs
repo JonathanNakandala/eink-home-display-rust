@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, IntoResponses, ToSchema};
 
+use crate::application::status::ProfileStatus;
 use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 
 /// The longest a pairing window can be opened for. Long enough for a display that wakes rarely; short enough
@@ -83,6 +84,11 @@ pub struct DisplayEntry {
     /// A different key is waiting for the owner to approve it taking this member's name, as when a display was
     /// reflashed and lost its key. The member carries on meanwhile.
     pub replacement_waiting: bool,
+    /// What the display said it is when it last asked: its model, panel, image formats and firmware. Self-asserted: for
+    /// the owner to see before approving, never a reason to approve.
+    pub profile: Option<ProfileStatus>,
+    /// What the key that is waiting to take this member's name says it is, if there is one and it said.
+    pub replacement_profile: Option<ProfileStatus>,
 }
 
 impl DisplayEntry {
@@ -109,6 +115,12 @@ impl DisplayEntry {
             renewal_overdue: ends.is_some_and(|end| renewal_overdue(end - now, lifetime)),
             changing_keys: pairing.rollover.is_some(),
             replacement_waiting: pairing.replacement.is_some(),
+            profile: pairing.profile.as_ref().map(ProfileStatus::from),
+            replacement_profile: pairing
+                .replacement
+                .as_ref()
+                .and_then(|replacement| replacement.profile.as_ref())
+                .map(ProfileStatus::from),
         }
     }
 }

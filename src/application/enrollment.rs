@@ -284,9 +284,9 @@ impl Enrollment {
         match pairing.state {
             PairingState::Rejected => Err(Refusal::Rejected.into()),
             PairingState::Revoked => Err(Refusal::Revoked.into()),
-            PairingState::Pending if pairing.key == request.key => Ok(Outcome::Pending {
-                retry_after: self.policy.retry_after,
-            }),
+            PairingState::Pending if pairing.key == request.key => {
+                self.waiting_again(pairing, request).await
+            }
             // The display lost its key (it was wiped and flashed again). Anything can say that, so
             // while it is only waiting the new request takes the old one's place, and the code the
             // owner is typing from the panel stops matching if it was not the display's own.
@@ -299,6 +299,22 @@ impl Enrollment {
             PairingState::Enrolled { .. } => self.member_asks(pairing, request, now).await,
             _ => Err(Refusal::KeyMismatch.into()),
         }
+    }
+
+    /// A display that is waiting for approval asks again. Nothing changes, except that it may now say more about itself (a
+    /// newer firmware): that is kept, and written only when it differs, since a waiting display asks at every wake.
+    async fn waiting_again(
+        &self,
+        mut pairing: Pairing,
+        request: CertificateRequest,
+    ) -> Result<Outcome, EnrollError> {
+        if request.profile.is_some() && pairing.profile != request.profile {
+            pairing.profile = request.profile;
+            self.store.put(&pairing).await?;
+        }
+        Ok(Outcome::Pending {
+            retry_after: self.policy.retry_after,
+        })
     }
 
     /// A request, with no certificate shown, for the name of a member.
@@ -321,6 +337,9 @@ impl Enrollment {
             // Collecting the certificate for the key it is changing to, which is a member beside the old.
             let certificate = self.certificate_for(&request, now)?;
             self.record(&mut pairing, &certificate, now);
+            if request.profile.is_some() {
+                pairing.profile = request.profile;
+            }
             self.store.put(&pairing).await?;
             return Ok(Outcome::Issued(certificate));
         }
@@ -330,6 +349,13 @@ impl Enrollment {
             .filter(|replacement| replacement.key == request.key)
         {
             if !replacement.approved {
+                if request.profile.is_some()
+                    && replacement.profile != request.profile
+                    && let Some(waiting) = pairing.replacement.as_mut()
+                {
+                    waiting.profile = request.profile;
+                    self.store.put(&pairing).await?;
+                }
                 return Ok(Outcome::Pending {
                     retry_after: self.policy.retry_after,
                 });
@@ -355,6 +381,7 @@ impl Enrollment {
             key: request.key,
             approved: false,
             requested_at: now,
+            profile: request.profile,
         });
         pairing.updated_at = now;
         self.store.put(&pairing).await?;
@@ -408,6 +435,11 @@ impl Enrollment {
             self.promote(&mut pairing);
         }
         let certificate = self.certificate_for(&request, now)?;
+        // A renewal is the regular occasion to say what the display is now (a newer firmware), every couple of months. A
+        // renewal that says nothing leaves what was said.
+        if request.profile.is_some() {
+            pairing.profile = request.profile.clone();
+        }
         if request.key != pairing.key {
             pairing.rollover = Some(Rollover {
                 key: request.key,
@@ -689,12 +721,17 @@ impl Enrollment {
             return Err(Refusal::NotAccepting.into());
         }
         self.ensure_room(&request.device).await?;
-        let pairing = Pairing::new(request.device, request.key, PairingState::Pending, now);
+        let mut pairing = Pairing::new(request.device, request.key, PairingState::Pending, now);
+        pairing.profile = request.profile;
         self.store.put(&pairing).await?;
         // Not the code itself: the owner reads it off the display's own panel (see above).
         log::info!(
-            "{} asked to join. Approve it with the code shown on the display's own panel",
-            pairing.device
+            "{} asked to join{}. Approve it with the code shown on the display's own panel",
+            pairing.device,
+            pairing
+                .profile
+                .as_ref()
+                .map_or_else(String::new, |profile| format!(" ({profile})"))
         );
         Ok(Outcome::Pending {
             retry_after: self.policy.retry_after,
@@ -716,6 +753,9 @@ impl Enrollment {
     ) -> Result<Outcome, EnrollError> {
         let certificate = self.certificate_for(&request, now)?;
         pairing.key = request.key;
+        if request.profile.is_some() {
+            pairing.profile = request.profile;
+        }
         self.record(&mut pairing, &certificate, now);
         self.store.put(&pairing).await?;
         Ok(Outcome::Issued(certificate))
@@ -775,6 +815,7 @@ mod tests {
 
     use super::*;
     use crate::domain::models::pairing::{Fingerprint, PublicKey};
+    use crate::domain::models::profile::DeviceProfile;
 
     /// A stand-in authority. A "request" is `device|key|binding` as text, and a certificate is just
     /// a record of who it was for, so the rules can be tested without any cryptography.
@@ -802,7 +843,7 @@ mod tests {
         fn inspect(&self, der: &[u8]) -> Result<CertificateRequest, RequestError> {
             let text = std::str::from_utf8(der)
                 .map_err(|_| RequestError::Malformed("not text".to_owned()))?;
-            let mut parts = text.splitn(3, '|');
+            let mut parts = text.splitn(4, '|');
             let device = DeviceId::parse(parts.next().unwrap_or(""))
                 .map_err(|e| RequestError::BadDevice(e.to_string()))?;
             let key = parts
@@ -818,6 +859,11 @@ mod tests {
                     .next()
                     .filter(|b| !b.is_empty())
                     .map(|b| b.as_bytes().to_vec()),
+                // `device|key|binding|model`: a profile for that model, which is all a test of the rules needs.
+                profile: parts.next().filter(|m| !m.is_empty()).map(|model| {
+                    DeviceProfile::new(model, "0.1.0", 800, 480, 16, vec!["png".to_owned()])
+                        .unwrap()
+                }),
                 der: der.to_vec(),
             })
         }
@@ -922,6 +968,11 @@ mod tests {
 
     fn csr(name: &str, key: &str) -> Vec<u8> {
         format!("{name}|{key}|").into_bytes()
+    }
+
+    /// A request that says what the display is.
+    fn csr_as(name: &str, key: &str, model: &str) -> Vec<u8> {
+        format!("{name}|{key}||{model}").into_bytes()
     }
 
     fn refused(result: Result<Outcome, EnrollError>) -> Refusal {
@@ -1126,6 +1177,169 @@ mod tests {
         // Out, they are expired and no longer overdue.
         f.advance(Duration::days(120));
         assert!(f.enrollment.overdue_renewals().await.unwrap().is_empty());
+    }
+
+    async fn says(f: &Fixture, name: &str) -> Option<String> {
+        f.enrollment
+            .pairing(&device(name))
+            .await
+            .unwrap()
+            .and_then(|p| p.profile)
+            .map(|profile| profile.model)
+    }
+
+    #[tokio::test]
+    async fn what_a_display_says_it_is_when_it_asks_is_kept_for_the_owner_to_see() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "reTerminal E1003"), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            says(&f, "kitchen").await.as_deref(),
+            Some("reTerminal E1003")
+        );
+        // A display that says nothing is just as welcome, and has no profile.
+        f.enrollment.enroll(&csr("hall", "k2"), None).await.unwrap();
+        assert_eq!(says(&f, "hall").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_waiting_display_that_comes_back_with_a_newer_profile_updates_it_and_one_that_says_nothing_keeps_the_old()
+     {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "Old Model"), None)
+            .await
+            .unwrap();
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "New Model"), None)
+            .await
+            .unwrap();
+        assert_eq!(says(&f, "kitchen").await.as_deref(), Some("New Model"));
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        assert_eq!(says(&f, "kitchen").await.as_deref(), Some("New Model"));
+    }
+
+    #[tokio::test]
+    async fn a_member_that_renews_says_what_it_is_now_and_one_that_cannot_keeps_what_it_said() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "First"), None)
+            .await
+            .unwrap();
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "First"), None)
+            .await
+            .unwrap();
+        // A renewal from a newer firmware.
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "Second"), None)
+            .await
+            .unwrap();
+        assert_eq!(says(&f, "kitchen").await.as_deref(), Some("Second"));
+        // And one from firmware that does not say: what it said before stays.
+        f.enrollment
+            .enroll(&csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        assert_eq!(says(&f, "kitchen").await.as_deref(), Some("Second"));
+    }
+
+    #[tokio::test]
+    async fn a_certificate_renewed_by_the_member_itself_says_what_the_display_is_now() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "First"), None)
+            .await
+            .unwrap();
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "First"), None)
+            .await
+            .unwrap();
+        // Authenticated by the certificate it holds: the usual renewal.
+        let key = PublicKey::from_der(b"k1".to_vec());
+        f.enrollment
+            .renew(
+                &device("kitchen"),
+                &key,
+                &csr_as("kitchen", "k1", "Second"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(says(&f, "kitchen").await.as_deref(), Some("Second"));
+        f.enrollment
+            .renew(&device("kitchen"), &key, &csr("kitchen", "k1"), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            says(&f, "kitchen").await.as_deref(),
+            Some("Second"),
+            "a renewal that says nothing leaves it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_waiting_to_take_a_name_has_its_own_profile_and_the_members_is_left_alone() {
+        let f = Fixture::new();
+        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "Member Model"), None)
+            .await
+            .unwrap();
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k1"))
+            .await
+            .unwrap();
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k1", "Member Model"), None)
+            .await
+            .unwrap();
+
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k2", "Reflashed Model"), None)
+            .await
+            .unwrap();
+        let pairing = f
+            .enrollment
+            .pairing(&device("kitchen"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pairing.profile.unwrap().model, "Member Model");
+        assert_eq!(
+            pairing.replacement.unwrap().profile.unwrap().model,
+            "Reflashed Model"
+        );
+        // Approved and collected, the new key's profile is the display's.
+        f.enrollment
+            .approve(&device("kitchen"), &f.code("kitchen", "k2"))
+            .await
+            .unwrap();
+        f.enrollment
+            .enroll(&csr_as("kitchen", "k2", "Reflashed Model"), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            says(&f, "kitchen").await.as_deref(),
+            Some("Reflashed Model")
+        );
     }
 
     #[tokio::test]

@@ -24,10 +24,11 @@ using Bytes = home_display_tls::Bytes;
 class FlashIdentity : public home_display_tls::TlsIdentity {
  public:
   // `compiled_root` is the owner's root built into the firmware (`server_root`), or empty. `last_answer` is where to
-  // keep what the server last said.
+  // keep what the server last said. `profile` is what the display says it is (core/profile.h, already DER), sent in
+  // every request it makes, or empty to say nothing.
   FlashIdentity(home_display_credentials::BlobStore &store, home_display_pairing::Answer &last_answer,
-                Bytes compiled_root = {})
-      : credentials_(store), last_(last_answer), compiled_(std::move(compiled_root)) {
+                Bytes compiled_root = {}, Bytes profile = {})
+      : credentials_(store), last_(last_answer), compiled_(std::move(compiled_root)), profile_(std::move(profile)) {
     mbedtls_pk_init(&key_);
     if (credentials_.state() == home_display_credentials::Credentials::State::READY &&
         !credentials_.record().key.empty())
@@ -80,7 +81,7 @@ class FlashIdentity : public home_display_tls::TlsIdentity {
 
   Bytes spki() override { return home_display_csr::public_key(key_); }
   Bytes csr(const std::string &name, const Bytes &binding) override {
-    return home_display_csr::request(key_, name, binding);
+    return home_display_csr::request(key_, name, binding, profile_);
   }
   mbedtls_pk_context &private_key() override { return key_; }
 
@@ -104,6 +105,7 @@ class FlashIdentity : public home_display_tls::TlsIdentity {
   home_display_credentials::Credentials credentials_;
   home_display_pairing::Answer &last_;
   Bytes compiled_;
+  Bytes profile_;
   mbedtls_pk_context key_;
   bool loaded_ = false;
 

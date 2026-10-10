@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::profile::DeviceProfile;
 
 /// SHA-256 of a certificate's DER encoding: what is shown to compare two certificates by eye.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -234,6 +235,8 @@ pub struct Replacement {
     pub key: PublicKey,
     pub approved: bool,
     pub requested_at: DateTime<Utc>,
+    /// What the display with this key says it is, shown to the owner before the key is approved.
+    pub profile: Option<DeviceProfile>,
 }
 
 /// One display and where it has got to.
@@ -248,6 +251,8 @@ pub struct Pairing {
     pub rollover: Option<Rollover>,
     /// A key waiting for the owner to approve taking over the name.
     pub replacement: Option<Replacement>,
+    /// What the display says it is, as of its latest request. Self-asserted: for the owner to see, never to decide with.
+    pub profile: Option<DeviceProfile>,
 }
 
 impl Pairing {
@@ -260,6 +265,7 @@ impl Pairing {
             updated_at: now,
             rollover: None,
             replacement: None,
+            profile: None,
         }
     }
 }

@@ -95,8 +95,12 @@ script:
             - script.execute: discover
       - lambda: |-
           constexpr auto transport = home_display_service::transport_from("${server_transport}");
+          // What the display says it is when it asks to join (core/profile.h): the owner sees it before approving.
+          const home_display_profile::Profile profile{"${device_model}", ESPHOME_PROJECT_VERSION,
+                                                      ${image_width},    ${image_height},
+                                                      ${grey_levels},    home_display_profile::formats_from_accept("${accept_formats}")};
           const auto begun = home_display_secure_chip::begin(transport, id(server_ip), id(server_tls_port), App.get_name().str(),
-                                                     id(shown_version), "${server_root}");
+                                                     id(shown_version), "${server_root}", profile);
           home_display_state::route = begun.verdict.route;
           home_display_state::secure_failure = begun.verdict.failure;
           home_display_state::prompt_wanted = begun.verdict.prompt;

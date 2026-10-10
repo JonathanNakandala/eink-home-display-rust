@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::{Fingerprint, PublicKey};
+use crate::domain::models::profile::DeviceProfile;
 
 /// A certificate request that has been read and whose signature has been checked, which shows its
 /// sender holds the private key for the public key it asks to have certified.
@@ -18,6 +19,10 @@ pub struct CertificateRequest {
     /// What the request says about the connection it was sent over (RFC 7030 section 3.5), if it says
     /// anything: it proves the request was signed on this very connection.
     pub channel_binding: Option<Vec<u8>>,
+    /// What the display says it is (model, panel, formats, firmware), if it said so in a form that could be read.
+    /// Self-asserted text: for the owner to see, never to decide with. A profile that cannot be read is left out and
+    /// the request goes on without it.
+    pub profile: Option<DeviceProfile>,
     /// The request as received, for the authority to sign from.
     pub der: Vec<u8>,
 }

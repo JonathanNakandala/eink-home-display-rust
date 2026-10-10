@@ -148,6 +148,24 @@ pub fn render(status: &Status) -> String {
         }
         gauge(
             &mut out,
+            "home_display_member_info",
+            "What the display said it is when it asked to join, as labels. Always 1. Self-asserted text.",
+        );
+        for member in &status.members {
+            if let Some(profile) = &member.profile {
+                let _ = writeln!(
+                    out,
+                    "home_display_member_info{{device=\"{}\",model=\"{}\",firmware=\"{}\",panel=\"{}x{}\"}} 1",
+                    escape(&member.name),
+                    escape(&profile.model),
+                    escape(&profile.firmware),
+                    profile.panel_width,
+                    profile.panel_height
+                );
+            }
+        }
+        gauge(
+            &mut out,
             "home_display_member_certificate_expiry_timestamp_seconds",
             "When the latest certificate a member was given ends. Alert on this being soon: a display renews with a third of its life left, so one that is close to the end has stopped renewing. Once past, it gets a new one by itself when switched on.",
         );
@@ -527,6 +545,8 @@ mod tests {
                     renewal_overdue: true,
                     changing_keys: true,
                     replacement_waiting: false,
+                    profile: None,
+                    replacement_profile: None,
                 },
                 MemberStatus {
                     name: "hall".to_owned(),
@@ -537,6 +557,8 @@ mod tests {
                     renewal_overdue: false,
                     changing_keys: false,
                     replacement_waiting: true,
+                    profile: None,
+                    replacement_profile: None,
                 },
             ],
             next_render: None,
@@ -569,6 +591,28 @@ mod tests {
         // A display with no certificate has no expiry to report, not a zero that would alert.
         assert!(!text.contains("expiry_timestamp_seconds{device=\"hall\"}"));
         assert!(!text.contains("renewal_overdue{device=\"hall\"}"));
+    }
+
+    #[test]
+    fn what_a_member_said_it_is_is_a_label_and_one_that_said_nothing_has_no_line() {
+        use crate::application::status::ProfileStatus;
+        let mut with = status();
+        with.members[0].profile = Some(ProfileStatus {
+            model: "reTerminal E1003".to_owned(),
+            firmware: "0.2.0".to_owned(),
+            panel_width: 1872,
+            panel_height: 1404,
+            grey_levels: 16,
+            formats: vec!["png".to_owned()],
+        });
+        let text = render(&with);
+        assert!(
+            text.lines().any(|l| l
+                == "home_display_member_info{device=\"kitchen\",model=\"reTerminal E1003\",firmware=\"0.2.0\",panel=\"1872x1404\"} 1"),
+            "{text}"
+        );
+        assert!(!text.contains("member_info{device=\"hall\""));
+        assert!(!render(&status()).contains("home_display_member_info{"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ use x509_parser::prelude::FromDer;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::PublicKey;
+use crate::domain::models::profile::DeviceProfile;
 use crate::domain::services::certificate_authority::{CertificateRequest, RequestError};
 
 /// `id-ecPublicKey`, `prime256v1` (P-256), and `ecdsa-with-SHA256`: the one kind of key and signature
@@ -80,12 +81,106 @@ pub fn read(der: &[u8]) -> Result<CertificateRequest, RequestError> {
         .map_err(|_| RequestError::BadDevice("the name is not text".to_owned()))?;
     let device = DeviceId::parse(name).map_err(|e| RequestError::BadDevice(e.to_string()))?;
 
+    let profile = profile(&request, &device);
     Ok(CertificateRequest {
         device,
         key: PublicKey::from_der(key.raw.to_vec()),
         channel_binding: channel_binding(&request)?,
+        profile,
         der: der.to_vec(),
     })
+}
+
+/// The extension in which a display says what it is: a private OID (an RFC 4122 UUID under `2.25`, which needs no
+/// registration), in the request's `extensionRequest` attribute (RFC 2985) like any extension a request asks for. The
+/// display's copy is `home_display/core/wire.h`.
+#[cfg(test)]
+pub(crate) const PROFILE_OID: &str = "2.25.110978727574289354506863863824604692215";
+
+/// The same OID's value octets (without the tag and length). Compared instead of the dotted text: the library cannot
+/// write an OID with an arc this large (a UUID is 128 bits) as text, and gives its bytes.
+pub(crate) const PROFILE_OID_VALUE: [u8; 20] = [
+    0x69, 0x81, 0xA6, 0xFD, 0xDC, 0xED, 0xFD, 0x99, 0xC2, 0x81, 0xB7, 0x88, 0x9C, 0xC9, 0x8D, 0xBB,
+    0xAE, 0x9D, 0xFD, 0x77,
+];
+
+/// The version of the profile this reads. A newer one is left out, not guessed at.
+pub(crate) const PROFILE_VERSION: u32 = 1;
+
+/// What the display says it is, if it said so and the whole of it is usable. Never an error: a display whose profile
+/// cannot be read is still a display, and a firmware mistake must not lock it out. Like every other extension a request
+/// asks for, it is read and not copied into the certificate.
+fn profile(request: &X509CertificationRequest<'_>, device: &DeviceId) -> Option<DeviceProfile> {
+    let mut found: Option<&[u8]> = None;
+    for attribute in request.certification_request_info.attributes() {
+        let ParsedCriAttribute::ExtensionRequest(requested) = attribute.parsed_attribute() else {
+            continue;
+        };
+        for extension in &requested.extensions {
+            if extension.oid.as_bytes() != PROFILE_OID_VALUE {
+                continue;
+            }
+            if found.replace(extension.value).is_some() {
+                log::warn!("{device}: ignoring its profile, which it gave twice");
+                return None;
+            }
+        }
+    }
+    match read_profile(found?) {
+        Ok(profile) => Some(profile),
+        Err(why) => {
+            log::warn!("{device}: ignoring its profile: {why}");
+            None
+        }
+    }
+}
+
+/// `SEQUENCE { INTEGER version, UTF8String model, INTEGER width, INTEGER height, INTEGER levels,
+/// SEQUENCE OF UTF8String formats, UTF8String firmware }`.
+fn read_profile(der: &[u8]) -> Result<DeviceProfile, String> {
+    use x509_parser::der_parser::der::parse_der;
+    let (rest, object) = parse_der(der).map_err(|e| format!("it is not DER: {e}"))?;
+    if !rest.is_empty() {
+        return Err("data after the profile".to_owned());
+    }
+    let items = object
+        .as_sequence()
+        .map_err(|_| "it is not a sequence".to_owned())?;
+    let [version, model, width, height, levels, formats, firmware] = items.as_slice() else {
+        return Err(format!("it has {} parts, and a profile has 7", items.len()));
+    };
+    let number = |object: &x509_parser::der_parser::der::DerObject<'_>, what: &str| {
+        object
+            .as_u32()
+            .map_err(|_| format!("the {what} is not a number"))
+    };
+    let text = |object: &x509_parser::der_parser::der::DerObject<'_>, what: &str| {
+        object
+            .as_str()
+            .map(str::to_owned)
+            .map_err(|_| format!("the {what} is not text"))
+    };
+    let version = number(version, "version")?;
+    if version != PROFILE_VERSION {
+        return Err(format!(
+            "it is version {version}, and this reads version {PROFILE_VERSION}"
+        ));
+    }
+    let formats = formats
+        .as_sequence()
+        .map_err(|_| "the formats are not a sequence".to_owned())?
+        .iter()
+        .map(|format| text(format, "format"))
+        .collect::<Result<Vec<_>, _>>()?;
+    DeviceProfile::new(
+        &text(model, "model")?,
+        &text(firmware, "firmware")?,
+        number(width, "width")?,
+        number(height, "height")?,
+        number(levels, "levels")?,
+        formats,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// The proof that the request was signed on one particular connection: RFC 7030 section 3.5 puts it

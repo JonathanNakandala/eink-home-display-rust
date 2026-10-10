@@ -19,6 +19,7 @@ pub mod freshness;
 pub mod location;
 pub mod pairing;
 pub mod pollen;
+pub mod profile;
 pub mod render_report;
 pub mod schedule;
 pub mod source_error;

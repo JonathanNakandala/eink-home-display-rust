@@ -131,6 +131,21 @@ inline const Bytes &oid_challenge_password() {
   static const Bytes v = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x07};
   return v;
 }
+// pkcs-9-extensionRequest (RFC 2985): the attribute a request asks for extensions in.
+inline const Bytes &oid_extension_request() {
+  static const Bytes v = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x0E};
+  return v;
+}
+
+// The private OID of the extension in which a display says what it is: 2.25.110978727574289354506863863824604692215, an
+// RFC 4122 UUID under `2.25`, which needs no registration. The server's copy is in request.rs, and both are in
+// testdata/contract/constants.vectors.
+inline const Bytes &oid_profile() {
+  static const Bytes v = {0x06, 0x14, 0x69, 0x81, 0xA6, 0xFD, 0xDC, 0xED, 0xFD, 0x99, 0xC2,
+                          0x81, 0xB7, 0x88, 0x9C, 0xC9, 0x8D, 0xBB, 0xAE, 0x9D, 0xFD, 0x77};
+  return v;
+}
+
 inline const Bytes &ecdsa_with_sha256() {
   static const Bytes v = {0x30, 0x0A, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02};
   return v;
@@ -138,8 +153,9 @@ inline const Bytes &ecdsa_with_sha256() {
 
 // The part of the request that is signed: version 0, the subject (a single common name), the public key as the
 // SubjectPublicKeyInfo DER, and the attributes, which hold the challenge password when there is one (the channel
-// binding, as base64 text).
-inline Bytes request_info(const std::string &name, const Bytes &spki, const std::string &challenge_password) {
+// binding, as base64 text) and then, when there is a profile (core/profile.h), the extension request that carries it.
+inline Bytes request_info(const std::string &name, const Bytes &spki, const std::string &challenge_password,
+                          const Bytes &profile = {}) {
   const Bytes version = {0x02, 0x01, 0x00};
   const Bytes subject =
       tlv(0x30, tlv(0x31, tlv(0x30, concat({oid_common_name(), tlv(0x0C, Bytes(name.begin(), name.end()))}))));
@@ -147,6 +163,12 @@ inline Bytes request_info(const std::string &name, const Bytes &spki, const std:
   if (!challenge_password.empty()) {
     const Bytes value(challenge_password.begin(), challenge_password.end());
     attributes = tlv(0x30, concat({oid_challenge_password(), tlv(0x31, tlv(0x0C, value))}));
+  }
+  if (!profile.empty()) {
+    // extensionRequest { SEQUENCE OF Extension { SEQUENCE { extnID, extnValue OCTET STRING { the profile } } } }
+    const Bytes extension = tlv(0x30, concat({oid_profile(), tlv(0x04, profile)}));
+    const Bytes more = tlv(0x30, concat({oid_extension_request(), tlv(0x31, tlv(0x30, extension))}));
+    attributes.insert(attributes.end(), more.begin(), more.end());
   }
   return tlv(0x30, concat({version, subject, spki, tlv(0xA0, attributes)}));
 }

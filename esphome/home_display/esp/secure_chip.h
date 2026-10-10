@@ -21,6 +21,7 @@
 #include "home_display/esp/nvs.h"
 #include "home_display/esp/shown_etag.h"
 #include "home_display/core/pairing.h"
+#include "home_display/core/profile.h"
 #include "home_display/tls/secure.h"
 #include "home_display/tls/secure_begin.h"
 #include "home_display/core/session_cache.h"
@@ -95,8 +96,10 @@ inline Bytes compiled_root(const char *server_root) {
 }
 
 // The display's identity: its key, certificate and root in flash. One for the wake; the key lives in it.
-inline home_display_flash::FlashIdentity &identity(const char *server_root) {
-  static home_display_flash::FlashIdentity instance(store(), last_answer(), compiled_root(server_root));
+inline home_display_flash::FlashIdentity &identity(const char *server_root,
+                                                   const home_display_profile::Profile &profile) {
+  static home_display_flash::FlashIdentity instance(store(), last_answer(), compiled_root(server_root),
+                                                    home_display_profile::encode(profile));
   return instance;
 }
 
@@ -117,15 +120,17 @@ inline bool erase_pairing() {
 }
 
 // Joins if it is to, and decides how this wake reaches the server (tls/secure_begin.h), on the chip's clock and flash.
-// `ip` and `tls_port` are what discovery found (0 for neither).
+// `ip` and `tls_port` are what discovery found (0 for neither). `profile` is what the display says it is, which goes in
+// every request it makes to join or renew (core/profile.h).
 inline home_display_secure_begin::Begin begin(home_display_service::Transport transport, uint32_t ip, uint16_t tls_port,
-                                              const std::string &name, uint32_t newest_render,
-                                              const char *server_root) {
+                                              const std::string &name, uint32_t newest_render, const char *server_root,
+                                              const home_display_profile::Profile &profile) {
   // A handshake or two, and the key made on the first wake: more than a normal request, so more time before the
   // watchdog.
   esphome::watchdog::WatchdogManager wdm(120000);
   SntpClock clock(newest_render);
-  return home_display_secure_begin::begin(transport, ip, tls_port, name, clock, identity(server_root), &sessions());
+  return home_display_secure_begin::begin(transport, ip, tls_port, name, clock, identity(server_root, profile),
+                                          &sessions());
 }
 
 // A small request through the secure connection, with the time ESPHome's watchdog needs for it.

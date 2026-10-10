@@ -10,9 +10,11 @@
 #include "home_display/core/battery.h"
 #include "home_display/core/der.h"
 #include "home_display/core/pairing.h"
+#include "home_display/core/profile.h"
 #include "home_display/core/report.h"
 #include "home_display/core/wire.h"
 
+using Bytes = std::vector<uint8_t>;
 using vectors::from_hex;
 using vectors::to_hex;
 
@@ -38,15 +40,50 @@ TEST(base64_is_what_the_vectors_say_both_ways) {
   }
 }
 
+namespace {
+
+// "model|firmware|width|height|levels|formats" as the vectors write a profile.
+home_display_profile::Profile profile_from(const std::string &text) {
+  const auto parts = vectors::split(text, '|');
+  home_display_profile::Profile p;
+  p.model = parts.at(0);
+  p.firmware = parts.at(1);
+  p.width = static_cast<uint32_t>(std::stoul(parts.at(2)));
+  p.height = static_cast<uint32_t>(std::stoul(parts.at(3)));
+  p.levels = static_cast<uint32_t>(std::stoul(parts.at(4)));
+  if (!parts.at(5).empty())
+    p.formats = vectors::split(parts.at(5), ',');
+  return p;
+}
+
+}  // namespace
+
 TEST(the_certificate_request_is_built_byte_for_byte_as_the_vectors_say) {
+  int built = 0, with_profile = 0;
   for (const vectors::Case &c : vectors::load("csr.vectors")) {
+    // A request only the server need read (a profile it must ignore) is not one the display builds.
+    if (c.get("display_builds") != "yes")
+      continue;
+    built++;
     const std::string challenge = c.get("challenge") == "none" ? "" : c.get("challenge");
-    const auto info = home_display_der::request_info(c.get("name"), from_hex(c.get("spki")), challenge);
+    Bytes profile;  // what the display says it is, as DER
+    if (c.get("profile") != "none") {
+      profile = home_display_profile::encode(profile_from(c.get("profile")));
+      with_profile++;
+      if (to_hex(profile) != c.get("profile_der"))
+        std::printf("      case %s\n", c.name.c_str());
+      CHECK_EQ(to_hex(profile), c.get("profile_der"));
+    } else {
+      CHECK_EQ(c.get("profile_der"), std::string("none"));
+    }
+    const auto info = home_display_der::request_info(c.get("name"), from_hex(c.get("spki")), challenge, profile);
     if (to_hex(info) != c.get("tbs"))
       std::printf("      case %s\n", c.name.c_str());
     CHECK_EQ(to_hex(info), c.get("tbs"));
     CHECK_EQ(to_hex(home_display_der::request(info, from_hex(c.get("signature")))), c.get("request"));
   }
+  CHECK(built >= 5);
+  CHECK(with_profile >= 2);  // with the binding and without
 }
 
 namespace {
@@ -113,4 +150,16 @@ TEST(the_names_and_numbers_both_sides_share_are_what_the_vectors_say) {
     states.push_back(home_display_battery::state_name(s));
   CHECK(states == vectors::split(report.get("battery_states"), ','));
   CHECK_EQ(std::to_string(home_display_report::MAX_FIRMWARE_CHARS), report.get("firmware_version_longest"));
+
+  const vectors::Case profile = vectors::load("constants.vectors").at(3);
+  CHECK_EQ(std::string(home_display_wire::PROFILE_OID), profile.get("oid"));
+  CHECK_EQ(to_hex(home_display_der::oid_profile()), profile.get("oid_der"));
+  CHECK_EQ(std::to_string(home_display_profile::VERSION), profile.get("version"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::MODEL_CHARS), profile.get("model_chars"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::FIRMWARE_CHARS), profile.get("firmware_chars"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::FORMAT_CHARS), profile.get("format_chars"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::MAX_FORMATS), profile.get("max_formats"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::MAX_PIXELS), profile.get("max_pixels"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::MIN_LEVELS), profile.get("min_levels"));
+  CHECK_EQ(std::to_string(home_display_profile::limits::MAX_LEVELS), profile.get("max_levels"));
 }

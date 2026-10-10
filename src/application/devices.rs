@@ -24,6 +24,7 @@ use super::api_schema::ImageFormatSchema;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::display::ImageFormat;
+use crate::domain::models::profile::firmware_version;
 
 /// More than a household has; stops a stray client filling memory with made-up names.
 const MAX_DEVICES: usize = 16;
@@ -34,18 +35,6 @@ const PERCENT: std::ops::RangeInclusive<u32> = 0..=100;
 const TLS_MILLISECONDS: std::ops::RangeInclusive<u32> = 1..=120_000;
 /// The lowest free heap a display saw during a wake. The chip has under a megabyte; anything past 16 MB is a misread.
 const HEAP_BYTES: std::ops::RangeInclusive<u32> = 1..=16_777_216;
-/// The longest firmware version kept. A release is `0.2.0` or `0.3.0-beta.1`; it is text the display chose, shown to the
-/// owner, so it is held to letters, digits, dots and hyphens and a short length.
-pub(crate) const FIRMWARE_CHARS: usize = 32;
-
-fn firmware_version(text: &str) -> Option<String> {
-    let usable = !text.is_empty()
-        && text.len() <= FIRMWARE_CHARS
-        && text
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
-    usable.then(|| text.to_owned())
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

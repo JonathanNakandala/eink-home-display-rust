@@ -94,12 +94,13 @@ struct Rebooting {
   HostClock clock;
   int roots = 0, enrolled = 0, renewed = 0;
   home_display_ports::Bytes compiled;
+  home_display_ports::Bytes profile;  // what it says it is (core/profile.h, as DER) in every request; empty: nothing
 
   explicit Rebooting(const std::string &n) : name(n) {}
 
   Outcome wake() {
     flash.restore_power();
-    home_display_flash::FlashIdentity identity(flash, rtc, compiled);
+    home_display_flash::FlashIdentity identity(flash, rtc, compiled, profile);
     CountingEst est(server_ip(), server_port(), identity);
     home_display_verifier::MbedVerifier verifier;
     const Outcome out = Joiner(clock, identity, est, verifier, name).run();
@@ -114,6 +115,19 @@ struct Rebooting {
     return c.record();
   }
 };
+
+// What the owner's command prints, standard error included.
+inline std::string ctl_output(const std::string &arguments) {
+  const std::string command = environment("DISPLAYCTL") + " --socket " + environment("FIXTURE_ADMIN") + " " + arguments + " 2>&1";
+  std::string out;
+  if (FILE *pipe = popen(command.c_str(), "r")) {
+    char buffer[512];
+    while (std::fgets(buffer, sizeof buffer, pipe) != nullptr)
+      out += buffer;
+    pclose(pipe);
+  }
+  return out;
+}
 
 inline int ctl(const std::string &arguments) {
   const std::string command =

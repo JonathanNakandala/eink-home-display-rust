@@ -62,10 +62,14 @@ where
     let ago = |at: DateTime<Utc>| age(now - at);
     let mut text = match entry.state {
         DisplayState::Waiting => format!(
-            "asked {} ago. Check the code on its own panel, then approve it",
+            "asked {} ago{}. Check the code on its own panel, then approve it",
             entry
                 .waiting_since
-                .map_or_else(|| "a while".to_owned(), ago)
+                .map_or_else(|| "a while".to_owned(), ago),
+            entry
+                .profile
+                .as_ref()
+                .map_or_else(String::new, |profile| format!(" ({profile})"))
         ),
         DisplayState::Approved => {
             "approved. It becomes a member the next time it asks, within a few minutes".to_owned()
@@ -93,10 +97,19 @@ where
     if entry.changing_keys {
         text.push_str("; changing to a new key");
     }
+    if entry.state == DisplayState::Member
+        && let Some(profile) = &entry.profile
+    {
+        text.push_str(&format!(" ({profile})"));
+    }
     if entry.replacement_waiting && entry.state == DisplayState::Member {
         text.push_str(&format!(
-            "; another key asked {} ago to take its name. Approve it with the code on the display's own panel, or reject it",
-            entry.waiting_since.map_or_else(|| "a while".to_owned(), ago)
+            "; another key asked {} ago to take its name{}. Approve it with the code on the display's own panel, or reject it",
+            entry.waiting_since.map_or_else(|| "a while".to_owned(), ago),
+            entry
+                .replacement_profile
+                .as_ref()
+                .map_or_else(String::new, |profile| format!(" ({profile})"))
         ));
     }
     text
