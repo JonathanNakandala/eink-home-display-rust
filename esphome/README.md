@@ -24,7 +24,7 @@ instance_name = "E-ink home display"   # the name a scan shows; the host name is
 ```
 
 Run it with a schedule, since the server only runs in that mode:
-`cargo run --release --bin eink-home-display-rust -- -c config/default.toml --cron "*/10 * * * *"`
+`cargo run --release --bin home-display-server -- -c config/default.toml --cron "*/10 * * * *"`
 
 Check it with `curl -o /dev/null -w '%{size_download}\n' http://<host>:8080/image`.
 

@@ -8,16 +8,16 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use chrono_tz::Tz;
-use eink_home_display_rust::adapters::admin;
-use eink_home_display_rust::adapters::certificate_authority::{self, Create};
-use eink_home_display_rust::adapters::clock::SystemClock;
-use eink_home_display_rust::adapters::pairing_store::{FilePairingStore, Missing};
-use eink_home_display_rust::application::enrollment::Outcome;
-use eink_home_display_rust::application::enrollment::{Enrollment, EnrollmentPolicy};
-use eink_home_display_rust::config::application::ApplicationConfig;
-use eink_home_display_rust::domain::models::device_id::DeviceId;
-use eink_home_display_rust::domain::models::pairing::{PairingCode, PublicKey};
-use eink_home_display_rust::domain::services::certificate_authority::CertificateAuthority;
+use home_display_server::adapters::admin;
+use home_display_server::adapters::certificate_authority::{self, Create};
+use home_display_server::adapters::clock::SystemClock;
+use home_display_server::adapters::pairing_store::{FilePairingStore, Missing};
+use home_display_server::application::enrollment::Outcome;
+use home_display_server::application::enrollment::{Enrollment, EnrollmentPolicy};
+use home_display_server::config::application::ApplicationConfig;
+use home_display_server::domain::models::device_id::DeviceId;
+use home_display_server::domain::models::pairing::{PairingCode, PublicKey};
+use home_display_server::domain::services::certificate_authority::CertificateAuthority;
 use rcgen::PublicKeyData;
 use std::os::unix::fs::PermissionsExt;
 

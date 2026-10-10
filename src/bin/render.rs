@@ -4,23 +4,23 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use image::GrayImage;
 
-use eink_home_display_rust::adapters::clock::SystemClock;
-use eink_home_display_rust::adapters::display_image_generator::chrome_render::{
+use home_display_server::adapters::clock::SystemClock;
+use home_display_server::adapters::display_image_generator::chrome_render::{
     ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT,
 };
-use eink_home_display_rust::adapters::image_display_service::quantise::quantise_grey;
-use eink_home_display_rust::adapters::published_images::DirectoryImages;
-use eink_home_display_rust::bootstrap::{self, setup_display};
-use eink_home_display_rust::cli::RenderArgs;
-use eink_home_display_rust::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
-use eink_home_display_rust::config::cache::{CacheConfig, CachePaths};
-use eink_home_display_rust::domain::models::GlanceData;
-use eink_home_display_rust::domain::models::display::{DisplayProfile, Dither, Palette};
-use eink_home_display_rust::domain::models::image::ImageData;
-use eink_home_display_rust::domain::models::location::Location;
-use eink_home_display_rust::domain::services::display_image_generator::DisplayImageGenerator;
-use eink_home_display_rust::domain::services::image_display_service::ImageDisplayService;
-use eink_home_display_rust::domain::services::image_repository::ImageRepository;
+use home_display_server::adapters::image_display_service::quantise::quantise_grey;
+use home_display_server::adapters::published_images::DirectoryImages;
+use home_display_server::bootstrap::{self, setup_display};
+use home_display_server::cli::RenderArgs;
+use home_display_server::config::application::{ApplicationConfig, DisplayConfig, DisplayKind};
+use home_display_server::config::cache::{CacheConfig, CachePaths};
+use home_display_server::domain::models::GlanceData;
+use home_display_server::domain::models::display::{DisplayProfile, Dither, Palette};
+use home_display_server::domain::models::image::ImageData;
+use home_display_server::domain::models::location::Location;
+use home_display_server::domain::services::display_image_generator::DisplayImageGenerator;
+use home_display_server::domain::services::image_display_service::ImageDisplayService;
+use home_display_server::domain::services::image_repository::ImageRepository;
 
 /// Renders the dashboard to PNG files without touching any display, one set per display type.
 #[tokio::main]
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     // A preview with no config has no zone to be told: the host's is right for looking at a layout.
     let zone = match &config {
         Some(config) => bootstrap::resolve_zone(&config.location)?,
-        None => eink_home_display_rust::adapters::zone::host(),
+        None => home_display_server::adapters::zone::host(),
     };
     if args.live && config.is_none() {
         anyhow::bail!("--live needs --config-file");

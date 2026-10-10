@@ -1,5 +1,5 @@
 # =============================================================================
-# reTerminal E1003 - shows the image served by eink-home-display-rust
+# reTerminal E1003 - shows the image served by home-display-server
 # =============================================================================
 # Each wake: join Wi-Fi, ask the server's /plan what is current, download and draw the image
 # only if it changed, then sleep for as long as the server says.

@@ -4,22 +4,22 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 
-use eink_home_display_rust::adapters::clock::SystemClock;
-use eink_home_display_rust::adapters::display_image_generator::chrome_render::{
+use home_display_server::adapters::clock::SystemClock;
+use home_display_server::adapters::display_image_generator::chrome_render::{
     ChromeSource, DEFAULT_IDLE_TIMEOUT,
 };
-use eink_home_display_rust::adapters::image_server::{Handles, ServerSettings, router};
-use eink_home_display_rust::adapters::published_images::DirectoryImages;
-use eink_home_display_rust::application::devices::DeviceBoard;
-use eink_home_display_rust::application::launch;
-use eink_home_display_rust::application::refresh::RefreshControl;
-use eink_home_display_rust::application::status::StatusBoard;
-use eink_home_display_rust::bootstrap;
-use eink_home_display_rust::cli;
-use eink_home_display_rust::config::cache::CachePaths;
-use eink_home_display_rust::domain::models::location::Location;
-use eink_home_display_rust::domain::services::clock::Clock;
-use eink_home_display_rust::scheduler::{
+use home_display_server::adapters::image_server::{Handles, ServerSettings, router};
+use home_display_server::adapters::published_images::DirectoryImages;
+use home_display_server::application::devices::DeviceBoard;
+use home_display_server::application::launch;
+use home_display_server::application::refresh::RefreshControl;
+use home_display_server::application::status::StatusBoard;
+use home_display_server::bootstrap;
+use home_display_server::cli;
+use home_display_server::config::cache::CachePaths;
+use home_display_server::domain::models::location::Location;
+use home_display_server::domain::services::clock::Clock;
+use home_display_server::scheduler::{
     PERIODIC_IDLE_TIMEOUT, log_schedule, run_periodically_from, shutdown_signal,
 };
 

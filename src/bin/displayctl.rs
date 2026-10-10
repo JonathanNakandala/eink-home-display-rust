@@ -6,11 +6,11 @@ use std::process::ExitCode;
 use anyhow::Context;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
-use eink_home_display_rust::adapters::admin::{
+use home_display_server::adapters::admin::{
     AdminClient, CallError, approved, describe, describe_entry, describe_list, describe_window,
     forgotten, rejected, revoked,
 };
-use eink_home_display_rust::bootstrap::load_application_config;
+use home_display_server::bootstrap::load_application_config;
 
 /// Talks to a running server's admin interface. The server offers it when it serves HTTPS
 /// (`transport = "prefer-https"` or `"https"`).

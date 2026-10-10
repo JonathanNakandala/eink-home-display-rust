@@ -1,4 +1,4 @@
-// Finds the eink-home-display-rust image server on the LAN with an mDNS / DNS-SD query.
+// Finds the home-display-server image server on the LAN with an mDNS / DNS-SD query.
 // The server announces itself as `_http._tcp` (or `_https._tcp` when it serves only HTTPS) with the TXT keys txtvers,
 // path, format (served now), formats (all it can serve) and, when it offers HTTPS, tlsport and secure (see
 // src/adapters/image_server/advertise.rs in the Rust app). What to make of an answer is core/service.h, which is
