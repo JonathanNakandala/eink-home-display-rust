@@ -1,7 +1,7 @@
 # =============================================================================
 # The firmware's version.
 # =============================================================================
-# Released by release-please as `home-display-esphome-firmware` (.github/release-please/config.json): it changes the line
+# Released by release-please as `home-display-firmware-esphome` (.github/release-please/config.json): it changes the line
 # below, and the one marked comment is how it finds it. The firmware has this version compiled in (`esphome: project:` in
 # the device file), logs it at boot, and tells the server in every check-in, so `/status` says what each display runs.
 substitutions:
