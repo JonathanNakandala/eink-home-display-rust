@@ -735,36 +735,8 @@ The device sleeps for the `next_seconds` the server reports: the next scheduled 
 
 ## Verify on first flash
 
-- The log shows `3.9x V, NN%, ok` at the start of each wake, and the server's `/status` lists the device
-  with the same voltage. Compare it with a multimeter on the battery once.
-- To see the label and the halt without draining the battery, temporarily raise `battery_low_v` and
-  `battery_empty_v` above the current voltage.
-
-- The first boot log shows no `Not enough PSRAM` line. If it does, the figures in it say how much was
-  free; check that PSRAM is detected (about 8 MB) before anything else.
-
-- Hold KEY0 right after waking: at five seconds the panel says to keep holding, and letting go before ten leaves the pairing
-  (and puts the picture back); holding to ten says `Pairing reset`, and the display asks to join again with a new code.
-  A short press still asks for a fresh picture, as before. This is the one thing in the secure transport that reads a
-  pin directly (`esp/button.h`).
-
-- Stop the server and wake the device a few times: the label appears once, and the log shows
-  `Failure 2 in a row; sleeping 1200 s`, then 2400 s. Start the server again: the next wake redraws
-  the picture and the label goes.
-
-- Hold KEY1 at boot, then let go: the log says `Maintenance mode: staying awake` and the device is still up a
-  minute later, reachable for an update over the air.
-- Make the server accept the connection and never answer (for example `nc -l 8080` in place of it): after
-  110 s the log shows `The wake didn't finish in 110s` and `Failure 1 in a row (timeout)`, and the next
-  wakes sleep 20, 40, then 60 minutes instead of 10 each time.
-- A wake that downloads an image logs a sleep shorter than `next_seconds` by about the time it was awake.
-- The log shows `Image changed, downloading` on the first wake and `Image unchanged, skipping refresh`
-  on a wake before the next render, and the sleep length matches `next_seconds`.
-- `shown_version` survives deep sleep (a second wake sends `have=` with the previous version).
-- The lookup finds the server (`Found '...' at ...` in the log) and the remembered address
-  survives deep sleep. Try moving the server to another port to see it recover.
-- Unplug the Rust server and wake the device: the picture stays and the label appears in the
-  bottom-right, the right way round, with nothing else refreshed.
-- The image isn't mirrored (`mirror_x` is copied from Seeed's example).
-- A 1872x1404 GRAYSCALE `online_image` fits in memory alongside the framebuffer.
-- Greys look right with `dithering: false`.
+[FIRST_FLASH.md](FIRST_FLASH.md) is the checklist for the first run on a real display: what to look for in the log, `/status`,
+`/metrics` and on the panel at each step, what to write down (the heap a handshake leaves, how long it takes, what a wake costs),
+and how it should fail. It starts from plain HTTP as a baseline, then joins over HTTPS, resumes, tries the 304, the reset
+button, a renewing certificate and the ways it falls back. It includes the battery, PSRAM, maintenance-mode, hang and
+backoff checks that were listed here before.
