@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use clap::Parser;
-use eink_home_display_rust::config::application::ApplicationConfig;
+use home_display_server::config::application::ApplicationConfig;
 
 /// Generate the config JSON Schema and example TOML from the config types.
 #[derive(Parser)]
@@ -23,11 +23,11 @@ fn main() -> anyhow::Result<()> {
         std::fs::write(dir.join("example.toml"), example)?;
         std::fs::write(
             dir.join("openapi.json"),
-            eink_home_display_rust::adapters::image_server::openapi_json(),
+            home_display_server::adapters::image_server::openapi_json(),
         )?;
         std::fs::write(
             dir.join("admin-openapi.json"),
-            eink_home_display_rust::adapters::admin::openapi_json(),
+            home_display_server::adapters::admin::openapi_json(),
         )?;
         println!(
             "Wrote config/schema.json, config/example.toml, config/openapi.json and config/admin-openapi.json"

@@ -20,11 +20,11 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use chrono::Duration;
 use chrono_tz::Tz;
-use eink_home_display_rust::adapters::authenticated::AuthenticatedDevice;
-use eink_home_display_rust::adapters::clock::SystemClock;
-use eink_home_display_rust::bootstrap::{open_security, start_serving};
-use eink_home_display_rust::config::server::ServerConfig;
-use eink_home_display_rust::domain::models::display::ImageFormat;
+use home_display_server::adapters::authenticated::AuthenticatedDevice;
+use home_display_server::adapters::clock::SystemClock;
+use home_display_server::bootstrap::{open_security, start_serving};
+use home_display_server::config::server::ServerConfig;
+use home_display_server::domain::models::display::ImageFormat;
 
 /// `n` bytes where byte i is i % 251.
 fn pattern(n: usize) -> Vec<u8> {

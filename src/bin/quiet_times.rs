@@ -2,16 +2,16 @@ use anyhow::Context;
 use chrono::{Duration, NaiveDate, NaiveTime};
 use clap::Parser;
 
-use eink_home_display_rust::adapters::train_schedule::network_rail::cif_feed;
-use eink_home_display_rust::adapters::train_schedule::network_rail::network_rail_train_schedule_service::NetworkRailTrainScheduleServiceAdapter;
-use eink_home_display_rust::adapters::train_schedule::network_rail::schedule_cache;
-use eink_home_display_rust::bootstrap;
-use eink_home_display_rust::cli::QuietTimesArgs;
-use eink_home_display_rust::config::quiet_times::QuietTimesRulesConfig;
-use eink_home_display_rust::domain::services::quiet_times_calculator::{
+use home_display_server::adapters::train_schedule::network_rail::cif_feed;
+use home_display_server::adapters::train_schedule::network_rail::network_rail_train_schedule_service::NetworkRailTrainScheduleServiceAdapter;
+use home_display_server::adapters::train_schedule::network_rail::schedule_cache;
+use home_display_server::bootstrap;
+use home_display_server::cli::QuietTimesArgs;
+use home_display_server::config::quiet_times::QuietTimesRulesConfig;
+use home_display_server::domain::services::quiet_times_calculator::{
     Gap, QuietTimesCalculator, QuietTimesReport, QuietTimesRules, TimeWindow,
 };
-use eink_home_display_rust::quiet_times::QuietTimesApplication;
+use home_display_server::quiet_times::QuietTimesApplication;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let start = match &args.start {
         Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").context("Invalid --start date")?,
         None => chrono::Utc::now()
-            .with_timezone(&eink_home_display_rust::adapters::zone::host())
+            .with_timezone(&home_display_server::adapters::zone::host())
             .date_naive(),
     };
 

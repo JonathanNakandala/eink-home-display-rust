@@ -1,15 +1,15 @@
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt};
 
-use eink_home_display_rust::adapters::stop_points::tfl::tfl_stop_point_service::{
+use home_display_server::adapters::stop_points::tfl::tfl_stop_point_service::{
     DEFAULT_HOST_URL, TflStopPointServiceAdapter,
 };
-use eink_home_display_rust::cli::{StopsCommand, TflStopsArgs};
-use eink_home_display_rust::domain::models::arrival::Arrival;
-use eink_home_display_rust::domain::models::location::Location;
-use eink_home_display_rust::domain::models::stop_point::{StopKind, StopPoint};
-use eink_home_display_rust::domain::services::arrivals_service::ArrivalsService;
-use eink_home_display_rust::domain::services::stop_point_service::StopPointService;
+use home_display_server::cli::{StopsCommand, TflStopsArgs};
+use home_display_server::domain::models::arrival::Arrival;
+use home_display_server::domain::models::location::Location;
+use home_display_server::domain::models::stop_point::{StopKind, StopPoint};
+use home_display_server::domain::services::arrivals_service::ArrivalsService;
+use home_display_server::domain::services::stop_point_service::StopPointService;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

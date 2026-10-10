@@ -1,9 +1,9 @@
 use anyhow::{Result, bail};
 use clap::Parser;
 
-use eink_home_display_rust::bootstrap::{self, setup_departure_boards};
-use eink_home_display_rust::cli::DeparturesArgs;
-use eink_home_display_rust::domain::models::departures::{DepartureStatus, Departures};
+use home_display_server::bootstrap::{self, setup_departure_boards};
+use home_display_server::cli::DeparturesArgs;
+use home_display_server::domain::models::departures::{DepartureStatus, Departures};
 
 #[tokio::main]
 async fn main() -> Result<()> {
