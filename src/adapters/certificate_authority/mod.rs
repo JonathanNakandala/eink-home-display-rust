@@ -15,7 +15,7 @@
 //! What a certificate says is decided here, never by a request: the display's name and key, a short life,
 //! and the one use it is for, proving who is connecting.
 
-mod request;
+pub(crate) mod request;
 mod storage;
 #[cfg(test)]
 mod tests;

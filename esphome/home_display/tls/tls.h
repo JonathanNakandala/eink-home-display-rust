@@ -27,6 +27,7 @@
 #include "mbedtls/x509_crt.h"
 
 #include "home_display/core/http.h"
+#include "home_display/core/wire.h"
 #include "home_display/core/ports.h"
 #include "home_display/core/session_cache.h"
 
@@ -41,7 +42,7 @@ constexpr int WAIT_MS = 15000;
 constexpr int EXCHANGE_MS = 30000;
 
 // The name the server's certificate always has, and the only one a display checks, whatever address mDNS found.
-constexpr const char *SERVER_NAME = "home-display.internal";
+constexpr const char *SERVER_NAME = home_display_wire::SERVER_NAME;
 
 // The random numbers for keys, handshakes and signatures. One for the program.
 class Random {
@@ -270,8 +271,8 @@ class Session {
 
   // The 32 bytes RFC 9266 binds a request to its connection with (tls-exporter): empty if the library cannot make them.
   Bytes channel_binding() {
-    Bytes out(32);
-    const char *label = "EXPORTER-Channel-Binding";
+    Bytes out(home_display_wire::BINDING_LENGTH);
+    const char *label = home_display_wire::BINDING_LABEL;
     if (mbedtls_ssl_export_keying_material(&ssl_, out.data(), out.size(), label, std::strlen(label), nullptr, 0, 0) !=
         0)
       return {};

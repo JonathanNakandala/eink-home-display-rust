@@ -4,7 +4,7 @@
 # instead of passing by luck. The headers that need the device (esp/telemetry.h, esp/discovery.h,
 # esp/health.h, esp/eink_notice.h) are not built here; `esphome compile` covers them.
 CXX ?= c++
-CXXFLAGS ?= -std=c++17 -I. -Itests/support -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
+CXXFLAGS ?= -std=c++17 -I. -Itests/support -DVECTORS_DIR=\"$(abspath ../testdata/contract)\" -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/support/main.cpp $(wildcard tests/core/*_test.cpp)
 HEADERS := $(wildcard home_display/core/*.h) $(wildcard tests/support/*.h)
 

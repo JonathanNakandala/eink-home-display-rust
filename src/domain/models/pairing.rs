@@ -77,14 +77,18 @@ impl fmt::Debug for PublicKey {
 /// give the code the owner will see. At 40 bits that is minutes to hours on one graphics card; at 60 it
 /// is not worth attempting. (A commitment step or a password-authenticated exchange would let the code be
 /// shorter; see the notes with the pairing protocol. This is the simple way to be safe.)
-const LENGTH: usize = 12;
+pub(crate) const LENGTH: usize = 12;
 /// How many bits of the hash the code holds.
 const BITS: u32 = 5 * LENGTH as u32;
-const GROUP: usize = 4;
+pub(crate) const GROUP: usize = 4;
 
 /// Crockford's Base32 (<https://www.crockford.com/base32.html>): digits and letters without `I`, `L`,
 /// `O` and `U`, so nothing read off a small panel can be taken for something else.
-const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+pub(crate) const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// The label that starts the hash, which keeps it from being reused as some other hash. The display uses the same one
+/// (`esphome/home_display/core/pairing.h`).
+pub(crate) const HASH_LABEL: &[u8] = b"home-display pairing code v1";
 
 /// `characters` (all from `ALPHABET`, `LENGTH` of them) split into dash-separated groups.
 fn group(characters: &str) -> String {
@@ -121,7 +125,7 @@ impl PairingCode {
     /// input; the label keeps it from being reused as some other hash. The code is the first 60 bits.
     pub fn derive(authority: &Fingerprint, device: &DeviceId, key: &PublicKey) -> Self {
         let mut hash = Sha256::new();
-        hash.update(b"home-display pairing code v1");
+        hash.update(HASH_LABEL);
         hash.update(authority.as_bytes());
         for part in [device.as_str().as_bytes(), key.as_der()] {
             hash.update((part.len() as u64).to_be_bytes());

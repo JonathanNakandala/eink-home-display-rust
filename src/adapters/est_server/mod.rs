@@ -54,8 +54,8 @@ use crate::domain::services::certificate_authority::CertificateAuthority;
 pub const SERVER_NAME: &str = "home-display.internal";
 
 /// RFC 9266: the label, and no context, whose exported value identifies one TLS 1.3 connection.
-const BINDING_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
-const BINDING_LEN: usize = 32;
+pub(crate) const BINDING_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
+pub(crate) const BINDING_LEN: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct EstSettings {

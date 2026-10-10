@@ -36,7 +36,7 @@ const TLS_MILLISECONDS: std::ops::RangeInclusive<u32> = 1..=120_000;
 const HEAP_BYTES: std::ops::RangeInclusive<u32> = 1..=16_777_216;
 /// The longest firmware version kept. A release is `0.2.0` or `0.3.0-beta.1`; it is text the display chose, shown to the
 /// owner, so it is held to letters, digits, dots and hyphens and a short length.
-const FIRMWARE_CHARS: usize = 32;
+pub(crate) const FIRMWARE_CHARS: usize = 32;
 
 fn firmware_version(text: &str) -> Option<String> {
     let usable = !text.is_empty()

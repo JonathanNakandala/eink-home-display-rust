@@ -434,6 +434,26 @@ The states, so each has one meaning on the panel and in `last_failure`: *no root
 (asking again with the same key), *not recognised* (the server doesn't know this key: the owner must approve), and
 *clock not set* (nothing else can be tried until it is).
 
+### Vectors shared with the server
+
+The display and the server each have to read what the other writes, and each is tested alone, so a change to one that the
+other does not follow would pass both suites. `testdata/contract/` holds the common ground as data that **both** sides' tests
+read: [tests/core/contract_test.cpp](tests/core/contract_test.cpp) here and `src/contract_tests.rs` in the server.
+
+- the **pairing code** for ten combinations of root, name and key (worked out by `scripts/make_vectors.py` from the
+  specification, a third implementation, so a mistake the two share cannot hide),
+- the **check-in report**: what the display must write, and what the server must read from it, in sixteen cases (clamping,
+  rounding, characters a query cannot keep, a version too long),
+- the **certificate request** the display builds byte for byte, with a real signature the server's X.509 reader must accept (and
+  a copy changed after signing, which it must refuse),
+- **base64** both ways, and
+- the **names and numbers** both share: the server's certificate name, the channel-binding label and length, the code's
+  alphabet and label, the failure names, the battery states, the longest firmware version.
+
+The format is a few lines (`[case]`, then `key: value`), with a parser a few lines long on each side. To add a case, add it to the
+file; both suites pick it up. If the two disagree about one, one is wrong: work out which and fix that side
+(`testdata/contract/README.md`). Changing one side alone, for example the hash label or a field name, now fails a test.
+
 ### Fuzzing the parsers
 
 The display reads bytes from places it cannot trust: the reply to its first request (on a connection that verifies nothing),
