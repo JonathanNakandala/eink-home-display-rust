@@ -139,7 +139,7 @@ pub struct ApproveRequest {
     /// The pairing code on the display's own panel: twelve letters and digits, in any case, with or without the
     /// dashes. `I` and `L` are read as `1` and `O` as `0`. Type it from the panel, never from anywhere else: the
     /// server does not show it, because a code copied from the server would say nothing about the display.
-    #[schema(examples("B0AJ-QTW6-Y8SA"))]
+    #[schema(examples("JGWP-14YW-3BT0"))]
     pub code: String,
 }
 

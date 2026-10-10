@@ -1,9 +1,9 @@
 #include <vector>
 
 #include "check.h"
-#include "eink/core/hold.h"
+#include "home_display/core/hold.h"
 
-using namespace eink_hold;
+using namespace home_display_hold;
 
 // Follows a button the way the wake does: polled every 100 ms from `start`, down until `released_at` (or for ever).
 // Returns each action that was not NONE, with the time it came.

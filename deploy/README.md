@@ -1,7 +1,7 @@
 
 # Monitoring the service
 
-See [eink-home-display.service](eink-home-display.service) for running it under systemd.
+See [home-display.service](home-display.service) for running it under systemd.
 
 The server answers two questions, on the same port as the image (`server.bind`):
 
@@ -124,7 +124,7 @@ intermediate, so losing or leaking the intermediate never means pairing every di
 
 ### Names
 
-The server's certificate always has the name `eink-home-display.internal`, and that is the one the display
+The server's certificate always has the name `home-display.internal`, and that is the one the display
 checks. Nothing in the configuration can change it, so renaming the instance or editing `names` never makes a
 display stop trusting the server. `[server.tls] names` adds more (a browser or `curl` connecting by the `.local`
 name, or by an address); left empty it is `<instance_name>.local` and `localhost`.
@@ -169,7 +169,7 @@ name, or by an address); left empty it is `<instance_name>.local` and `localhost
 The supplied unit confines the service: no new privileges, no capabilities, a read-only file system except the working
 directory, no access to home directories beyond reading, no kernel tunables or modules, and only Unix, IPv4, IPv6 and
 netlink sockets. It could not be run on the machine it was written on, so it is **untried**; treat the first start as
-a test. `systemd-analyze security eink-home-display` shows what is still open.
+a test. `systemd-analyze security home-display` shows what is still open.
 
 If it stops working after you install it:
 
@@ -274,11 +274,11 @@ which fixes itself when the display is next on), whether it has **stopped renewi
 certificate should have been replaced by now and has not been, about 63 days after it was issued for a 90-day
 certificate; false once the certificate has ended, when `certificate_expired` says so instead), and whether a key
 change or a replacement is waiting. `displayctl displays list` says it in words, and `/metrics` has the same as
-`eink_member_*`. The alert for a member that has stopped renewing:
+`home_display_member_*`. The alert for a member that has stopped renewing:
 
 ```yaml
 - alert: DisplayNotRenewing
-  expr: eink_member_certificate_renewal_overdue == 1
+  expr: home_display_member_certificate_renewal_overdue == 1
   for: 1h
   annotations:
     summary: "{{ $labels.device }} has not renewed its certificate when it should have"
@@ -325,12 +325,12 @@ once the display is talking to the server again, as "3 failed wakes in a row, th
 while `/plan` working but the image failing (`download`, `memory`, `timeout`) points at the server or the
 display, not the radio. Over HTTPS the server also records, for each display, how its connections began, **from its own side** (so the display
 cannot misstate it): how many resumed a TLS session and how many were full handshakes, whether the latest one resumed, and
-how long its handshake took, from accepting the connection to the end of it (`connection` in `/status`; `eink_device_tls_*`
+how long its handshake took, from accepting the connection to the end of it (`connection` in `/status`; `home_display_device_tls_*`
 in `/metrics`). The time includes the display's own work and the network between, so a slow chip shows. The display adds
 what only it knows, in the same check-in: how long its first handshake took as it timed it (`last_tls_milliseconds`) and the
 least free heap it had during the wake (`last_heap_min_bytes`), which the first run on a device needs. It also says
-which firmware release it runs (`firmware`, and `eink_device_firmware_info`), and the log notes when that changes. A display that
-keeps beginning with a full handshake is not resuming: look at `eink_device_tls_last_resumed`.
+which firmware release it runs (`firmware`, and `home_display_device_firmware_info`), and the log notes when that changes. A display that
+keeps beginning with a full handshake is not resuming: look at `home_display_device_tls_last_resumed`.
 
 The server also knows when it told the display to come back, so it can tell one that is asleep from one that
 has gone quiet: a display is **overdue** once it is later than that by `server.device_overdue_grace_seconds`
@@ -350,51 +350,51 @@ not overdue, because the server asked for it.
 
 ```yaml
 scrape_configs:
-  - job_name: eink
+  - job_name: home-display
     scrape_interval: 1m
     static_configs:
-      - targets: ["eink-host.local:8080"]
+      - targets: ["home-display.local:8080"]
 ```
 
 ```yaml
 groups:
-  - name: eink
+  - name: home-display
     rules:
-      - alert: EinkDisplayOverdue
-        expr: eink_device_overdue == 1
+      - alert: HomeDisplayOverdue
+        expr: home_display_device_overdue == 1
         for: 5m
         annotations:
           summary: "{{ $labels.device }} has not checked in when it was told to"
-      - alert: EinkBatteryLow
-        expr: eink_device_battery_state{state="low"} == 1
+      - alert: HomeDisplayBatteryLow
+        expr: home_display_device_battery_state{state="low"} == 1
         for: 30m
         annotations:
           summary: "{{ $labels.device }} battery is low ({{ $value }})"
-      - alert: EinkBatteryEmpty
-        expr: eink_device_battery_state{state="empty"} == 1
+      - alert: HomeDisplayBatteryEmpty
+        expr: home_display_device_battery_state{state="empty"} == 1
         annotations:
           summary: "{{ $labels.device }} has stopped refreshing: battery empty"
-      - alert: EinkDisplayFailingWakes
-        expr: eink_device_failed_wakes >= 4
+      - alert: HomeDisplayFailingWakes
+        expr: home_display_device_failed_wakes >= 4
         annotations:
-          summary: "{{ $labels.device }} has failed {{ $value }} wakes in a row (see eink_device_last_failure)"
-      - alert: EinkDisplayWeakWifi
-        expr: eink_device_wifi_rssi_dbm < -80
+          summary: "{{ $labels.device }} has failed {{ $value }} wakes in a row (see home_display_device_last_failure)"
+      - alert: HomeDisplayWeakWifi
+        expr: home_display_device_wifi_rssi_dbm < -80
         for: 1h
         annotations:
           summary: "{{ $labels.device }} has a weak Wi-Fi signal ({{ $value }} dBm)"
-      - alert: EinkServerStale
-        expr: eink_render_state{state="stale"} == 1
+      - alert: HomeDisplayServerStale
+        expr: home_display_render_state{state="stale"} == 1
         for: 5m
         annotations:
           summary: "The dashboard is not being re-rendered"
-      - alert: EinkSourceUnavailable
-        expr: eink_source_state{state="unavailable"} == 1
+      - alert: HomeDisplaySourceUnavailable
+        expr: home_display_source_state{state="unavailable"} == 1
         for: 30m
         annotations:
           summary: "{{ $labels.source }} has had no data for half an hour"
 ```
 
-A flat battery is the one failure the display cannot report itself, so `EinkDisplayOverdue` is the
+A flat battery is the one failure the display cannot report itself, so `HomeDisplayOverdue` is the
 alert that catches it: the display simply stops checking in. The metrics have no authentication, like
 the rest of the server, so scrape from the LAN.

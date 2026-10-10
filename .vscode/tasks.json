@@ -44,7 +44,7 @@
             "command": "ssh",
             "args": [
                 "${input:targetHost}",
-                "mkdir -p ~/rust-eink/config"
+                "mkdir -p ~/home-display/config"
             ],
             "problemMatcher": []
         },
@@ -55,7 +55,7 @@
             "args": [
                 "${workspaceFolder}/target/arm-unknown-linux-gnueabihf/debug/${workspaceFolderBasename}",
                 "${workspaceFolder}/config/config.toml",
-                "${input:targetHost}:~/rust-eink/"
+                "${input:targetHost}:~/home-display/"
             ],
             "dependsOn": [
                 "Build Raspberry PI Armv6",
@@ -69,7 +69,7 @@
             "command": "ssh",
             "args": [
                 "${input:targetHost}",
-                "cp ~/rust-eink/config.toml ~/rust-eink/config/"
+                "cp ~/home-display/config.toml ~/home-display/config/"
             ],
             "dependsOn": "Deploy to Remote",
             "problemMatcher": []
@@ -80,7 +80,7 @@
             "command": "ssh",
             "args": [
                 "${input:targetHost}",
-                "cd ~/rust-eink && gdbserver :${input:targetPort} ./${workspaceFolderBasename}"
+                "cd ~/home-display && gdbserver :${input:targetPort} ./${workspaceFolderBasename}"
             ],
             "isBackground": true,
             "problemMatcher": [

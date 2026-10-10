@@ -443,7 +443,7 @@ fn the_fingerprint_a_pairing_code_is_made_from_is_the_roots() {
 }
 
 fn names() -> Vec<String> {
-    ["eink.local", "192.168.1.5", "::1"]
+    ["home-display.local", "192.168.1.5", "::1"]
         .map(str::to_owned)
         .to_vec()
 }
@@ -466,7 +466,7 @@ fn the_servers_certificate_names_the_server_and_is_for_proving_it_to_a_display()
             other => format!("{other:?}"),
         })
         .collect();
-    assert_eq!(found[0], "eink.local");
+    assert_eq!(found[0], "home-display.local");
     assert_eq!(found[1], "[192, 168, 1, 5]");
     assert_eq!(found.len(), 3, "{found:?}");
     let eku = cert.extended_key_usage().unwrap().unwrap().value;
@@ -542,8 +542,8 @@ fn a_server_certificate_needs_usable_names() {
         );
     }
     for good in [
-        "eink",
-        "eink.local",
+        "home-display",
+        "home-display.local",
         "my-host.example.com",
         "_svc.local",
         "localhost",

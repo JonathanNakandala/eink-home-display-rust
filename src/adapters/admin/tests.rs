@@ -887,7 +887,7 @@ async fn a_code_that_is_not_a_code_is_refused_before_any_is_tried() {
         "",
         "abc",
         "B0AJ-QTW6",
-        "B0AJ-QTW6-Y8SA-X",
+        "JGWP-14YW-3BT0-X",
         "B0AJ-QTW6-Y8SU",
         "not a code at all",
     ] {
@@ -906,7 +906,7 @@ async fn a_name_that_cannot_be_a_displays_is_refused_and_one_that_is_not_known_i
         (
             Method::POST,
             "/v1/displays/a%20b/approve",
-            r#"{"code": "B0AJ-QTW6-Y8SA"}"#,
+            r#"{"code": "JGWP-14YW-3BT0"}"#,
         ),
         (Method::GET, &format!("/v1/displays/{}", "x".repeat(33)), ""),
     ] {
@@ -948,7 +948,7 @@ async fn a_name_that_cannot_be_a_displays_is_refused_and_one_that_is_not_known_i
     assert_eq!(
         code_of(
             f.client
-                .approve("nobody", "B0AJ-QTW6-Y8SA")
+                .approve("nobody", "JGWP-14YW-3BT0")
                 .await
                 .unwrap_err()
         ),
@@ -1213,7 +1213,7 @@ async fn every_answer_the_display_endpoints_give_is_one_the_description_declares
         (
             Method::POST,
             "/v1/displays/nobody/approve".into(),
-            r#"{"code": "B0AJ-QTW6-Y8SA"}"#,
+            r#"{"code": "JGWP-14YW-3BT0"}"#,
         ),
         (Method::POST, "/v1/displays/kitchen/revoke".into(), ""),
         (Method::POST, "/v1/displays/kitchen/revoke".into(), ""),

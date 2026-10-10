@@ -27,7 +27,7 @@ the firmware's own code and so cover the paths that work. What it showed:
 |---|---|
 | TLS 1.3, with nothing older | works; the server offers nothing else |
 | Fetch the authority over a connection that verifies nothing, and pick the self-signed root out of the CMS message | works (a 60-line DER walk; mbedTLS has no CMS) |
-| Verify the server against the pinned root **and the name `eink-home-display.internal`**, while connected to `127.0.0.1` | works with `mbedtls_ssl_set_hostname`; another name, or another root, is refused |
+| Verify the server against the pinned root **and the name `home-display.internal`**, while connected to `127.0.0.1` | works with `mbedtls_ssl_set_hostname`; another name, or another root, is refused |
 | RFC 9266 channel binding | works: `mbedtls_ssl_export_keying_material` with label `EXPORTER-Channel-Binding` and no context (`use_context = 0`); the server accepts it and refuses a flipped one with 400 |
 | The pairing code | the C++ code is approved by the real server, so the hash, the Crockford encoding and the DER public key (91 bytes) all agree with the Rust side |
 | A PKCS #10 request with the binding as its challenge password | works, **built by hand**: mbedTLS's request writer cannot add a `challengePassword` attribute (only extensions), so the DER is assembled and the library signs it |
@@ -51,7 +51,7 @@ the firmware's own code and so cover the paths that work. What it showed:
    intermediate, which the server presents in the TLS handshake (`mbedtls_ssl_get_peer_cert`, its `next`). So the display
    does need the intermediate once, to check a certificate it was just given, and takes it from the connection. The
    `Est` interface returns it as `Reply::intermediates` and `Verifier::chains_to` takes it.
-4. **Verification of the name is separate from the address**, as the README hoped, so `eink-home-display.internal` works
+4. **Verification of the name is separate from the address**, as the README hoped, so `home-display.internal` works
    with whatever address mDNS found.
 
 ## What it does not show

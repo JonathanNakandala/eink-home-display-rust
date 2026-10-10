@@ -56,7 +56,7 @@ mod tests {
         let mut config = ApplicationConfig::example();
         config.weather.enabled = enabled;
         config.weather.open_weather.as_mut().unwrap().api_key = api_key.into();
-        let path = std::env::temp_dir().join(format!("eink_load_test_{name}.toml"));
+        let path = std::env::temp_dir().join(format!("home_display_load_test_{name}.toml"));
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         path
     }
@@ -81,7 +81,7 @@ mod tests {
         config.weather.enabled = false;
         config.server.transport = Transport::PreferHttps;
         config.server.tls.bind = config.server.bind;
-        let path = std::env::temp_dir().join("eink_load_test_same_port.toml");
+        let path = std::env::temp_dir().join("home_display_load_test_same_port.toml");
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         let error = format!("{:#}", load_valid_application_config(&path).unwrap_err());
         assert!(
@@ -99,7 +99,7 @@ mod tests {
             let mut config = ApplicationConfig::example();
             config.weather.enabled = false;
             config.schedule = Some(ScheduleConfig { cron });
-            let path = std::env::temp_dir().join(format!("eink_load_test_{name}.toml"));
+            let path = std::env::temp_dir().join(format!("home_display_load_test_{name}.toml"));
             std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
             path
         };
@@ -123,7 +123,7 @@ mod tests {
             let mut config = ApplicationConfig::example();
             config.weather.enabled = false;
             config.location.timezone = timezone.map(str::to_owned);
-            let path = std::env::temp_dir().join(format!("eink_load_test_{name}.toml"));
+            let path = std::env::temp_dir().join(format!("home_display_load_test_{name}.toml"));
             std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
             path
         };
@@ -151,9 +151,10 @@ mod tests {
 
     #[test]
     fn a_missing_file_says_which() {
-        let error = load_application_config(Path::new("/nonexistent/eink.toml")).unwrap_err();
+        let error =
+            load_application_config(Path::new("/nonexistent/home-display.toml")).unwrap_err();
         assert!(
-            format!("{error:#}").contains("/nonexistent/eink.toml"),
+            format!("{error:#}").contains("/nonexistent/home-display.toml"),
             "{error:#}"
         );
     }

@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "eink/core/ports.h"
+#include "home_display/core/ports.h"
 
 namespace fakes {
 
-using namespace eink_ports;
+using namespace home_display_ports;
 
 struct FakeClock : Clock {
   int64_t time = 1791463200;
@@ -26,7 +26,7 @@ struct FakeIdentity : Identity {
   bool certificate = false;
   Lifetime life;
   Bytes certificate_der;
-  eink_pairing::Answer last = eink_pairing::Answer::NONE;
+  home_display_pairing::Answer last = home_display_pairing::Answer::NONE;
   // What to refuse, to see how a failing flash is handled.
   bool readable_ = true;
   bool can_make_key = true, can_save_root = true, can_save_certificate = true;
@@ -64,8 +64,8 @@ struct FakeIdentity : Identity {
     certificates_saved++;
     return true;
   }
-  eink_pairing::Answer last_answer() override { return last; }
-  void set_last_answer(eink_pairing::Answer answer) override { last = answer; }
+  home_display_pairing::Answer last_answer() override { return last; }
+  void set_last_answer(home_display_pairing::Answer answer) override { last = answer; }
 };
 
 struct FakeEst : Est {

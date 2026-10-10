@@ -16,18 +16,18 @@
 #include "check.h"
 #include "fake_store.h"
 #include "memory_identity.h"
-#include "eink/tls/flash_identity.h"
-#include "eink/tls/est_client.h"
-#include "eink/core/join.h"
-#include "eink/tls/stream.h"
-#include "eink/tls/verifier.h"
+#include "home_display/tls/flash_identity.h"
+#include "home_display/tls/est_client.h"
+#include "home_display/core/join.h"
+#include "home_display/tls/stream.h"
+#include "home_display/tls/verifier.h"
 
 namespace support {
 
-using eink_join::Joiner;
-using eink_join::Outcome;
-using eink_pairing::Standing;
-using eink_report::Failure;
+using home_display_join::Joiner;
+using home_display_join::Outcome;
+using home_display_pairing::Standing;
+using home_display_report::Failure;
 using host::MemoryIdentity;
 
 
@@ -46,26 +46,26 @@ inline uint16_t server_port() { return static_cast<uint16_t>(std::atoi(environme
 inline uint32_t server_ip() { return inet_addr("127.0.0.1"); }  // network order: the first octet in the lowest byte, as lwIP
 
 // The computer's clock, which a test can move forward to be at a certificate's third, or past its end.
-struct HostClock : eink_ports::Clock {
+struct HostClock : home_display_ports::Clock {
   int64_t offset = 0;
   int64_t now() override { return static_cast<int64_t>(std::time(nullptr)) + offset; }
   bool usable() override { return true; }
 };
 
 // The real client, counted.
-struct CountingEst : eink_ports::Est {
-  eink_est::EstClient inner;
+struct CountingEst : home_display_ports::Est {
+  home_display_est::EstClient inner;
   int roots = 0, enrolled = 0, renewed = 0;
-  CountingEst(uint32_t ip, uint16_t port, eink_tls::TlsIdentity &identity) : inner(ip, port, identity) {}
-  eink_ports::RootReply fetch_root() override {
+  CountingEst(uint32_t ip, uint16_t port, home_display_tls::TlsIdentity &identity) : inner(ip, port, identity) {}
+  home_display_ports::RootReply fetch_root() override {
     roots++;
     return inner.fetch_root();
   }
-  eink_ports::Reply enroll(const std::string &n, eink_ports::Identity &i, const eink_ports::Bytes &r) override {
+  home_display_ports::Reply enroll(const std::string &n, home_display_ports::Identity &i, const home_display_ports::Bytes &r) override {
     enrolled++;
     return inner.enroll(n, i, r);
   }
-  eink_ports::Reply renew(const std::string &n, eink_ports::Identity &i, const eink_ports::Bytes &r) override {
+  home_display_ports::Reply renew(const std::string &n, home_display_ports::Identity &i, const home_display_ports::Bytes &r) override {
     renewed++;
     return inner.renew(n, i, r);
   }
@@ -78,7 +78,7 @@ struct Display {
   MemoryIdentity identity;
   HostClock clock;
   CountingEst est;
-  eink_verifier::MbedVerifier verifier;
+  home_display_verifier::MbedVerifier verifier;
 
   explicit Display(const std::string &n, uint16_t port = server_port()) : name(n), est(server_ip(), port, identity) {}
   Outcome wake() { return Joiner(clock, identity, est, verifier, name).run(); }
@@ -90,18 +90,18 @@ struct Display {
 struct Rebooting {
   std::string name;
   fakes::MemoryStore flash;
-  eink_pairing::Answer rtc = eink_pairing::Answer::NONE;  // survives sleep, not a power loss
+  home_display_pairing::Answer rtc = home_display_pairing::Answer::NONE;  // survives sleep, not a power loss
   HostClock clock;
   int roots = 0, enrolled = 0, renewed = 0;
-  eink_ports::Bytes compiled;
+  home_display_ports::Bytes compiled;
 
   explicit Rebooting(const std::string &n) : name(n) {}
 
   Outcome wake() {
     flash.restore_power();
-    eink_flash::FlashIdentity identity(flash, rtc, compiled);
+    home_display_flash::FlashIdentity identity(flash, rtc, compiled);
     CountingEst est(server_ip(), server_port(), identity);
-    eink_verifier::MbedVerifier verifier;
+    home_display_verifier::MbedVerifier verifier;
     const Outcome out = Joiner(clock, identity, est, verifier, name).run();
     roots += est.roots;
     enrolled += est.enrolled;
@@ -109,8 +109,8 @@ struct Rebooting {
     return out;
   }
   // What is held, as a fresh start reads it.
-  eink_credentials::Record held() {
-    eink_credentials::Credentials c(flash);
+  home_display_credentials::Record held() {
+    home_display_credentials::Credentials c(flash);
     return c.record();
   }
 };
@@ -122,11 +122,11 @@ inline int ctl(const std::string &arguments) {
 }
 
 // A certificate that names itself and nobody else vouches for: someone in the middle's root.
-inline eink_ports::Bytes someone_elses_root() {
+inline home_display_ports::Bytes someone_elses_root() {
   mbedtls_pk_context key;
   mbedtls_pk_init(&key);
   mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
-  mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key), eink_tls::Random::generate, nullptr);
+  mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key), home_display_tls::Random::generate, nullptr);
   mbedtls_x509write_cert crt;
   mbedtls_x509write_crt_init(&crt);
   mbedtls_x509write_crt_set_subject_key(&crt, &key);
@@ -140,10 +140,10 @@ inline eink_ports::Bytes someone_elses_root() {
   unsigned char serial[] = {1};
   mbedtls_x509write_crt_set_serial_raw(&crt, serial, sizeof serial);
   unsigned char buffer[1024];
-  const int n = mbedtls_x509write_crt_der(&crt, buffer, sizeof buffer, eink_tls::Random::generate, nullptr);
+  const int n = mbedtls_x509write_crt_der(&crt, buffer, sizeof buffer, home_display_tls::Random::generate, nullptr);
   mbedtls_x509write_crt_free(&crt);
   mbedtls_pk_free(&key);
-  return n > 0 ? eink_ports::Bytes(buffer + sizeof buffer - n, buffer + sizeof buffer) : eink_ports::Bytes();
+  return n > 0 ? home_display_ports::Bytes(buffer + sizeof buffer - n, buffer + sizeof buffer) : home_display_ports::Bytes();
 }
 
 // Takes a display from nothing to a certificate, with the owner approving by the code on the panel.
@@ -180,8 +180,8 @@ class QuietServer {
   uint16_t port_ = 0;
 };
 
-inline eink_stream::Peer peer_of(Display &d) {
-  eink_stream::Peer peer;
+inline home_display_stream::Peer peer_of(Display &d) {
+  home_display_stream::Peer peer;
   peer.ip = server_ip();
   peer.port = server_port();
   peer.root = d.identity.stored;

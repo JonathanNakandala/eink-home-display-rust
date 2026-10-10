@@ -2,11 +2,11 @@
 # core/format.h, core/report.h, core/clock.h). They need only a C++17 compiler: `make -C esphome test`.
 # Undefined-behaviour and address sanitizers are on, so a signed overflow or a bad index fails the run
 # instead of passing by luck. The headers that need the device (esp/telemetry.h, esp/discovery.h,
-# esp/health.h, esp/notice.h) are not built here; `esphome compile` covers them.
+# esp/health.h, esp/eink_notice.h) are not built here; `esphome compile` covers them.
 CXX ?= c++
 CXXFLAGS ?= -std=c++17 -I. -Itests/support -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/support/main.cpp $(wildcard tests/core/*_test.cpp)
-HEADERS := $(wildcard eink/core/*.h) $(wildcard tests/support/*.h)
+HEADERS := $(wildcard home_display/core/*.h) $(wildcard tests/support/*.h)
 
 .PHONY: test
 test: build/tests fuzz-replay
@@ -24,7 +24,7 @@ build/tests: $(SOURCES) $(HEADERS)
 FUZZ_TARGETS := body http der base64 credentials memory service
 FUZZ_SECONDS ?= 20
 FUZZ_FLAGS := -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -I. -Itests/support -Itests/fuzz
-FUZZ_HEADERS := $(wildcard eink/core/*.h) tests/support/fake_store.h tests/fuzz/fuzz.h
+FUZZ_HEADERS := $(wildcard home_display/core/*.h) tests/support/fake_store.h tests/fuzz/fuzz.h
 
 build/fuzz/driver.o: tests/fuzz/driver.cpp
 	@mkdir -p build/fuzz
@@ -67,7 +67,7 @@ compile: secrets.yaml
 
 # The C++ is held to .clang-format, and the helper script to ruff (configured in ../pyproject.toml), which is the style it is already written in. `lint` fails on a difference and
 # `format` fixes them. The headers that need ESPHome are formatted too, but only `compile` can build them.
-CPP := $(shell find eink -name '*.h') $(wildcard tests/core/*.cpp) $(wildcard tests/tls/*.cpp) $(wildcard tests/support/*.h) $(wildcard tests/fuzz/*.cpp) tests/fuzz/fuzz.h
+CPP := $(shell find home_display -name '*.h') $(wildcard tests/core/*.cpp) $(wildcard tests/tls/*.cpp) $(wildcard tests/support/*.h) $(wildcard tests/fuzz/*.cpp) tests/fuzz/fuzz.h
 
 .PHONY: lint
 lint:

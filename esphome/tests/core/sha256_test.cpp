@@ -2,9 +2,9 @@
 #include <vector>
 
 #include "check.h"
-#include "eink/core/sha256.h"
+#include "home_display/core/sha256.h"
 
-using namespace eink_sha256;
+using namespace home_display_sha256;
 
 // The examples in FIPS 180-4 / NIST CSRC "SHA-256 example values", and the empty string.
 TEST(the_empty_string_and_the_standards_examples) {

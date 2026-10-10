@@ -2,11 +2,11 @@
 #include <vector>
 
 #include "check.h"
-#include "eink/core/pairing.h"
+#include "home_display/core/pairing.h"
 
-using namespace eink_pairing;
-using eink_report::Failure;
-using eink_trust::RootSource;
+using namespace home_display_pairing;
+using home_display_report::Failure;
+using home_display_trust::RootSource;
 
 // The example in README.md and in src/domain/models/pairing.rs: the same inputs, the same code.
 static std::vector<uint8_t> authority_der() { return {0x30, 0x03, 0x02, 0x01, 0x01}; }
@@ -19,9 +19,9 @@ static std::vector<uint8_t> example_key() {
 }
 
 TEST(the_example_in_the_documentation_and_in_the_server_gives_the_same_code) {
-  CHECK_EQ(eink_sha256::hex(eink_sha256::of(authority_der())),
+  CHECK_EQ(home_display_sha256::hex(home_display_sha256::of(authority_der())),
            "1b65f68a522c858715f5dd951cd0402dc16691778814bf0759822b7a257421d0");
-  CHECK_EQ(code(authority_der(), "reterminal-e1003-a1b2c3", example_key()), "B0AJ-QTW6-Y8SA");
+  CHECK_EQ(code(authority_der(), "reterminal-e1003-a1b2c3", example_key()), "JGWP-14YW-3BT0");
 }
 
 TEST(a_code_is_twelve_characters_in_three_groups_of_the_alphabet) {
@@ -152,9 +152,9 @@ TEST(a_standing_is_reported_to_the_server_as_the_failure_it_is) {
 static const std::string GLYPHS = " :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 TEST(the_panel_shows_the_code_only_where_the_owner_has_to_type_it_and_uses_only_glyphs_the_font_has) {
-  const std::string c = "B0AJ-QTW6-Y8SA";
-  CHECK_EQ(notice(Standing::WAITING, c), "Waiting for approval: B0AJ-QTW6-Y8SA");
-  CHECK_EQ(notice(Standing::NOT_RECOGNISED, c), "Not recognised - ask the owner to approve: B0AJ-QTW6-Y8SA");
+  const std::string c = "JGWP-14YW-3BT0";
+  CHECK_EQ(notice(Standing::WAITING, c), "Waiting for approval: JGWP-14YW-3BT0");
+  CHECK_EQ(notice(Standing::NOT_RECOGNISED, c), "Not recognised - ask the owner to approve: JGWP-14YW-3BT0");
   CHECK_EQ(notice(Standing::PAIRED, c), "");
   CHECK_EQ(notice(Standing::RENEWING, c), "");
   for (uint8_t value = 0; value <= static_cast<uint8_t>(Standing::CLOCK_NOT_SET); value++)

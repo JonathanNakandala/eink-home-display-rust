@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn example_loads_and_validates_through_the_real_loader() {
-        let path = std::env::temp_dir().join("eink_example_config_test.toml");
+        let path = std::env::temp_dir().join("home_display_example_config_test.toml");
         std::fs::write(&path, ApplicationConfig::example_toml()).unwrap();
         let config = ApplicationConfig::new(&path).expect("example parses");
         config.validate().expect("example is valid");
@@ -125,7 +125,7 @@ mod tests {
         }
 
         // They are still written to a file and read back, which is how they are configured.
-        let path = std::env::temp_dir().join("eink_secret_round_trip_test.toml");
+        let path = std::env::temp_dir().join("home_display_secret_round_trip_test.toml");
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         let loaded = ApplicationConfig::new(&path).unwrap();
         assert_eq!(

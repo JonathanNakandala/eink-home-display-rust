@@ -561,7 +561,7 @@ mod tests {
         );
 
         let image = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("eink_test_chrome"),
+            std::env::temp_dir().join("home_display_test_chrome"),
             DEFAULT_IDLE_TIMEOUT,
             ChromeSource::PreferSystem,
         )
@@ -598,7 +598,7 @@ mod tests {
             palette: Palette::Mono,
         };
         let generator = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("eink_test_chrome"),
+            std::env::temp_dir().join("home_display_test_chrome"),
             Duration::from_secs(300),
             ChromeSource::PreferSystem,
         );
@@ -633,7 +633,7 @@ mod tests {
             palette: Palette::Mono,
         };
         let generator = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("eink_test_chrome"),
+            std::env::temp_dir().join("home_display_test_chrome"),
             Duration::from_secs(300),
             ChromeSource::Bundled,
         );

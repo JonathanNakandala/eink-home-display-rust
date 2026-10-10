@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "check.h"
-#include "eink/core/report.h"
+#include "home_display/core/report.h"
 
-using namespace eink_report;
+using namespace home_display_report;
 
 static const std::array<Failure, 9> ALL_FAILURES = {Failure::WIFI,        Failure::SERVER,   Failure::DOWNLOAD,
                                                     Failure::MEMORY,      Failure::TIMEOUT,  Failure::CLOCK,

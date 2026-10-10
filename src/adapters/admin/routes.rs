@@ -33,7 +33,7 @@ pub(super) struct Admin {
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "E-ink home display admin API",
+        title = "Home display admin API",
         description = "How the owner of a running server looks at it and changes it, from the same machine. \
             Served over a local socket (a Unix domain socket in the PKI directory, mode 0600), not over the \
             network. No endpoint returns a pairing code, a key or a certificate."
@@ -341,7 +341,7 @@ async fn approve_display(
         ApiError::new(
             ErrorCode::InvalidRequest,
             format!(
-                "The body must be JSON like {{\"code\": \"B0AJ-QTW6-Y8SA\"}} ({})",
+                "The body must be JSON like {{\"code\": \"JGWP-14YW-3BT0\"}} ({})",
                 rejection.body_text()
             ),
         )

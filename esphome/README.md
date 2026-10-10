@@ -20,7 +20,7 @@ image_format = "Bmp"        # or "Png" or "Qoi": sent when the display has no pr
 bind = "[::]:8080"                     # IPv4 and IPv6; "0.0.0.0:8080" is IPv4 only
 directory = "served"
 advertise = true                       # announce over mDNS, so a scan finds it
-instance_name = "E-ink home display"   # the name a scan shows; the host name is e-ink-home-display.local
+instance_name = "Home display"   # the name a scan shows; the host name is home-display.local
 ```
 
 Run it with a schedule, since the server only runs in that mode:
@@ -31,17 +31,17 @@ Check it with `curl -o /dev/null -w '%{size_download}\n' http://<host>:8080/imag
 ## Finding the server
 
 The server announces itself over mDNS / DNS-SD as an ordinary `_http._tcp` service, with the
-subtype `_eink-display` and the TXT keys `path=/image`, `format`, `formats` and `version`. Any scan sees it:
+subtype `_home-display` and the TXT keys `path=/image`, `format`, `formats` and `version`. Any scan sees it:
 
 ```
-dns-sd -B _http._tcp,_eink-display local.          # macOS: just this server
-dns-sd -L "E-ink home display" _http._tcp local.   # its host, port and TXT record
+dns-sd -B _http._tcp,_home-display local.          # macOS: just this server
+dns-sd -L "Home display" _http._tcp local.   # its host, port and TXT record
 avahi-browse -rt _http._tcp                        # Linux
 ```
 
 Phone apps such as Discovery or Bonjour Browser list it too. The line saying
 `can be reached at <host>.local.:<port>` gives the `image_url` to use. On the LAN that is
-`http://e-ink-home-display.local:8080/image`, which is the default `image_url`. The device
+`http://home-display.local:8080/image`, which is the default `image_url`. The device
 resolves it through lwIP (`enable_lwip_mdns_queries`, set in the yaml). This is untested on the
 hardware: if the log shows a resolve error rather than a connection error, use the IP address. The announcement is withdrawn when the app stops. Two servers on
 one network need different `instance_name`s (a clash is resolved by adding a number).
@@ -66,19 +66,19 @@ so a package may refer to another's, and the files only make sense together.
 
 ### How the C++ is laid out
 
-The headers are in `eink/`, in three layers by what they depend on. Dependencies point inward only, so the inner layers
+The headers are in `home_display/`, in three layers by what they depend on. Dependencies point inward only, so the inner layers
 can be built and tested without the outer ones' libraries.
 
 | Layer | What is in it | May include | Checked by |
 |---|---|---|---|
-| `eink/core/` | the decisions and formats (the pairing code, the wake's sleep, the report, HTTP framing), and the interfaces they need from outside (`core/ports.h`, `core/credentials.h`'s `BlobStore`, `core/session_cache.h`'s `Store`). Nothing from mbedTLS, sockets, ESPHome or ESP-IDF | `core` | `make test`, with sanitizers |
-| `eink/tls/` | what is built on mbedTLS and sockets and implements those interfaces: the TLS connection, the stream, the EST client, the key in flash, the certificate check | `core`, `tls` | `make host-test`, against the real server |
-| `eink/esp/` | what needs ESPHome or ESP-IDF: mDNS, NVS, the panel, the radio, the HTTP component, and the glue the YAML calls | all three | `esphome compile` |
+| `home_display/core/` | the decisions and formats (the pairing code, the wake's sleep, the report, HTTP framing), and the interfaces they need from outside (`core/ports.h`, `core/credentials.h`'s `BlobStore`, `core/session_cache.h`'s `Store`). Nothing from mbedTLS, sockets, ESPHome or ESP-IDF | `core` | `make test`, with sanitizers |
+| `home_display/tls/` | what is built on mbedTLS and sockets and implements those interfaces: the TLS connection, the stream, the EST client, the key in flash, the certificate check | `core`, `tls` | `make host-test`, against the real server |
+| `home_display/esp/` | what needs ESPHome or ESP-IDF: mDNS, NVS, the panel, the radio, the HTTP component, and the glue the YAML calls | all three | `esphome compile` |
 
 `make lint` fails if a header reaches outward or uses a library its layer may not (`scripts/check_layers.py`). Where to
 put new code: if it can be decided with a bare C++ compiler, it is `core`; if it needs mbedTLS but not ESPHome, `tls`;
-otherwise `esp`. The device file lists the directory (`includes: - eink`) and ESPHome includes every header in it.
-The namespaces (`eink_wake::`, `eink_tls::`) are what the YAML's lambdas call, and are not the directories.
+otherwise `esp`. The device file lists the directory (`includes: - home_display`) and ESPHome includes every header in it.
+The namespaces (`home_display_wake::`, `home_display_tls::`) are what the YAML's lambdas call, and are not the directories.
 
 ### Which display is which
 
@@ -173,7 +173,7 @@ hand-edited version or a dropped marker is found before GitHub finds it.
 **The version is in the firmware.** `packages/version.yaml` holds `firmware_version` (release-please finds the line by its
 `x-release-please-version` comment), `esphome: project:` compiles it in (the boot log says `Project
 home-display.firmware-esphome version 0.1.0`, and the ESPHome dashboard shows it), and every check-in carries it as `fw`, so
-`/status` and `/metrics` (`eink_device_firmware_info`) say which release each display runs, and the server logs when a
+`/status` and `/metrics` (`home_display_device_firmware_info`) say which release each display runs, and the server logs when a
 display's changes.
 
 **To use a release:** check out its tag, put your `secrets.yaml` beside it, and `make -C esphome compile` (or `run`). The
@@ -212,10 +212,10 @@ panel's behaviour while the button is held, need a device.
 
 ### How the device finds the server
 
-[esp/discovery.h](eink/esp/discovery.h) queries mDNS and takes the first service whose TXT record has `txtvers=1` and a
+[esp/discovery.h](home_display/esp/discovery.h) queries mDNS and takes the first service whose TXT record has `txtvers=1` and a
 `path`, with an IPv4 address and a port. Which service type it browses depends on `server_transport` (a substitution in
 [packages/server.yaml](packages/server.yaml)): `_https._tcp` for `https`, and `_http._tcp` for `http` and `prefer-https`,
-as under "Finding it" below. What to make of an answer is decided in [core/service.h](eink/core/service.h), which is tested on
+as under "Finding it" below. What to make of an answer is decided in [core/service.h](home_display/core/service.h), which is tested on
 a computer. Besides the HTTP port it remembers the `tlsport` the server announces, for the secure transport; nothing
 uses it yet, so whatever `server_transport` says, the firmware still speaks plain HTTP. An unknown value stops the
 build, so a typo can't quietly leave a display on plain HTTP. The result is remembered in flash, so a normal wake does
@@ -262,11 +262,11 @@ only offer, and only a display set to HTTPS-only is certain not to fall back.
 A display in `http` or `prefer-https` mode browses `_http._tcp`, as now, and reads `tlsport` if it wants HTTPS. A
 display in `https` mode browses **`_https._tcp`** only: that is the only place a TLS-only server appears, and it
 must not look under `_http._tcp`, where nothing of this server's is listed in that mode. Both use the same
-`_eink-display` subtype, `txtvers=1` and `path` as before, and the same instance name, so `server_name` works the
+`_home-display` subtype, `txtvers=1` and `path` as before, and the same instance name, so `server_name` works the
 same way.
 
 **TLS.** TLS 1.3 only. The display connects to the address mDNS gave it and verifies the certificate against
-the fixed name **`eink-home-display.internal`**, which the server's certificate always has and no configuration can
+the fixed name **`home-display.internal`**, which the server's certificate always has and no configuration can
 remove, not against the address and not against the mDNS name (which the owner can change). It trusts exactly one
 certificate authority, the server's root, which it gets in one of the two ways under "Which root the display trusts"
 below. The server sends two certificates in the handshake (its own and the intermediate, about 480 bytes each),
@@ -309,14 +309,14 @@ falls back to fetching one.
    label `EXPORTER-Channel-Binding`, no context, 32 bytes.
 3. **Work out the pairing code and show it on the panel**, from what the display itself saw (never from anything
    the server says; the server does not send it):
-   `SHA-256("eink-home-display pairing code v1" || SHA-256(authority DER) || u64be(len(name)) || name ||
+   `SHA-256("home-display pairing code v1" || SHA-256(authority DER) || u64be(len(name)) || name ||
    u64be(len(SPKI)) || SPKI)`, then the first 60 bits (the first 8 bytes as a big-endian number, shifted right by 4) as twelve 5-bit values, most
    significant first,
    written in Crockford's Base32 (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, upper case) as `XXXX-XXXX-XXXX`. SPKI is the DER
    `SubjectPublicKeyInfo` of the display's key. Show it in a large font, upper case; the alphabet leaves out
    `I`, `L`, `O` and `U`, and the server reads a typed `I`/`L` as `1` and `O` as `0`, in any case.
    Example: authority DER `30 03 02 01 01`, name `reterminal-e1003-a1b2c3`, SPKI the 91 bytes `00 01 .. 5a`
-   give `B0AJ-QTW6-Y8SA`. The authority DER here is the **root's**. The owner types this at the server; if someone is between the two, the codes differ and
+   give `JGWP-14YW-3BT0`. The authority DER here is the **root's**. The owner types this at the server; if someone is between the two, the codes differ and
    the approval fails. That comparison is the only thing that authenticates the first contact.
 4. `POST simpleenroll` (`Content-Type: application/pkcs10`, body base64 of the DER request, no
    `Content-Transfer-Encoding`). `202` with `Retry-After`: not approved yet; sleep that long and ask again (a new
@@ -344,7 +344,7 @@ one is recognised and the previous one used.
    The `ensure_clock` script does this: it waits up to `clock_wait` for SNTP, then sets `clock_ok`. The clock counts as
    usable when it reads 2026-01-01 or later (the same date the server refuses to make certificates before) and is
    not earlier than the newest render the display has been told of, since a clock behind something that already
-   happened is wrong too ([core/clock.h](eink/core/clock.h), tested on the host). The servers come from `ntp_server_1` to
+   happened is wrong too ([core/clock.h](home_display/core/clock.h), tested on the host). The servers come from `ntp_server_1` to
    `ntp_server_3`, tried in that order, by default three public ones from different operators. A local one (your
    router, or a machine running chrony) can go first, but only if it is really there: a server that does not
    answer is given up on after a wait, which is radio time on every wake. Until the clock is usable, nothing that
@@ -366,29 +366,29 @@ thin and does as little deciding as it can.
 
 | Layer | File (proposed) | Does | Tested |
 |---|---|---|---|
-| Pure logic | [core/pairing.h](eink/core/pairing.h) (**built**) | the pairing code (hash, Crockford encoding), and which step comes next from what is stored, the clock and the answer last received | on the host, against the pinned test vector `B0AJ-QTW6-Y8SA`, the same one the server pins |
-| Pure logic | [core/trust.h](eink/core/trust.h) (**built**) | which root to trust (compiled in, stored, or none yet), whether a certificate has expired or is due to renew | on the host |
-| Pure logic | [core/sha256.h](eink/core/sha256.h) (**built**) | SHA-256 for the code, the same on the chip and in the tests; checked against the standard's examples | on the host |
-| Pure logic | [core/join.h](eink/core/join.h) (**built**) | one wake's joining: decide ([core/pairing.h](eink/core/pairing.h)), do it through the interfaces below, say where it got to. Keeps the root only once a certificate has been issued under it | on the host, against fakes |
-| Interfaces | [core/ports.h](eink/core/ports.h) (**built**) | what joining needs from outside: `Clock`, `Identity` (key, certificate, root, the last answer), `Est` (the network) and `Verifier` (a certificate chains to a root). The chip implements them; the tests use [fakes](tests/fakes.h) | n/a |
-| Storage | [core/credentials.h](eink/core/credentials.h), [tls/flash_identity.h](eink/tls/flash_identity.h), [esp/nvs.h](eink/esp/nvs.h) (**built**) | the key, the root, the certificate and its dates as one record with a version, a sequence number and a CRC-32, written whole to one of two slots in turn, so a write cut short leaves the record before it. `FlashIdentity` is the interface the joining logic uses over it; `NvsStore` is ESP-IDF's NVS under it (namespace `eink`, never erased from here). A record that cannot be read is left alone and nothing is written over it | the record, the slots and every way a write can be cut short, and `FlashIdentity` against the real server, with a flash that loses power: on the host. NVS itself: on the device |
-| Transport | [tls/tls.h](eink/tls/tls.h), [tls/est_client.h](eink/tls/est_client.h), [tls/csr.h](eink/tls/csr.h), [tls/verifier.h](eink/tls/verifier.h) (**built**, with [core/der.h](eink/core/der.h), [core/base64.h](eink/core/base64.h), [core/http.h](eink/core/http.h) and [core/calendar.h](eink/core/calendar.h) under them) | a TLS 1.3 connection, EST over it (fetch the authority, ask, renew), the request, the check that a certificate chains to the root. They implement the interfaces above with mbedTLS and BSD sockets (which lwIP has too) | the pure parts on the host; all of it against a real server with the same mbedTLS (`make -C esphome host-test`) |
-| Transport | [tls/stream.h](eink/tls/stream.h), [core/body.h](eink/core/body.h), [tls/secure.h](eink/tls/secure.h) (**built**) | a request whose answer is read as it comes, so the image (megabytes) is never held: the head, then the body by length or in chunks, in whatever pieces the network gives it; `tls/secure.h` is where the wake script says once where the server is and what to show it | the framing on the host; all of it against a real server, with a 2.6 MB body read in pieces of 1.4, 4 and 16 KB |
-| Transport | [esp/secure_http.h](eink/esp/secure_http.h) (**built**) | a `HttpRequestComponent` and `HttpContainer` over that stream, so `online_image` downloads the picture through it unchanged: the script points it at the new component with `set_parent` and back at the stock one if it falls back | on the device (needs ESPHome's headers); `esphome compile` |
+| Pure logic | [core/pairing.h](home_display/core/pairing.h) (**built**) | the pairing code (hash, Crockford encoding), and which step comes next from what is stored, the clock and the answer last received | on the host, against the pinned test vector `JGWP-14YW-3BT0`, the same one the server pins |
+| Pure logic | [core/trust.h](home_display/core/trust.h) (**built**) | which root to trust (compiled in, stored, or none yet), whether a certificate has expired or is due to renew | on the host |
+| Pure logic | [core/sha256.h](home_display/core/sha256.h) (**built**) | SHA-256 for the code, the same on the chip and in the tests; checked against the standard's examples | on the host |
+| Pure logic | [core/join.h](home_display/core/join.h) (**built**) | one wake's joining: decide ([core/pairing.h](home_display/core/pairing.h)), do it through the interfaces below, say where it got to. Keeps the root only once a certificate has been issued under it | on the host, against fakes |
+| Interfaces | [core/ports.h](home_display/core/ports.h) (**built**) | what joining needs from outside: `Clock`, `Identity` (key, certificate, root, the last answer), `Est` (the network) and `Verifier` (a certificate chains to a root). The chip implements them; the tests use [fakes](tests/fakes.h) | n/a |
+| Storage | [core/credentials.h](home_display/core/credentials.h), [tls/flash_identity.h](home_display/tls/flash_identity.h), [esp/nvs.h](home_display/esp/nvs.h) (**built**) | the key, the root, the certificate and its dates as one record with a version, a sequence number and a CRC-32, written whole to one of two slots in turn, so a write cut short leaves the record before it. `FlashIdentity` is the interface the joining logic uses over it; `NvsStore` is ESP-IDF's NVS under it (namespace `home-display`, never erased from here). A record that cannot be read is left alone and nothing is written over it | the record, the slots and every way a write can be cut short, and `FlashIdentity` against the real server, with a flash that loses power: on the host. NVS itself: on the device |
+| Transport | [tls/tls.h](home_display/tls/tls.h), [tls/est_client.h](home_display/tls/est_client.h), [tls/csr.h](home_display/tls/csr.h), [tls/verifier.h](home_display/tls/verifier.h) (**built**, with [core/der.h](home_display/core/der.h), [core/base64.h](home_display/core/base64.h), [core/http.h](home_display/core/http.h) and [core/calendar.h](home_display/core/calendar.h) under them) | a TLS 1.3 connection, EST over it (fetch the authority, ask, renew), the request, the check that a certificate chains to the root. They implement the interfaces above with mbedTLS and BSD sockets (which lwIP has too) | the pure parts on the host; all of it against a real server with the same mbedTLS (`make -C esphome host-test`) |
+| Transport | [tls/stream.h](home_display/tls/stream.h), [core/body.h](home_display/core/body.h), [tls/secure.h](home_display/tls/secure.h) (**built**) | a request whose answer is read as it comes, so the image (megabytes) is never held: the head, then the body by length or in chunks, in whatever pieces the network gives it; `tls/secure.h` is where the wake script says once where the server is and what to show it | the framing on the host; all of it against a real server, with a 2.6 MB body read in pieces of 1.4, 4 and 16 KB |
+| Transport | [esp/secure_http.h](home_display/esp/secure_http.h) (**built**) | a `HttpRequestComponent` and `HttpContainer` over that stream, so `online_image` downloads the picture through it unchanged: the script points it at the new component with `set_parent` and back at the stock one if it falls back | on the device (needs ESPHome's headers); `esphome compile` |
 | Discovery | `esp/discovery.h` (extended) | `_https._tcp` or `_http._tcp`, `tlsport`, `secure` | on the device |
-| Orchestration | [core/secure_wake.h](eink/core/secure_wake.h), [tls/secure_begin.h](eink/tls/secure_begin.h), [esp/secure_chip.h](eink/esp/secure_chip.h), [packages/secure.yaml](packages/secure.yaml) (**built**) | the choice of route from the transport and how the join went; a wake's beginning (join, decide, record the server); the chip's clock, flash and watchdog under it; and the scripts that call them | the choices and the beginning on the host (the beginning against the real server, in every transport); the scripts and the chip's part: `esphome compile` only |
+| Orchestration | [core/secure_wake.h](home_display/core/secure_wake.h), [tls/secure_begin.h](home_display/tls/secure_begin.h), [esp/secure_chip.h](home_display/esp/secure_chip.h), [packages/secure.yaml](packages/secure.yaml) (**built**) | the choice of route from the transport and how the join went; a wake's beginning (join, decide, record the server); the chip's clock, flash and watchdog under it; and the scripts that call them | the choices and the beginning on the host (the beginning against the real server, in every transport); the scripts and the chip's part: `esphome compile` only |
 
 The stock `http_request` component cannot be used for the secure path: it takes its CA certificate at compile time,
 sets no name to check, and has no client certificate. So `esp/secure_http.h` subclasses `HttpRequestComponent` and
 overrides `perform`, and the script points `online_image` at it with `set_parent` (no external component or Python needed).
 The `http_request` actions for the plan stay on the stock component and are used for plain HTTP only; over TLS the plan goes
-through `eink_secure_chip::fetch`, which is a small request read whole.
+through `home_display_secure_chip::fetch`, which is a small request read whole.
 
 ### What a wake does with it (`server_transport`)
 
 [packages/secure.yaml](packages/secure.yaml), after Wi-Fi: `begin_server` runs the plain `check_plan` for `http`, and
 `secure_session` for the other two. That waits for the clock (`ensure_clock`), looks for the server if it does not know its HTTPS
-port, joins ([core/join.h](eink/core/join.h)) and takes the route [core/secure_wake.h](eink/core/secure_wake.h) gives:
+port, joins ([core/join.h](home_display/core/join.h)) and takes the route [core/secure_wake.h](home_display/core/secure_wake.h) gives:
 
 | After the join | `prefer-https` | `https` |
 |---|---|---|
@@ -404,7 +404,7 @@ notice is drawn over it.
 
 **Resuming a session.** A TLS 1.3 handshake with a client certificate is the most that one wake asks of the radio and the
 battery, and a wake makes two (the plan, the picture). The server gives the display a ticket on each connection, and
-[core/session_cache.h](eink/core/session_cache.h) keeps the newest, so that the next connection (the picture, and the plan ten minutes
+[core/session_cache.h](home_display/core/session_cache.h) keeps the newest, so that the next connection (the picture, and the plan ten minutes
 later) resumes it: no certificate exchange, no signatures. Resumption is for the data connections only; the first contact and the
 enrolment are made in full, since they are tied to their own connection (RFC 9266) and nothing about a display is kept before the
 owner approves it.
@@ -418,7 +418,7 @@ owner approves it.
 - Anything that stops a saved session working (the server was restarted with other keys, a session from another build, damage)
   is forgotten and the connection is made again in full, once, in the same request: never a failed wake.
 - The server still checks membership on every request, so a revoked display is turned away on a resumed connection too.
-- The server's `/metrics` counts handshakes by kind (`eink_tls_handshakes_total{kind="resumed"}`), which is how to see it working
+- The server's `/metrics` counts handshakes by kind (`home_display_tls_handshakes_total{kind="resumed"}`), which is how to see it working
   on a real display: it should climb by about two per wake after the first.
 
 Limits worth knowing:
@@ -455,7 +455,7 @@ it, `clang++ -fsanitize=fuzzer,address,undefined tests/fuzz/<target>_fuzz.cpp -I
 as it is. An input that broke something is copied to `tests/fuzz/regressions/<target>/` and is run by `make test` from then
 on. The seeds are in `tests/fuzz/corpus/<target>/`.
 
-**What it found:** within seconds, `eink_http::unchunk` read a chunk size of `ffffffffffffffff` with `strtoul`, added it to a
+**What it found:** within seconds, `home_display_http::unchunk` read a chunk size of `ffffffffffffffff` with `strtoul`, added it to a
 position (which wrapped, so the check that the chunk fitted passed), and then appended the rest of the reply once for every
 line break in it: a 16 KB reply could make a body of hundreds of megabytes. That reply is the answer to the first request, from
 anyone on the network. Fixed (sizes are at most eight hex digits and are checked against what is left before they are added
@@ -469,9 +469,9 @@ overnight) still has a new version. The display would download it and refresh th
 wake costs. The server names a picture's bytes with an `ETag` (a hash of the file) and answers `304` with no body to a client
 that sends it back as `If-None-Match`, so over TLS the display does:
 
-- keeps the ETag of the picture it drew in RTC memory ([core/etag.h](eink/core/etag.h), [esp/shown_etag.h](eink/esp/shown_etag.h));
+- keeps the ETag of the picture it drew in RTC memory ([core/etag.h](home_display/core/etag.h), [esp/shown_etag.h](home_display/esp/shown_etag.h));
 - asks for the next picture with it, but **only if the panel shows just that picture**: not under a notice or the pairing
-  code, and not if the battery label has to appear or go (`eink_plan::shows_only_the_picture`). A 304 means the panel is right
+  code, and not if the battery label has to appear or go (`home_display_plan::shows_only_the_picture`). A 304 means the panel is right
   as it is, which it is not then;
 - on a `304` records the new version and goes on to sleep: no download, no refresh, no wait for the panel to settle.
 
@@ -520,7 +520,7 @@ right path:
 |---|---|---|
 | Wi-Fi didn't connect in 30 s | `wifi` | Straight to the failure path: no `/plan`, no lookup. Notice: `No Wi-Fi @ 14:32` |
 | `/plan` didn't answer, or answered badly | `server` | Look for the server once, then ask again. Notice: `Last update failed @ ...` |
-| Not enough PSRAM for the image | `memory` | Checked before the download ([esp/health.h](eink/esp/health.h)); no lookup. Notice: `Out of memory @ ...` |
+| Not enough PSRAM for the image | `memory` | Checked before the download ([esp/health.h](home_display/esp/health.h)); no lookup. Notice: `Out of memory @ ...` |
 | The download or decode failed after `/plan` answered | `download` | No lookup, since the server just answered. Notice: `Last update failed @ ...` |
 | The wake hadn't finished after `wake_timeout` (110 s) | `timeout` | A hang, such as a server that accepts the connection and goes quiet. No notice, since the panel's state is unknown. It stands down once the image has downloaded, the wake has succeeded or it has given up for another reason. |
 
@@ -564,7 +564,7 @@ device halts, and the cell's own protection cut-off, before relying on them.
 
 Each check-in also sends the server `device`, `battery_mv`, `battery_pct`, `battery_state`,
 `failed_wakes`, `rssi` (Wi-Fi signal, dBm), `last_failure`, `last_wake_s`, `last_tls_ms` and `last_heap_min`, which feed `/status` and
-`/metrics` (see [deploy/README.md](../deploy/README.md)). [esp/telemetry.h](eink/esp/telemetry.h) builds them.
+`/metrics` (see [deploy/README.md](../deploy/README.md)). [esp/telemetry.h](home_display/esp/telemetry.h) builds them.
 
 `last_failure` is the `fail_reason` of the most recent failed wake (the table above), and `last_wake_s` is how
 long the previous wake was awake. A wake asks `/plan` before it knows how it will go, so both describe the
@@ -609,7 +609,7 @@ thinks it shows, so the label doesn't stay up. The `Out of date` notice is also 
 spell, not on every wake.
 
 After deep sleep the device keeps no copy of the picture, so the label is a partial refresh of
-just that corner ([esp/notice.h](eink/esp/notice.h)). The display driver marks the whole screen as
+just that corner ([esp/eink_notice.h](home_display/esp/eink_notice.h)). The display driver marks the whole screen as
 changed at start-up, so the header clears that mark first; it reaches a protected member of the
 driver to do so. If a future ESPHome renames it, the build fails rather than blanking the panel.
 
@@ -625,18 +625,18 @@ fraction of that for a flat dashboard (about 135 KB for a real render), but the 
 step; it has no greyscale form, so the greys are stored as RGB and the firmware reads them back as grey. ESPHome's
 `online_image` decodes all three (checked in 2026.9.1: it recognises `image/qoi`).
 None has been measured on the device. To compare them, set `accept_formats` to one type (or set the server
-default), run each for a day, and compare `eink_device_last_wake_seconds` in `/metrics` at a similar
-`eink_device_wifi_rssi_dbm`, rather than assuming.
+default), run each for a day, and compare `home_display_device_last_wake_seconds` in `/metrics` at a similar
+`home_display_device_wifi_rssi_dbm`, rather than assuming.
 
 ## Tests
 
-`tests/` mirrors the layers in `eink/`:
+`tests/` mirrors the layers in `home_display/`:
 
 | Directory | Tests | Run with |
 |---|---|---|
 | `tests/core/` | the calculations, with fakes for the interfaces, built with a bare C++17 compiler and sanitizers | `make -C esphome test` |
 | `tests/tls/` | the TLS, EST, stream and join code, with the same mbedTLS the chip is built with, against the real Rust server ([tests/tls/README.md](tests/tls/README.md) says what that shows and what it does not) | `make -C esphome host-test` |
-| (none for `eink/esp/`) | needs the chip's headers; `esphome compile` is the check | `make -C esphome compile` |
+| (none for `home_display/esp/`) | needs the chip's headers; `esphome compile` is the check | `make -C esphome compile` |
 
 `tests/fuzz/` is a third kind (below): the parsers that read bytes nobody here wrote are run on millions of made-up inputs.
 
@@ -651,17 +651,17 @@ make -C esphome test
 
 | Header | What is in it | Tested |
 |---|---|---|
-| [core/wake.h](eink/core/wake.h) | sleep length from the plan, the backoff, the time a wake has used, the memory the image needs | yes |
-| [core/battery.h](eink/core/battery.h) | charge from voltage, the low/empty latches and what to do about them | yes |
-| [core/report.h](eink/core/report.h) | the check-in query string, failure names, what is remembered of the last wake | yes |
-| [core/format.h](eink/core/format.h) | the server's URL from an address, an age in words, the notices | yes |
-| [core/service.h](eink/core/service.h) | which of the servers a scan found to use, and its HTTP and HTTPS ports | yes |
-| [core/pairing.h](eink/core/pairing.h), [core/trust.h](eink/core/trust.h), [core/sha256.h](eink/core/sha256.h) | the pairing code, what to do next in joining, which root to trust, where a certificate is in its life | yes |
-| [core/join.h](eink/core/join.h), [core/ports.h](eink/core/ports.h) | one wake's joining over interfaces (the clock, the key store, the network, the chain check), run against fakes | yes |
-| [core/plan.h](eink/core/plan.h), [core/clock.h](eink/core/clock.h) | whether to redraw after a plan; whether the clock can be believed | yes |
-| [esp/state.h](eink/esp/state.h) | the typed state one wake keeps between its scripts | no: nothing to test but the types |
-| [esp/telemetry.h](eink/esp/telemetry.h) | the radio signal and RTC memory behind the report | no: needs the chip |
-| [esp/discovery.h](eink/esp/discovery.h), [esp/health.h](eink/esp/health.h), [esp/notice.h](eink/esp/notice.h) | mDNS, the heap, the panel | no: need the chip |
+| [core/wake.h](home_display/core/wake.h) | sleep length from the plan, the backoff, the time a wake has used, the memory the image needs | yes |
+| [core/battery.h](home_display/core/battery.h) | charge from voltage, the low/empty latches and what to do about them | yes |
+| [core/report.h](home_display/core/report.h) | the check-in query string, failure names, what is remembered of the last wake | yes |
+| [core/format.h](home_display/core/format.h) | the server's URL from an address, an age in words, the notices | yes |
+| [core/service.h](home_display/core/service.h) | which of the servers a scan found to use, and its HTTP and HTTPS ports | yes |
+| [core/pairing.h](home_display/core/pairing.h), [core/trust.h](home_display/core/trust.h), [core/sha256.h](home_display/core/sha256.h) | the pairing code, what to do next in joining, which root to trust, where a certificate is in its life | yes |
+| [core/join.h](home_display/core/join.h), [core/ports.h](home_display/core/ports.h) | one wake's joining over interfaces (the clock, the key store, the network, the chain check), run against fakes | yes |
+| [core/plan.h](home_display/core/plan.h), [core/clock.h](home_display/core/clock.h) | whether to redraw after a plan; whether the clock can be believed | yes |
+| [esp/state.h](home_display/esp/state.h) | the typed state one wake keeps between its scripts | no: nothing to test but the types |
+| [esp/telemetry.h](home_display/esp/telemetry.h) | the radio signal and RTC memory behind the report | no: needs the chip |
+| [esp/discovery.h](home_display/esp/discovery.h), [esp/health.h](home_display/esp/health.h), [esp/eink_notice.h](home_display/esp/eink_notice.h) | mDNS, the heap, the panel | no: need the chip |
 
 The first four include nothing from ESPHome or ESP-IDF, and that is the rule for new calculations: put them there,
 and have the YAML only read and write its globals and call them. The tests build with the address and

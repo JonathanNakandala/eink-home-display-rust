@@ -13,12 +13,12 @@
 #include <unistd.h>
 
 #include "host_support.h"
-#include "eink/tls/secure.h"
-#include "eink/core/session_cache.h"
+#include "home_display/tls/secure.h"
+#include "home_display/core/session_cache.h"
 
 using namespace support;
-using eink_stream::Stream;
-using Bytes = eink_session_cache::Bytes;
+using home_display_stream::Stream;
+using Bytes = home_display_session_cache::Bytes;
 
 namespace {
 
@@ -29,7 +29,7 @@ struct Counts {
 };
 
 Counts server_counts(Display &d) {
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = nullptr;
   Stream stream;
   Counts counts;
@@ -48,19 +48,20 @@ struct Wall {
 };
 
 struct Cache {
-  eink_session_cache::Slot slot;
+  home_display_session_cache::Slot slot;
   Wall wall;
-  eink_session_cache::SlotStore<std::reference_wrapper<Wall>> store;
+  home_display_session_cache::SlotStore<std::reference_wrapper<Wall>> store;
   Cache(Display &d)
-      : store(eink_session_cache::make_store(
+      : store(home_display_session_cache::make_store(
             slot,
-            eink_session_cache::make_key(server_ip(), server_port(), d.identity.stored, d.identity.certificate_der),
+            home_display_session_cache::make_key(server_ip(), server_port(), d.identity.stored,
+                                                 d.identity.certificate_der),
             std::ref(wall))) {
-    eink_session_cache::clear(slot);
+    home_display_session_cache::clear(slot);
   }
 };
 
-bool get(Display &d, eink_stream::Peer peer, const std::string &path, std::string &body, int &status) {
+bool get(Display &d, home_display_stream::Peer peer, const std::string &path, std::string &body, int &status) {
   Stream stream;
   if (stream.start(peer, "GET", path) != Stream::Start::OK)
     return false;
@@ -74,7 +75,7 @@ TEST(the_second_connection_of_a_wake_resumes_the_first_and_is_still_known_by_its
   Display d("host-resume-wake");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
 
   const Counts before = server_counts(d);
@@ -94,18 +95,18 @@ TEST(a_session_survives_being_written_out_and_read_back_as_after_deep_sleep) {
   Display d("host-resume-sleep");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
   CHECK(get(d, peer, "/plan", body, status));
 
   // The chip sleeps ten minutes: the program starts again with nothing but the slot (RTC memory) and the wall clock.
-  eink_session_cache::Slot kept = cache.slot;
+  home_display_session_cache::Slot kept = cache.slot;
   Cache woken(d);
   woken.slot = kept;
   woken.wall.now = cache.wall.now + 600;
-  eink_stream::Peer again = peer_of(d);
+  home_display_stream::Peer again = peer_of(d);
   again.sessions = &woken.store;
 
   const Counts before = server_counts(d);
@@ -119,7 +120,7 @@ TEST(a_ticket_whose_clock_started_again_is_still_accepted_because_its_age_is_put
   Display d("host-resume-clock");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
@@ -134,7 +135,7 @@ TEST(a_ticket_whose_clock_started_again_is_still_accepted_because_its_age_is_put
   mbedtls_ssl_session_init(&session);
   CHECK_EQ(mbedtls_ssl_session_load(&session, saved.data(), saved.size()), 0);
   session.MBEDTLS_PRIVATE(ticket_reception_time) = mbedtls_ms_time() + 3600 * 1000;  // an hour ahead
-  const Bytes skewed = eink_tls::Session::serialise(session);
+  const Bytes skewed = home_display_tls::Session::serialise(session);
   mbedtls_ssl_session_free(&session);
   CHECK(!skewed.empty());
   cache.store.save(skewed);
@@ -158,7 +159,7 @@ TEST(a_ticket_the_server_does_not_know_is_a_full_handshake_not_a_failed_request)
   Display d("host-resume-unknown");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
@@ -189,7 +190,7 @@ TEST(a_session_the_library_cannot_read_is_forgotten_and_the_connection_made_in_f
   Display d("host-resume-garbage");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   cache.store.save(Bytes(400, 0xAB));  // not a session
   std::string body;
@@ -202,12 +203,12 @@ TEST(a_renewed_certificate_does_not_use_the_session_of_the_one_before) {
   Display d("host-resume-renew");
   join_as(d);
   Cache before_renewal(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &before_renewal.store;
   std::string body;
   int status = 0;
   CHECK(get(d, peer, "/plan", body, status));
-  const eink_session_cache::Slot kept = before_renewal.slot;
+  const home_display_session_cache::Slot kept = before_renewal.slot;
 
   d.clock.offset = 61 * DAY;
   CHECK(d.wake().paired);  // renews: a new certificate
@@ -224,7 +225,7 @@ TEST(sessions_are_not_shared_between_displays) {
   join_as(a);
   join_as(b);
   Cache cache_a(a);
-  eink_stream::Peer peer_a = peer_of(a);
+  home_display_stream::Peer peer_a = peer_of(a);
   peer_a.sessions = &cache_a.store;
   std::string body;
   int status = 0;
@@ -243,7 +244,7 @@ TEST(a_display_the_owner_revoked_is_still_turned_away_on_a_resumed_connection) {
   join_as(d);
   join_as(observer);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
@@ -260,7 +261,7 @@ TEST(a_display_the_owner_revoked_is_still_turned_away_on_a_resumed_connection) {
 TEST(with_no_store_every_connection_is_in_full) {
   Display d("host-resume-none");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = nullptr;
   const Counts before = server_counts(d);
   std::string body;
@@ -275,7 +276,7 @@ TEST(a_session_with_the_clock_not_believed_is_neither_kept_nor_offered) {
   join_as(d);
   Cache cache(d);
   cache.wall.now = -1;  // not set by SNTP yet
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
@@ -290,22 +291,23 @@ TEST(what_a_session_costs_in_memory_and_in_bytes_on_the_wire) {
   Display d("host-resume-size");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
   CHECK(get(d, peer, "/plan", body, status));
-  std::printf("      a saved session is %u bytes (room for %zu)\n", cache.slot.length, eink_session_cache::CAPACITY);
+  std::printf("      a saved session is %u bytes (room for %zu)\n", cache.slot.length,
+              home_display_session_cache::CAPACITY);
   CHECK(cache.slot.length > 0);
   // Half is the headroom the comment on CAPACITY promises: a longer chain or certificate must not fill the slot.
-  CHECK(cache.slot.length <= eink_session_cache::CAPACITY / 2);
+  CHECK(cache.slot.length <= home_display_session_cache::CAPACITY / 2);
 }
 
 TEST(a_handshake_that_times_out_keeps_the_session_and_is_not_tried_twice) {
   Display d("host-resume-quiet");
   join_as(d);
   Cache cache(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   peer.sessions = &cache.store;
   std::string body;
   int status = 0;
@@ -330,7 +332,7 @@ TEST(a_handshake_that_times_out_keeps_the_session_and_is_not_tried_twice) {
 TEST(a_handshake_is_held_to_the_deadline_though_each_wait_is_longer) {
   Display d("host-resume-deadline");
   join_as(d);
-  eink_stream::Peer peer = peer_of(d);
+  home_display_stream::Peer peer = peer_of(d);
   QuietServer quiet;
   peer.port = quiet.port();
   peer.timeout_ms = 5000;

@@ -1,7 +1,7 @@
 #include "check.h"
-#include "eink/core/trust.h"
+#include "home_display/core/trust.h"
 
-using namespace eink_trust;
+using namespace home_display_trust;
 
 TEST(a_compiled_in_root_wins_and_is_never_replaced) {
   CHECK(root_source(true, false) == RootSource::COMPILED);

@@ -7,10 +7,10 @@
 
 #include "host_support.h"
 
-using eink_join::Joiner;
-using eink_join::Outcome;
-using eink_pairing::Standing;
-using eink_report::Failure;
+using home_display_join::Joiner;
+using home_display_join::Outcome;
+using home_display_pairing::Standing;
+using home_display_report::Failure;
 using host::MemoryIdentity;
 
 using namespace support;
@@ -62,7 +62,7 @@ TEST(a_paired_display_goes_on_without_asking_the_network_anything) {
 TEST(with_a_third_of_the_certificate_left_it_renews_with_no_owner) {
   Display d("host-renew");
   join(d);
-  const eink_ports::Bytes first = d.identity.certificate_der;
+  const home_display_ports::Bytes first = d.identity.certificate_der;
   d.clock.offset = 61 * DAY;
   d.est.roots = d.est.enrolled = d.est.renewed = 0;
   const Outcome renewed = d.wake();
@@ -79,7 +79,7 @@ TEST(a_certificate_that_ended_is_asked_for_again_with_the_same_key_and_no_owner)
   // new certificate, which the server dates from the real time, look over as well.)
   const int64_t now = d.clock.now();
   d.identity.life = {now - 100 * DAY, now - 10 * DAY};
-  const eink_ports::Bytes first = d.identity.certificate_der;
+  const home_display_ports::Bytes first = d.identity.certificate_der;
   d.est.roots = d.est.enrolled = d.est.renewed = 0;
   const Outcome again = d.wake();
   CHECK(again.paired);
@@ -105,7 +105,7 @@ TEST(a_server_that_is_not_there_is_reported_as_the_server_and_changes_nothing) {
   const Outcome out = d.wake();
   CHECK(out.failure == Failure::SERVER);
   CHECK(!d.identity.has_key());
-  CHECK(d.identity.last == eink_pairing::Answer::NONE);
+  CHECK(d.identity.last == home_display_pairing::Answer::NONE);
 }
 
 TEST(a_display_the_owner_has_revoked_is_not_kept_but_loses_nothing_it_holds) {
@@ -113,7 +113,7 @@ TEST(a_display_the_owner_has_revoked_is_not_kept_but_loses_nothing_it_holds) {
   join(d);
   CHECK_EQ(ctl("revoke host-revoked"), 0);
   d.clock.offset = 70 * DAY;  // due to renew
-  const eink_ports::Bytes key_spki = d.identity.spki();
+  const home_display_ports::Bytes key_spki = d.identity.spki();
   d.est.roots = d.est.enrolled = d.est.renewed = 0;
   const Outcome out = d.wake();
   // The server refuses the renewal, so it asks as a new display, and is refused that too: not recognised, and told so.
@@ -123,7 +123,7 @@ TEST(a_display_the_owner_has_revoked_is_not_kept_but_loses_nothing_it_holds) {
   CHECK(!out.paired);
   CHECK(out.standing == Standing::NOT_RECOGNISED);
   CHECK(out.failure == Failure::UNRECOGNISED);
-  CHECK(d.identity.last == eink_pairing::Answer::REFUSED);
+  CHECK(d.identity.last == home_display_pairing::Answer::REFUSED);
   // The panel has the code to give the owner.
   CHECK_EQ(out.code.size(), (size_t) 14);
   // Pairing is removed only by the owner: the key, the certificate and the root are all still there.
@@ -153,7 +153,7 @@ TEST(a_display_that_starts_afresh_at_every_wake_joins_and_renews_from_what_flash
   CHECK_EQ(ctl("approve host-reboot " + waiting.code), 0);
   // The key made at the first wake is the one used at the second: the code is the same, and the server accepted it.
   CHECK(d.wake().paired);
-  const eink_credentials::Record joined = d.held();
+  const home_display_credentials::Record joined = d.held();
   CHECK(!joined.key.empty() && !joined.root.empty() && !joined.certificate.empty());
   CHECK_EQ(joined.sequence, 3u);  // the key, then the root, then the certificate
 
@@ -172,7 +172,7 @@ TEST(a_display_that_lost_what_the_server_last_said_just_asks_again_and_is_told_a
   Rebooting d("host-rtc");
   const Outcome first = d.wake();
   CHECK(first.standing == Standing::WAITING);
-  d.rtc = eink_pairing::Answer::NONE;  // a power loss clears RTC memory
+  d.rtc = home_display_pairing::Answer::NONE;  // a power loss clears RTC memory
   const Outcome second = d.wake();
   CHECK(second.standing == Standing::WAITING);
   CHECK_EQ(second.code, first.code);  // the same key, so the same code
@@ -183,7 +183,7 @@ TEST(a_power_cut_while_the_certificate_is_written_leaves_the_display_as_it_was) 
   const Outcome waiting = d.wake();
   CHECK_EQ(ctl("approve host-cut " + waiting.code), 0);
   CHECK(d.wake().paired);
-  const eink_credentials::Record before = d.held();
+  const home_display_credentials::Record before = d.held();
 
   d.clock.offset = 61 * DAY;  // due to renew
   d.flash.cut_write = 1;      // the next write, the new certificate, is cut short and the power goes
@@ -193,7 +193,7 @@ TEST(a_power_cut_while_the_certificate_is_written_leaves_the_display_as_it_was) 
 
   // Power back: what it reads is the record before, whole, and it goes on from there.
   d.flash.restore_power();
-  const eink_credentials::Record after = d.held();
+  const home_display_credentials::Record after = d.held();
   CHECK_EQ(after.sequence, before.sequence);
   CHECK(after.certificate == before.certificate && after.key == before.key && after.root == before.root);
   CHECK(d.wake().paired);
@@ -205,7 +205,7 @@ TEST(flash_that_cannot_be_read_is_left_alone_and_the_server_is_not_asked) {
   const Outcome waiting = d.wake();
   CHECK_EQ(ctl("approve host-broken " + waiting.code), 0);
   CHECK(d.wake().paired);
-  const eink_credentials::Record before = d.held();
+  const home_display_credentials::Record before = d.held();
   const int writes = d.flash.writes;
 
   d.flash.broken_reads["cred_a"] = true;
@@ -228,13 +228,13 @@ TEST(a_display_whose_pairing_is_erased_asks_again_with_a_new_key_and_the_owner_a
   const Outcome waiting = d.wake();
   CHECK_EQ(ctl("approve host-erase " + waiting.code), 0);
   CHECK(d.wake().paired);
-  const eink_credentials::Record before = d.held();
+  const home_display_credentials::Record before = d.held();
   CHECK(!before.key.empty());
 
   {
-    eink_credentials::Credentials credentials(d.flash);
+    home_display_credentials::Credentials credentials(d.flash);
     CHECK(credentials.erase());
-    d.rtc = eink_pairing::Answer::NONE;  // the chip clears what RTC memory kept of the server's last answer too
+    d.rtc = home_display_pairing::Answer::NONE;  // the chip clears what RTC memory kept of the server's last answer too
   }
   CHECK(d.held().empty());
 

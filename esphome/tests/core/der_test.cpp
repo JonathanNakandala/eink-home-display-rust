@@ -1,9 +1,9 @@
 #include <string>
 
 #include "check.h"
-#include "eink/core/der.h"
+#include "home_display/core/der.h"
 
-using namespace eink_der;
+using namespace home_display_der;
 
 TEST(lengths_are_written_in_the_shortest_form_der_allows) {
   CHECK(tlv(0x04, Bytes(0)) == (Bytes{0x04, 0x00}));

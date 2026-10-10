@@ -7,13 +7,13 @@
 #include <string>
 
 #include "host_support.h"
-#include "eink/tls/secure.h"
-#include "eink/tls/secure_begin.h"
+#include "home_display/tls/secure.h"
+#include "home_display/tls/secure_begin.h"
 
 using namespace support;
-using eink_secure_begin::Begin;
-using eink_secure_wake::Route;
-using eink_service::Transport;
+using home_display_secure_begin::Begin;
+using home_display_secure_wake::Route;
+using home_display_service::Transport;
 
 namespace {
 
@@ -21,20 +21,20 @@ namespace {
 struct Wakes {
   std::string name;
   fakes::MemoryStore flash;
-  eink_pairing::Answer rtc = eink_pairing::Answer::NONE;
+  home_display_pairing::Answer rtc = home_display_pairing::Answer::NONE;
   HostClock clock;
-  eink_ports::Bytes compiled;
+  home_display_ports::Bytes compiled;
 
   explicit Wakes(const std::string &n) : name(n) {}
 
   // The identity holds the key that tls/secure.h points at, so it lives until the next wake begins, as the chip's does
   // (a static there).
-  std::unique_ptr<eink_flash::FlashIdentity> identity;
+  std::unique_ptr<home_display_flash::FlashIdentity> identity;
 
   Begin begin(Transport transport, uint32_t ip = server_ip(), uint16_t tls_port = server_port()) {
-    eink_secure::forget();
-    identity.reset(new eink_flash::FlashIdentity(flash, rtc, compiled));
-    return eink_secure_begin::begin(transport, ip, tls_port, name, clock, *identity);
+    home_display_secure::forget();
+    identity.reset(new home_display_flash::FlashIdentity(flash, rtc, compiled));
+    return home_display_secure_begin::begin(transport, ip, tls_port, name, clock, *identity);
   }
 };
 
@@ -44,7 +44,7 @@ TEST(plain_http_joins_nothing_and_opens_no_secure_connection) {
   Wakes w("host-begin-http");
   const Begin b = w.begin(Transport::HTTP);
   CHECK(b.verdict.route == Route::PLAIN && b.verdict.failure == Failure::NONE && !b.verdict.prompt);
-  CHECK(!eink_secure::context().ready);
+  CHECK(!home_display_secure::context().ready);
   CHECK(w.flash.blobs.empty());  // nothing written
 }
 
@@ -56,7 +56,7 @@ TEST(https_only_waits_for_the_owner_shows_the_code_and_then_speaks_tls) {
   CHECK(waiting.verdict.prompt);
   CHECK_EQ(waiting.retry_after_s, 300u);
   CHECK(waiting.prompt.find("Waiting for approval: ") == 0);
-  CHECK(!eink_secure::context().ready);
+  CHECK(!home_display_secure::context().ready);
 
   // The owner types in the code the panel shows.
   const std::string code = waiting.prompt.substr(std::string("Waiting for approval: ").size());
@@ -65,12 +65,12 @@ TEST(https_only_waits_for_the_owner_shows_the_code_and_then_speaks_tls) {
   const Begin secure = w.begin(Transport::HTTPS);
   CHECK(secure.verdict.route == Route::SECURE);
   CHECK(!secure.verdict.prompt);
-  CHECK(eink_secure::context().ready);
+  CHECK(home_display_secure::context().ready);
   // And the first request through what it left behind: the server knows the display by its certificate.
-  const eink_secure::Fetched who = eink_secure::fetch("GET", "/who");
+  const home_display_secure::Fetched who = home_display_secure::fetch("GET", "/who");
   CHECK(who.ok());
   CHECK_EQ(who.body, "host-begin-https");
-  eink_secure::forget();
+  home_display_secure::forget();
 }
 
 TEST(a_display_that_prefers_https_goes_on_over_plain_http_while_it_waits_and_still_shows_the_code) {
@@ -80,11 +80,11 @@ TEST(a_display_that_prefers_https_goes_on_over_plain_http_while_it_waits_and_sti
   CHECK(waiting.verdict.failure == Failure::APPROVAL);
   CHECK(waiting.verdict.prompt);
   CHECK(!waiting.prompt.empty());
-  CHECK(!eink_secure::context().ready);
+  CHECK(!home_display_secure::context().ready);
   const std::string code = waiting.prompt.substr(std::string("Waiting for approval: ").size());
   CHECK_EQ(ctl("approve host-begin-prefer " + code), 0);
   CHECK(w.begin(Transport::PREFER_HTTPS).verdict.route == Route::SECURE);
-  eink_secure::forget();
+  home_display_secure::forget();
 }
 
 TEST(a_server_nobody_answers_is_a_failed_wake_for_https_and_a_fallback_for_prefer_https) {
@@ -113,7 +113,7 @@ TEST(a_root_built_in_that_is_not_the_servers_fails_https_with_a_certificate_and_
   only.compiled = someone_elses_root();
   const Begin fails = only.begin(Transport::HTTPS);
   CHECK(fails.verdict.route == Route::FAIL && fails.verdict.failure == Failure::CERTIFICATE);
-  CHECK(!eink_secure::context().ready);
+  CHECK(!home_display_secure::context().ready);
 
   Wakes prefer("host-begin-wrongroot-b");
   prefer.compiled = someone_elses_root();
@@ -130,7 +130,7 @@ TEST(a_paired_display_begins_without_asking_the_enrolment_anything) {
   const int writes = w.flash.writes;
   CHECK(w.begin(Transport::HTTPS).verdict.route == Route::SECURE);
   CHECK_EQ(w.flash.writes, writes);  // an ordinary wake writes nothing
-  eink_secure::forget();
+  home_display_secure::forget();
 }
 
 TEST(after_the_owner_revokes_it_a_display_is_asked_for_the_code_again) {
@@ -144,7 +144,7 @@ TEST(after_the_owner_revokes_it_a_display_is_asked_for_the_code_again) {
   CHECK(again.verdict.route == Route::WAIT_FOR_OWNER);
   CHECK(again.verdict.failure == Failure::UNRECOGNISED);
   CHECK(again.prompt.find("Not recognised") == 0);
-  eink_secure::forget();
+  home_display_secure::forget();
 }
 
 TEST(a_wake_that_begins_with_a_session_store_leaves_the_plan_and_the_picture_to_resume) {
@@ -152,39 +152,40 @@ TEST(a_wake_that_begins_with_a_session_store_leaves_the_plan_and_the_picture_to_
   const Begin first = w.begin(Transport::HTTPS);
   CHECK_EQ(ctl("approve host-begin-resume " + first.prompt.substr(std::string("Waiting for approval: ").size())), 0);
 
-  eink_session_cache::Slot slot;
-  eink_session_cache::clear(slot);
+  home_display_session_cache::Slot slot;
+  home_display_session_cache::clear(slot);
   int64_t wall = 1791463200;
-  auto holder = eink_session_cache::make_store(slot, eink_session_cache::Key{}, [&wall] { return wall; });
+  auto holder =
+      home_display_session_cache::make_store(slot, home_display_session_cache::Key{}, [&wall] { return wall; });
 
-  w.identity.reset(new eink_flash::FlashIdentity(w.flash, w.rtc, w.compiled));
-  const Begin secure =
-      eink_secure_begin::begin(Transport::HTTPS, server_ip(), server_port(), w.name, w.clock, *w.identity, &holder);
+  w.identity.reset(new home_display_flash::FlashIdentity(w.flash, w.rtc, w.compiled));
+  const Begin secure = home_display_secure_begin::begin(Transport::HTTPS, server_ip(), server_port(), w.name, w.clock,
+                                                        *w.identity, &holder);
   CHECK(secure.verdict.route == Route::SECURE);
-  const eink_secure::Fetched plan = eink_secure::fetch("GET", "/plan");
+  const home_display_secure::Fetched plan = home_display_secure::fetch("GET", "/plan");
   CHECK(plan.ok());
   CHECK(slot.length > 0);  // the plan's connection left a ticket
-  const eink_secure::Fetched who = eink_secure::fetch("GET", "/who");
+  const home_display_secure::Fetched who = home_display_secure::fetch("GET", "/who");
   CHECK_EQ(who.body, "host-begin-resume");
 
   // A wake later, after a sleep: a new begin picks the store of the same server and identity, and the slot is still
   // good.
   wall += 600;
-  w.identity.reset(new eink_flash::FlashIdentity(w.flash, w.rtc, w.compiled));
-  const Begin again =
-      eink_secure_begin::begin(Transport::HTTPS, server_ip(), server_port(), w.name, w.clock, *w.identity, &holder);
+  w.identity.reset(new home_display_flash::FlashIdentity(w.flash, w.rtc, w.compiled));
+  const Begin again = home_display_secure_begin::begin(Transport::HTTPS, server_ip(), server_port(), w.name, w.clock,
+                                                       *w.identity, &holder);
   CHECK(again.verdict.route == Route::SECURE);
   const uint32_t length = slot.length;
   CHECK(length > 0);
-  CHECK(eink_secure::fetch("GET", "/who").ok());
+  CHECK(home_display_secure::fetch("GET", "/who").ok());
 
   // The server's own count, from a server this test has to itself: the enrolment connections (never resumed) and the
   // plan were in full; the request for who it is, the same request a wake later, and this one all resumed.
-  const eink_secure::Fetched counts = eink_secure::fetch("GET", "/handshakes");
+  const home_display_secure::Fetched counts = home_display_secure::fetch("GET", "/handshakes");
   CHECK(counts.ok());
   int full = 0, resumed = 0;
   std::sscanf(counts.body.c_str(), "full=%d resumed=%d", &full, &resumed);
   CHECK_EQ(resumed, 3);
   CHECK(full >= 4);  // the enrolment ones and the plan
-  eink_secure::forget();
+  home_display_secure::forget();
 }

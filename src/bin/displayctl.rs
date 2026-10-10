@@ -1,4 +1,4 @@
-//! Looks at a running e-ink home display server and changes it, from the same machine, over its admin socket.
+//! Looks at a running home display server and changes it, from the same machine, over its admin socket.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -55,7 +55,7 @@ enum Command {
     Approve {
         /// The display's name, as `displays list` shows it
         name: String,
-        /// The code on the display's own panel, like B0AJ-QTW6-Y8SA
+        /// The code on the display's own panel, like JGWP-14YW-3BT0
         code: String,
     },
     /// Turn a waiting display down, until it is forgotten. For a member with another key waiting to take its

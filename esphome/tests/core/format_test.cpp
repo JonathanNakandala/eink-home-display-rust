@@ -1,8 +1,8 @@
 #include "check.h"
-#include "eink/core/format.h"
+#include "home_display/core/format.h"
 
-using namespace eink_format;
-using eink_report::Failure;
+using namespace home_display_format;
+using home_display_report::Failure;
 
 TEST(the_ip_is_read_first_octet_in_the_lowest_byte) {
   // 192.168.1.20, as lwIP stores it.
@@ -60,7 +60,7 @@ TEST(only_a_real_zone_offset_is_accepted) {
 
 TEST(the_server_is_where_mdns_found_it_or_the_fallback) {
   const uint32_t ip = 192u | (168u << 8) | (1u << 16) | (20u << 24);
-  const std::string fallback = "http://e-ink-home-display.local:8080";
+  const std::string fallback = "http://home-display.local:8080";
   CHECK_EQ(server_base(ip, 8080, fallback), "http://192.168.1.20:8080");
   CHECK_EQ(server_base(0, 8080, fallback), fallback);  // no address
   CHECK_EQ(server_base(ip, 0, fallback), fallback);    // no port
@@ -96,7 +96,7 @@ TEST(the_stale_notice_says_how_old_the_image_is) {
 static const std::string NOTICE_GLYPHS = " :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 TEST(every_notice_is_made_only_of_glyphs_the_font_has) {
-  using eink_report::LAST_FAILURE;
+  using home_display_report::LAST_FAILURE;
   const int64_t now = 1791376496;
   for (uint8_t value = 0; value <= static_cast<uint8_t>(LAST_FAILURE); value++) {
     for (bool known : {true, false}) {

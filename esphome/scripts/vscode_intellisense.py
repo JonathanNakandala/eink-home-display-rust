@@ -59,7 +59,7 @@ def main() -> None:
     defines = flag_values(command, "-D")
     firmware = {
         "name": "ESPHome firmware",
-        # eink/ is copied into the build's src/ when compiling, and its headers include each other as eink/core/...,
+        # home_display/ is copied into the build's src/ when compiling, and its headers include each other as home_display/core/...,
         # so the workspace copies get the same include paths, plus esphome/ as the root of those.
         "includePath": ["${workspaceFolder}/esphome"] + includes,
         "defines": defines,

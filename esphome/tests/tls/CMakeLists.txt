@@ -2,7 +2,7 @@
 #   cmake --preset host            (from this directory; or `make -C esphome host-tls`, or CMake Tools in VS Code)
 # MBEDTLS_SRC is found by itself in ESPHome's cache once the firmware has been compiled; give it only to use another.
 cmake_minimum_required(VERSION 3.16)
-project(eink_host_tls C CXX)
+project(home_display_host_tls C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)

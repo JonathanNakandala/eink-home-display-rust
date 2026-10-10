@@ -5,7 +5,7 @@
 
 #include "fuzz.h"
 
-#include "eink/core/service.h"
+#include "home_display/core/service.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   std::vector<std::string> parts(1);
@@ -16,7 +16,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       parts.back() += static_cast<char>(data[i]);
   }
   parts.resize(8);
-  eink_service::Announcement answer;
+  home_display_service::Announcement answer;
   answer.instance = parts[0];
   answer.txtvers = parts[1];
   answer.path = parts[2];
@@ -28,22 +28,23 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   answer.ip = static_cast<uint32_t>(parts[7].size() * 0x01010101u);
 
   // A port is 1 to 65535 and only digits.
-  const uint16_t port = eink_service::port_from(parts[4]);
+  const uint16_t port = home_display_service::port_from(parts[4]);
   if (port != 0) {
     FUZZ_REQUIRE(parts[4].size() <= 5);
     for (char c : parts[4])
       FUZZ_REQUIRE(c >= '0' && c <= '9');
   }
 
-  for (const eink_service::Transport transport :
-       {eink_service::Transport::HTTP, eink_service::Transport::PREFER_HTTPS, eink_service::Transport::HTTPS}) {
-    eink_service::Server server;
-    if (!eink_service::accept(answer, parts[0], transport, server))
+  for (const home_display_service::Transport transport :
+       {home_display_service::Transport::HTTP, home_display_service::Transport::PREFER_HTTPS,
+        home_display_service::Transport::HTTPS}) {
+    home_display_service::Server server;
+    if (!home_display_service::accept(answer, parts[0], transport, server))
       continue;
     // Only our own server, at an address and port it gave, and the port it says for the way asked.
     FUZZ_REQUIRE(answer.txtvers == "1" && !answer.path.empty());
     FUZZ_REQUIRE(server.ip != 0 && server.ip == answer.ip);
-    if (transport == eink_service::Transport::HTTPS) {
+    if (transport == home_display_service::Transport::HTTPS) {
       FUZZ_REQUIRE(server.tls_port == answer.port && server.port == 0);
       FUZZ_REQUIRE(port == 0 || port == answer.port);
     } else {

@@ -1,12 +1,12 @@
 #include "check.h"
-#include "eink/core/secure_wake.h"
+#include "home_display/core/secure_wake.h"
 
-using namespace eink_secure_wake;
-using eink_join::Outcome;
-using eink_pairing::Standing;
-using eink_report::Failure;
-using eink_service::Transport;
-using Start = eink_link::Start;
+using namespace home_display_secure_wake;
+using home_display_join::Outcome;
+using home_display_pairing::Standing;
+using home_display_report::Failure;
+using home_display_service::Transport;
+using Start = home_display_link::Start;
 
 static Outcome outcome(Standing standing, Failure failure, bool paired = false) {
   Outcome o;

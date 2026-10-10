@@ -107,12 +107,12 @@ fn value_of(c: char) -> Option<u8> {
     ALPHABET.iter().position(|&a| a == c).map(|v| v as u8)
 }
 
-/// The code a display shows and the owner types in, as `B0AJ-QTW6-Y8SA`.
+/// The code a display shows and the owner types in, as `JGWP-14YW-3BT0`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PairingCode(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("a pairing code is {LENGTH} letters and digits, like B0AJ-QTW6-Y8SA")]
+#[error("a pairing code is {LENGTH} letters and digits, like JGWP-14YW-3BT0")]
 pub struct InvalidPairingCode;
 
 impl PairingCode {
@@ -121,7 +121,7 @@ impl PairingCode {
     /// input; the label keeps it from being reused as some other hash. The code is the first 60 bits.
     pub fn derive(authority: &Fingerprint, device: &DeviceId, key: &PublicKey) -> Self {
         let mut hash = Sha256::new();
-        hash.update(b"eink-home-display pairing code v1");
+        hash.update(b"home-display pairing code v1");
         hash.update(authority.as_bytes());
         for part in [device.as_str().as_bytes(), key.as_der()] {
             hash.update((part.len() as u64).to_be_bytes());
@@ -383,7 +383,7 @@ mod tests {
             "B0AJ",
             "B0AJ-QTW6", // the old eight-character code is not enough
             "B0AJ-QTW6-Y8S",
-            "B0AJ-QTW6-Y8SAA",
+            "JGWP-14YW-3BT0A",
             "B0AJ-QTW6-Y8SU", // U is not in the alphabet
             "B0AJ-QTW6-Y8!A",
             "B0AJ-QTW6-Y8S\u{0666}",
@@ -432,7 +432,7 @@ mod tests {
         );
         let key = PublicKey::from_der((0u8..91).collect());
         let code = PairingCode::derive(&authority, &device("reterminal-e1003-a1b2c3"), &key);
-        assert_eq!(code.as_str(), "B0AJ-QTW6-Y8SA");
+        assert_eq!(code.as_str(), "JGWP-14YW-3BT0");
     }
 
     #[test]

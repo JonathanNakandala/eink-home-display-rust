@@ -5,10 +5,10 @@
 
 #include "fuzz.h"
 
-#include "eink/core/credentials.h"
+#include "home_display/core/credentials.h"
 #include "fake_store.h"
 
-using namespace eink_credentials;
+using namespace home_display_credentials;
 
 namespace {
 

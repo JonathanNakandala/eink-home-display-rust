@@ -64,7 +64,7 @@
         "bind": "[::]:8080",
         "device_overdue_grace_seconds": 900,
         "directory": "served",
-        "instance_name": "E-ink home display",
+        "instance_name": "Home display",
         "refresh_cooldown_seconds": 30,
         "stale_grace_seconds": 300,
         "tls": {
@@ -473,7 +473,7 @@
         "instance_name": {
           "description": "The name shown for the service in a scan, at most 63 bytes. The host name `<name>.local` is derived from it.",
           "type": "string",
-          "default": "E-ink home display"
+          "default": "Home display"
         },
         "refresh_cooldown_seconds": {
           "description": "The display's button asks for a render with `POST /refresh`. Requests are refused (and the\ncurrent image returned) when a render started within this many seconds.",
@@ -573,7 +573,7 @@
           "default": "pki"
         },
         "names": {
-          "description": "More host names and IP addresses for the server's certificate, for a browser or `curl` to connect\nby. Left empty, it is `<instance_name>.local` (the name announced over mDNS, with the characters a\nhost name can't have replaced) and `localhost`. The certificate also always has the fixed name\n`eink-home-display.internal`, which is what a display checks, so changing this never affects them.",
+          "description": "More host names and IP addresses for the server's certificate, for a browser or `curl` to connect\nby. Left empty, it is `<instance_name>.local` (the name announced over mDNS, with the characters a\nhost name can't have replaced) and `localhost`. The certificate also always has the fixed name\n`home-display.internal`, which is what a display checks, so changing this never affects them.",
           "type": "array",
           "default": [],
           "items": {

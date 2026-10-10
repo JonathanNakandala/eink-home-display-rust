@@ -1,7 +1,7 @@
 #include "check.h"
-#include "eink/core/battery.h"
+#include "home_display/core/battery.h"
 
-using namespace eink_battery;
+using namespace home_display_battery;
 
 // The thresholds the YAML ships with.
 constexpr float LOW = 3.40f, EMPTY = 3.30f, RESUME = 3.60f;
