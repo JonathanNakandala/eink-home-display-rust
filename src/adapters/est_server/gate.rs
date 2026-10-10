@@ -74,6 +74,9 @@ async fn check(
         .await
     {
         Ok(true) => {
+            connection
+                .handshake
+                .note(&client.device, gate.enrollment.now());
             request
                 .extensions_mut()
                 .insert(AuthenticatedDevice(client.device));

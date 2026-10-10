@@ -24,9 +24,30 @@ TEST(a_full_report_has_every_field_in_a_fixed_order) {
   Last last = EMPTY;
   set_failure(last, Failure::DOWNLOAD);
   set_wake(last, 24400);
+  set_connection(last, 1100, 61440);
   CHECK_EQ(query("reterminal-e1003-a1b2c3", 2, GOOD, -67, last),
            "&device=reterminal-e1003-a1b2c3&failed_wakes=2&battery_mv=3712&battery_pct=47&battery_state=ok"
-           "&rssi=-67&last_failure=download&last_wake_s=24");
+           "&rssi=-67&last_failure=download&last_wake_s=24&last_tls_ms=1100&last_heap_min=61440");
+}
+
+TEST(the_handshake_time_and_the_heap_are_told_only_when_they_were_measured) {
+  Last last = EMPTY;
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, last).find("last_tls_ms"), std::string::npos);
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, last).find("last_heap_min"), std::string::npos);
+  set_connection(last, 0, 50000);  // a wake with no TLS: no time, but the heap was read
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, last).find("last_tls_ms"), std::string::npos);
+  CHECK(query("a", 0, NONE_KNOWN, 0, last).find("&last_heap_min=50000") != std::string::npos);
+  // A wake that had none after a wake that had one: the earlier figure is not told again.
+  set_connection(last, 900, 0);
+  set_connection(last, 0, 0);
+  CHECK_EQ(query("a", 0, NONE_KNOWN, 0, last).find("last_tls_ms"), std::string::npos);
+}
+
+TEST(a_figure_past_what_the_server_believes_is_held_at_its_limit) {
+  Last last = EMPTY;
+  set_connection(last, 5000000, 0xFFFFFFFFu);
+  CHECK_EQ(last.tls_ms, MAX_TLS_MS);
+  CHECK_EQ(last.heap_min_bytes, MAX_HEAP_BYTES);
 }
 
 TEST(a_signal_that_is_not_a_reading_is_left_out) {

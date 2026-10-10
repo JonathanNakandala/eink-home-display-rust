@@ -107,6 +107,10 @@ class Session {
   // The saved session was offered to the server on this connection.
   bool offered() const { return offered_; }
 
+  // How long the handshake took, in milliseconds (at least 1), once `open` has succeeded; 0 before. The connect and the
+  // wait for a reply are in it; so is the display's own work, which on the chip is most of it.
+  uint32_t handshake_ms() const { return handshake_ms_; }
+
   // The session as bytes, to keep: mbedTLS's own serialisation, which holds the ticket and the secrets that use it, so
   // it is as secret as the key. Empty if it cannot be had.
   static Bytes serialise(const mbedtls_ssl_session &session) {
@@ -183,11 +187,16 @@ class Session {
     }
     mbedtls_ssl_set_bio(&ssl_, this, &Session::send_bytes, &Session::receive_bytes, nullptr);
     int r;
+    const auto handshake_began = std::chrono::steady_clock::now();
     while ((r = mbedtls_ssl_handshake(&ssl_)) == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) {
     }
     error_ = r;
-    if (r == 0)
+    if (r == 0) {
+      const auto took =
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - handshake_began);
+      handshake_ms_ = took.count() < 1 ? 1 : static_cast<uint32_t>(took.count());
       return Open::OK;
+    }
     // A wait that ran out says nothing about certificates, though the verify result reads as bad until one is checked.
     if (network_failed())
       return Open::UNREACHABLE;
@@ -295,6 +304,7 @@ class Session {
   eink_session_cache::Store *sessions_ = nullptr;
   bool offer_ = true;
   bool offered_ = false;
+  uint32_t handshake_ms_ = 0;
   mbedtls_ssl_session offered_session_;
   bool have_offered_session_ = false;
 

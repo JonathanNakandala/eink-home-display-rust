@@ -32,7 +32,7 @@ use x509_parser::prelude::FromDer;
 
 pub use self::gate::{Access, guarded};
 use self::limits::Limits;
-pub use self::routes::{ClientIdentity, Connection};
+pub use self::routes::{ClientIdentity, Connection, HandshakeFacts};
 use self::tls::RenewingCertificate;
 use crate::adapters::certificate_authority::PrivateAuthority;
 use crate::adapters::listen::{self, Bound, Families};
@@ -299,19 +299,23 @@ async fn serve_connection(
     acceptor: TlsAcceptor,
     app: axum::Router,
     settings: &EstSettings,
-    handshakes: &Handshakes,
+    handshakes: &Arc<Handshakes>,
 ) -> anyhow::Result<()> {
+    let began = std::time::Instant::now();
     let tls = tokio::time::timeout(settings.handshake_timeout, acceptor.accept(stream))
         .await
         .context("The handshake took too long")?
         .context("The handshake failed")?;
+    let took = began.elapsed();
     let connection = {
         let (_, session) = tls.get_ref();
-        handshakes.record(matches!(
+        let resumed = matches!(
             session.handshake_kind(),
             Some(rustls::HandshakeKind::Resumed)
-        ));
+        );
+        handshakes.record(resumed);
         Connection {
+            handshake: routes::HandshakeFacts::new(resumed, took, Some(handshakes.clone())),
             peer: Some(peer),
             binding: session
                 .export_keying_material([0u8; BINDING_LEN], BINDING_LABEL, Some(&[]))

@@ -52,6 +52,42 @@ pub struct Connection {
     pub binding: Option<Vec<u8>>,
     /// The display the client certificate names, if the client showed one.
     pub client: Option<ClientIdentity>,
+    /// How the connection began and how long its handshake took, to be noted against the display once it is known to
+    /// be a member (see `note`).
+    pub handshake: HandshakeFacts,
+}
+
+/// How a connection began, and where to note it.
+#[derive(Debug, Clone)]
+pub struct HandshakeFacts {
+    pub resumed: bool,
+    pub took: std::time::Duration,
+    pub tally: Option<Arc<crate::application::handshakes::Handshakes>>,
+    /// Set when it has been noted, so a connection that carries several requests is one connection.
+    pub noted: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl HandshakeFacts {
+    pub fn new(
+        resumed: bool,
+        took: std::time::Duration,
+        tally: Option<Arc<crate::application::handshakes::Handshakes>>,
+    ) -> Self {
+        Self {
+            resumed,
+            took,
+            tally,
+            noted: Arc::default(),
+        }
+    }
+
+    /// Notes the connection against `device`, once.
+    pub fn note(&self, device: &DeviceId, at: chrono::DateTime<chrono::Utc>) {
+        let Some(tally) = &self.tally else { return };
+        if !self.noted.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tally.record_device(device, self.resumed, self.took, at);
+        }
+    }
 }
 
 struct Est {

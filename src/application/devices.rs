@@ -30,6 +30,10 @@ const MAX_DEVICES: usize = 16;
 /// A Li-ion cell is never outside this, so anything else is a misread.
 const MILLIVOLTS: std::ops::RangeInclusive<u32> = 2000..=5000;
 const PERCENT: std::ops::RangeInclusive<u32> = 0..=100;
+/// A TLS handshake the display timed: more than a millisecond, and well within the wake's own limit.
+const TLS_MILLISECONDS: std::ops::RangeInclusive<u32> = 1..=120_000;
+/// The lowest free heap a display saw during a wake. The chip has under a megabyte; anything past 16 MB is a misread.
+const HEAP_BYTES: std::ops::RangeInclusive<u32> = 1..=16_777_216;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -166,6 +170,14 @@ pub struct RawTelemetry {
     /// How long the wake before this one was awake, in seconds: what costs battery.
     #[param(value_type = Option<u32>, example = 24)]
     pub last_wake_s: Option<String>,
+    /// How long the display's first TLS handshake of the wake before this one took, in milliseconds, as the
+    /// display timed it (the server also times them, from its side: `connection` in `/status`).
+    #[param(value_type = Option<u32>, example = 1100)]
+    pub last_tls_ms: Option<String>,
+    /// The least free heap the display had during the wake before this one, in bytes: how close the handshake
+    /// came to running it out.
+    #[param(value_type = Option<u32>, example = 61440)]
+    pub last_heap_min: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +190,8 @@ pub struct Telemetry {
     pub wifi_rssi_dbm: Option<i16>,
     pub last_failure: Option<FailureReason>,
     pub last_wake_seconds: Option<u32>,
+    pub last_tls_milliseconds: Option<u32>,
+    pub last_heap_min_bytes: Option<u32>,
 }
 
 impl RawTelemetry {
@@ -200,6 +214,10 @@ impl RawTelemetry {
             last_failure: self.last_failure.as_deref().and_then(FailureReason::parse),
             last_wake_seconds: number(&self.last_wake_s)
                 .filter(|seconds| WAKE_SECONDS.contains(seconds)),
+            last_tls_milliseconds: number(&self.last_tls_ms)
+                .filter(|ms| TLS_MILLISECONDS.contains(ms)),
+            last_heap_min_bytes: number(&self.last_heap_min)
+                .filter(|bytes| HEAP_BYTES.contains(bytes)),
         }
     }
 }
@@ -226,8 +244,41 @@ pub struct DeviceStatus {
     pub last_failure: Option<FailureReason>,
     /// How long the wake before that one was awake, which is what costs battery.
     pub last_wake_seconds: Option<u32>,
+    /// How long its first TLS handshake of the wake before took, as the display timed it.
+    pub last_tls_milliseconds: Option<u32>,
+    /// The least free heap it had during that wake, in bytes.
+    pub last_heap_min_bytes: Option<u32>,
+    /// How its TLS connections have begun, as the server saw them: resumed or full, and how long the handshake
+    /// took. Empty for a display that has not connected over TLS since the server started.
+    pub connection: Option<ConnectionStatus>,
     /// The last image this display was sent, if it has fetched one since the server started.
     pub last_image: Option<DeliveryStatus>,
+}
+
+/// How a display's TLS connections have begun since the server started, from the server's side: it cannot be
+/// misreported by the display, and the time includes the display's own work and the network between.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ConnectionStatus {
+    pub full_handshakes: u64,
+    pub resumed_handshakes: u64,
+    /// Whether the latest connection resumed a session (which saves the certificate exchange and signatures).
+    pub last_resumed: bool,
+    /// From accepting the latest connection to the end of its handshake.
+    pub last_handshake_milliseconds: u32,
+    pub last_at: DateTime<Tz>,
+}
+
+impl ConnectionStatus {
+    pub fn of(handshakes: &crate::application::handshakes::DeviceHandshakes, zone: Tz) -> Self {
+        Self {
+            full_handshakes: handshakes.full,
+            resumed_handshakes: handshakes.resumed,
+            last_resumed: handshakes.last_resumed,
+            last_handshake_milliseconds: u32::try_from(handshakes.last_handshake.as_millis())
+                .unwrap_or(u32::MAX),
+            last_at: handshakes.last_at.with_timezone(&zone),
+        }
+    }
 }
 
 /// The last image a display was sent: which format, how big, and when.
@@ -392,6 +443,9 @@ impl DeviceBoard {
                 wifi_rssi_dbm: record.telemetry.wifi_rssi_dbm,
                 last_failure: record.telemetry.last_failure,
                 last_wake_seconds: record.telemetry.last_wake_seconds,
+                last_tls_milliseconds: record.telemetry.last_tls_milliseconds,
+                last_heap_min_bytes: record.telemetry.last_heap_min_bytes,
+                connection: None,
                 last_image: record.delivery.map(|delivery| DeliveryStatus {
                     format: delivery.format,
                     bytes: delivery.bytes,
@@ -450,6 +504,8 @@ mod tests {
             rssi: get("rssi"),
             last_failure: get("last_failure"),
             last_wake_s: get("last_wake_s"),
+            last_tls_ms: get("last_tls_ms"),
+            last_heap_min: get("last_heap_min"),
         }
     }
 
@@ -467,6 +523,8 @@ mod tests {
             wifi_rssi_dbm: Some(-60),
             last_failure: None,
             last_wake_seconds: Some(21),
+            last_tls_milliseconds: Some(1100),
+            last_heap_min_bytes: Some(61_440),
         }
     }
 
@@ -480,8 +538,12 @@ mod tests {
             ("rssi", "-67"),
             ("last_failure", "download"),
             ("last_wake_s", "24"),
+            ("last_tls_ms", "1100"),
+            ("last_heap_min", "61440"),
         ])
         .parse(id("reterminal-e1003"));
+        assert_eq!(parsed.last_tls_milliseconds, Some(1100));
+        assert_eq!(parsed.last_heap_min_bytes, Some(61_440));
         assert_eq!(parsed.wifi_rssi_dbm, Some(-67));
         assert_eq!(parsed.last_failure, Some(FailureReason::Download));
         assert_eq!(parsed.last_wake_seconds, Some(24));
@@ -502,8 +564,12 @@ mod tests {
             ("rssi", "0"),
             ("last_failure", "gremlins"),
             ("last_wake_s", "99999"),
+            ("last_tls_ms", "0"),
+            ("last_heap_min", "4294967295"),
         ])
         .parse(id("kitchen"));
+        assert_eq!(parsed.last_tls_milliseconds, None);
+        assert_eq!(parsed.last_heap_min_bytes, None);
         assert_eq!(
             (
                 parsed.wifi_rssi_dbm,

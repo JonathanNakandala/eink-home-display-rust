@@ -24,6 +24,9 @@ struct Context {
   bool ready = false;
   // How the last request through it got on, for the script to classify a failure with.
   eink_stream::Stream::Start last = eink_stream::Stream::Start::OK;
+  // How long the first TLS handshake of the wake took (0 until there has been one), which the next wake tells the
+  // server.
+  uint32_t first_handshake_ms = 0;
 };
 
 // The most a request through here may take, from connecting to the last byte. The plan is the longer, since the server
@@ -94,6 +97,8 @@ inline Fetched fetch(const std::string &method, const std::string &path, const e
   c.last = out.start;
   if (out.start != eink_stream::Stream::Start::OK)
     return out;
+  if (c.first_handshake_ms == 0)
+    c.first_handshake_ms = stream.handshake_ms();
   out.status = stream.status();
   out.retry_after = stream.header("retry-after");
   if (!stream.read_all(out.body, limit)) {

@@ -323,7 +323,15 @@ or `timeout`). A wake can't report its own failure, since it asks `/plan` before
 so a failure is reported by the next wake that gets through. A Wi-Fi or server failure therefore shows up
 once the display is talking to the server again, as "3 failed wakes in a row, the last because of wifi",
 while `/plan` working but the image failing (`download`, `memory`, `timeout`) points at the server or the
-display, not the radio. The server also knows when it told the display to come back, so it can tell one that is asleep from one that
+display, not the radio. Over HTTPS the server also records, for each display, how its connections began, **from its own side** (so the display
+cannot misstate it): how many resumed a TLS session and how many were full handshakes, whether the latest one resumed, and
+how long its handshake took, from accepting the connection to the end of it (`connection` in `/status`; `eink_device_tls_*`
+in `/metrics`). The time includes the display's own work and the network between, so a slow chip shows. The display adds
+what only it knows, in the same check-in: how long its first handshake took as it timed it (`last_tls_milliseconds`) and the
+least free heap it had during the wake (`last_heap_min_bytes`), which the first run on a device needs. A display that
+keeps beginning with a full handshake is not resuming: look at `eink_device_tls_last_resumed`.
+
+The server also knows when it told the display to come back, so it can tell one that is asleep from one that
 has gone quiet: a display is **overdue** once it is later than that by `server.device_overdue_grace_seconds`
 (15 minutes), which covers a slow Wi-Fi join but not a flat battery. An overnight sleep of seven hours is
 not overdue, because the server asked for it.

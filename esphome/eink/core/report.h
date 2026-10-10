@@ -59,10 +59,19 @@ struct Last {
   Failure failure;
   uint16_t wake_seconds;
   bool wake_known;
+  // The first TLS handshake of that wake, as the display timed it (0: there was none, or no TLS), and the least free
+  // heap it had during the wake (0: not measured). The server also times handshakes from its side; these are the
+  // display's.
+  uint32_t tls_ms;
+  uint32_t heap_min_bytes;
 };
 
-constexpr uint32_t MAGIC = 0xE1B70001;
-constexpr Last EMPTY = {MAGIC, Failure::NONE, 0, false};
+constexpr uint32_t MAGIC = 0xE1B70005;
+constexpr Last EMPTY = {MAGIC, Failure::NONE, 0, false, 0, 0};
+
+// The most the server believes of either: a handshake past this is not one, and a heap past 16 MB is a misread.
+constexpr uint32_t MAX_TLS_MS = 120000;
+constexpr uint32_t MAX_HEAP_BYTES = 16777216;
 
 // Memory that survives a software reset (an update over the air) may hold a layout from another firmware, so
 // it is checked before it is believed.
@@ -80,6 +89,13 @@ inline void set_wake(Last &last, uint32_t awake_ms) {
   last.wake_known = true;
 }
 
+// How long the wake's first TLS handshake took and the least free heap during it. Either 0 is "not known" and is not
+// told to the server; a figure past what the server believes is held at its limit.
+inline void set_connection(Last &last, uint32_t tls_ms, uint32_t heap_min_bytes) {
+  last.tls_ms = tls_ms > MAX_TLS_MS ? MAX_TLS_MS : tls_ms;
+  last.heap_min_bytes = heap_min_bytes > MAX_HEAP_BYTES ? MAX_HEAP_BYTES : heap_min_bytes;
+}
+
 struct Battery {
   bool known;  // false when it could not be read, so the server doesn't record a made-up value
   uint32_t millivolts;
@@ -88,7 +104,8 @@ struct Battery {
 };
 
 // The query-string tail: who this is, how it is doing, and how the last wake went. `rssi_dbm` is left out when
-// it is not a reading (0 or more); the last wake's figures are left out until there has been one.
+// it is not a reading (0 or more); the last wake's figures are left out until there has been one, and the handshake
+// time and heap when they were not measured.
 inline std::string query(const std::string &device, unsigned failed_wakes, const Battery &battery, int rssi_dbm,
                          const Last &last) {
   std::string out = "&device=" + device + "&failed_wakes=" + std::to_string(failed_wakes);
@@ -102,6 +119,10 @@ inline std::string query(const std::string &device, unsigned failed_wakes, const
     out += std::string("&last_failure=") + reason;
   if (last.wake_known)
     out += "&last_wake_s=" + std::to_string(last.wake_seconds);
+  if (last.tls_ms != 0)
+    out += "&last_tls_ms=" + std::to_string(last.tls_ms);
+  if (last.heap_min_bytes != 0)
+    out += "&last_heap_min=" + std::to_string(last.heap_min_bytes);
   return out;
 }
 

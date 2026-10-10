@@ -143,7 +143,7 @@ script:
           condition:
             lambda: 'return !id(maintenance);'
           then:
-            - lambda: 'eink_telemetry::record_wake(millis());'
+            - lambda: 'eink_telemetry::record_wake(millis(), eink_secure::context().first_handshake_ms);'
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: ${battery_halt_sleep_ms}ms

@@ -1636,6 +1636,49 @@ async fn a_display_that_comes_back_resumes_its_session_and_is_still_known_by_its
 }
 
 #[tokio::test]
+async fn each_display_is_counted_by_how_its_own_connections_began_and_how_long_the_handshake_took()
+{
+    let harness = start_guarded(Access::Members).await;
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    let hall = join(&harness, "hall", new_key()).await;
+    let config = resuming_client(&harness, Some(&kitchen));
+    let hall_config = resuming_client(&harness, Some(&hall));
+    assert!(
+        harness.handshakes.device(&device("kitchen")).is_none(),
+        "nothing until a connection that shows a certificate and is let in"
+    );
+
+    get_resuming(&harness, &config, "/who").await;
+    get_resuming(&harness, &config, "/who").await;
+    get_resuming(&harness, &config, "/who").await;
+    get_resuming(&harness, &hall_config, "/who").await;
+
+    let kitchen_seen = harness.handshakes.device(&device("kitchen")).unwrap();
+    assert_eq!((kitchen_seen.full, kitchen_seen.resumed), (1, 2));
+    assert!(kitchen_seen.last_resumed);
+    assert!(
+        kitchen_seen.last_handshake > std::time::Duration::ZERO
+            && kitchen_seen.last_handshake < std::time::Duration::from_secs(5),
+        "{:?}",
+        kitchen_seen.last_handshake
+    );
+    // The other display is counted on its own: it has had one connection, a full one.
+    let hall_seen = harness.handshakes.device(&device("hall")).unwrap();
+    assert_eq!((hall_seen.full, hall_seen.resumed), (1, 0));
+    assert!(!hall_seen.last_resumed);
+}
+
+#[tokio::test]
+async fn a_display_that_is_turned_away_is_not_counted_as_one_of_the_displays_connections() {
+    let harness = start_guarded(Access::Members).await;
+    let kitchen = join(&harness, "kitchen", new_key()).await;
+    let config = resuming_client(&harness, Some(&kitchen));
+    harness.enrollment.revoke(&device("kitchen")).await.unwrap();
+    get_resuming(&harness, &config, "/who").await;
+    assert!(harness.handshakes.device(&device("kitchen")).is_none());
+}
+
+#[tokio::test]
 async fn a_resumed_session_does_not_outlive_the_displays_membership() {
     let harness = start_guarded(Access::Members).await;
     let kitchen = join(&harness, "kitchen", new_key()).await;

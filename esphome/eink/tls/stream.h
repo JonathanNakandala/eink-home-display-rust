@@ -141,6 +141,9 @@ class Stream {
                : Start::OK;
   }
 
+  // How long the TLS handshake of this connection took, in milliseconds; 0 if there is none.
+  uint32_t handshake_ms() const { return session_ ? session_->handshake_ms() : 0; }
+
   int status() const { return response_.status(); }
   // The body's length when the server gave one (the image does), else 0.
   size_t content_length() const { return response_.has_length() ? response_.content_length() : 0; }

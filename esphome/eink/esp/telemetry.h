@@ -12,13 +12,15 @@
 #include <string>
 
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esphome/components/wifi/wifi_component.h"
 
 #include "eink/core/report.h"
 
 namespace eink_telemetry {
 
-static RTC_DATA_ATTR eink_report::Last last = eink_report::EMPTY;
+// Inline, so that it is one object whatever includes this header (see esp/secure_chip.h).
+inline RTC_DATA_ATTR eink_report::Last last = eink_report::EMPTY;
 
 inline eink_report::Last &get() {
   if (!eink_report::valid(last))
@@ -30,8 +32,15 @@ inline void set_failure(eink_report::Failure reason) { eink_report::set_failure(
 
 inline void clear_failure() { get().failure = eink_report::Failure::NONE; }
 
-// Called just before sleeping, with the time since boot, which is how long this wake was awake.
-inline void record_wake(uint32_t awake_ms) { eink_report::set_wake(get(), awake_ms); }
+// Called just before sleeping, with the time since boot, which is how long this wake was awake, and how long the wake's
+// first TLS handshake took (0 if there was none). The least free heap of the wake is read here: the lowest it has been
+// since boot, and a wake starts at boot, so the handshake is in it. Internal memory only, which is what mbedTLS runs
+// out of; the picture's buffer is in PSRAM.
+inline void record_wake(uint32_t awake_ms, uint32_t tls_ms = 0) {
+  eink_report::set_wake(get(), awake_ms);
+  eink_report::set_connection(
+      get(), tls_ms, static_cast<uint32_t>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+}
 
 // Wi-Fi signal in dBm, or 0 when there is no reading (the server ignores 0).
 inline int rssi() {

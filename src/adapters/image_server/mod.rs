@@ -462,6 +462,9 @@ mod api_description {
                     wifi_rssi_dbm: Some(-71),
                     last_failure: Some(FailureReason::Download),
                     last_wake_seconds: Some(24),
+                    last_tls_milliseconds: Some(1100),
+                    last_heap_min_bytes: Some(61_440),
+                    connection: None,
                     last_image: Some(DeliveryStatus {
                         format,
                         bytes: 2_592_054,

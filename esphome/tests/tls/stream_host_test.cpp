@@ -301,3 +301,29 @@ TEST(a_picture_the_server_says_the_display_has_is_a_304_with_no_body) {
   CHECK(third.start(peer, "GET", "/etagged", {{"If-None-Match", "\"v0\""}}) == Stream::Start::OK);
   CHECK_EQ(third.status(), 200);
 }
+
+TEST(a_connection_says_how_long_its_handshake_took_and_the_wake_keeps_the_first) {
+  Display d("host-stream-handshake");
+  join_as(d);
+  eink_stream::Peer peer = peer_of(d);
+
+  Stream stream;
+  CHECK_EQ(stream.handshake_ms(), 0u);  // nothing yet
+  CHECK(stream.start(peer, "GET", "/who") == Stream::Start::OK);
+  CHECK(stream.handshake_ms() >= 1 && stream.handshake_ms() < 10000);
+  stream.close();
+  CHECK_EQ(stream.handshake_ms(), 0u);
+
+  // Through the wake's own entry: the first connection's time is kept, and the next does not replace it.
+  const eink_stream::Peer root = peer_of(d);
+  eink_secure::use(root.ip, root.port, root.root, root.certificate, root.key);
+  CHECK_EQ(eink_secure::context().first_handshake_ms, 0u);
+  CHECK(eink_secure::fetch("GET", "/who").ok());
+  const uint32_t first = eink_secure::context().first_handshake_ms;
+  CHECK(first >= 1 && first < 10000);
+  eink_secure::context().first_handshake_ms = first + 12345;  // so a replacement would show
+  CHECK(eink_secure::fetch("GET", "/who").ok());
+  CHECK_EQ(eink_secure::context().first_handshake_ms, first + 12345);
+  eink_secure::forget();
+  CHECK_EQ(eink_secure::context().first_handshake_ms, 0u);
+}

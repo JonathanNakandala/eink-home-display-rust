@@ -91,6 +91,8 @@ class Http final : public esphome::http_request::HttpRequestComponent {
     App.feed_wdt();
     if (c.last != eink_stream::Stream::Start::OK)
       return nullptr;
+    if (c.first_handshake_ms == 0)
+      c.first_handshake_ms = container->stream.handshake_ms();
 
     container->status_code = container->stream.status();
     eink_state::downloaded_etag = container->stream.header("etag");
