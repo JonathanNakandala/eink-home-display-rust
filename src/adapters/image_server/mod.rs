@@ -5,6 +5,7 @@ mod advertise;
 mod health;
 mod identity;
 mod image;
+mod layouts;
 mod metrics;
 mod negotiate;
 mod plan;
@@ -32,6 +33,7 @@ use crate::application::plan::PlanTiming;
 use crate::application::refresh::RefreshControl;
 use crate::application::status::StatusBoard;
 use crate::domain::models::display::ImageFormat;
+use crate::domain::models::layout::Layouts;
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::published_images::PublishedImages;
@@ -39,6 +41,7 @@ use crate::domain::services::published_images::PublishedImages;
 pub(super) struct Published {
     pub(super) images: Arc<dyn PublishedImages>,
     pub(super) format: ImageFormat,
+    pub(super) layouts: Layouts,
     pub(super) schedule: Schedule,
     pub(super) timing: PlanTiming,
     pub(super) handles: Handles,
@@ -61,6 +64,8 @@ pub struct ServerSettings {
 /// What the render loop shares with the server.
 #[derive(Clone)]
 pub struct Handles {
+    /// The layouts drawn on each render, the default first.
+    pub layouts: Layouts,
     /// Lets a display's button trigger a render.
     pub refresh: Arc<RefreshControl>,
     /// The render history, for `/status` and `/healthz`.
@@ -98,6 +103,7 @@ fn routes() -> OpenApiRouter<Arc<Published>> {
     description.info.license = None;
     OpenApiRouter::with_openapi(description)
         .routes(routes!(image::image))
+        .routes(routes!(layouts::layouts))
         .routes(routes!(plan::plan))
         .routes(routes!(plan::refresh_now))
         .routes(routes!(health::healthz))
@@ -196,6 +202,7 @@ pub fn router(
     crate::adapters::response_headers::hardened(router).with_state(Arc::new(Published {
         images,
         format,
+        layouts: handles.layouts.clone(),
         schedule,
         timing,
         handles,
@@ -623,6 +630,7 @@ mod api_description {
         let expected = [
             ("/healthz", "get"),
             ("/image", "get"),
+            ("/layouts", "get"),
             ("/metrics", "get"),
             ("/plan", "get"),
             ("/refresh", "post"),
@@ -781,17 +789,19 @@ mod api_description {
             );
         }
         // /refresh takes the same readings and says the same of them.
-        for parameter in api["paths"]["/refresh"]["post"]["parameters"]
-            .as_array()
-            .unwrap()
-        {
-            if parameter["name"] == "battery_mv" {
-                assert_eq!(
-                    parameter["description"],
-                    api["paths"]["/plan"]["get"]["parameters"][2]["description"]
-                );
-            }
-        }
+        let described = |path: &str, method: &str, name: &str| {
+            api["paths"][path][method]["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|parameter| parameter["name"] == name)
+                .unwrap_or_else(|| panic!("{path} has no {name}"))["description"]
+                .clone()
+        };
+        assert_eq!(
+            described("/refresh", "post", "battery_mv"),
+            described("/plan", "get", "battery_mv")
+        );
     }
 
     #[tokio::test]

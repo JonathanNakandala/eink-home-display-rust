@@ -15,6 +15,7 @@ use url::Url;
 use crate::domain::models::GlanceData;
 use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::image::ImageData;
+use crate::domain::models::layout::{DEFAULT_LAYOUT, Layout, LayoutName, Layouts};
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -23,7 +24,46 @@ const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 /// something longer than the gap between renders, or every render relaunches.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-const DASHBOARD_TEMPLATE: &str = include_str!("../../../../templates/dashboard.html");
+/// The layouts there are, the default first: what each is called, what it shows, and its template.
+const LAYOUTS: &[(&str, &str, &str)] = &[
+    (
+        DEFAULT_LAYOUT,
+        "Departures with the weather beside them",
+        include_str!("../../../../templates/dashboard.html"),
+    ),
+    (
+        "departures",
+        "Departures alone, in larger type",
+        include_str!("../../../../templates/departures.html"),
+    ),
+];
+
+/// Pieces the layouts have in common, available to a template as partials of these names.
+const PARTS: &[(&str, &str)] = &[
+    (
+        "style",
+        include_str!("../../../../templates/shared/style.html"),
+    ),
+    (
+        "header",
+        include_str!("../../../../templates/shared/header.html"),
+    ),
+    (
+        "departures",
+        include_str!("../../../../templates/shared/departures.html"),
+    ),
+];
+
+/// The layouts this renderer can draw.
+pub fn layouts() -> Layouts {
+    Layouts::new(
+        LAYOUTS
+            .iter()
+            .map(|(name, description, _)| Layout::new(name, description))
+            .collect(),
+    )
+    .expect("the layouts built in are valid")
+}
 
 /// Files the template references by relative path. They are compiled in and
 /// written next to the rendered HTML, so the binary needs nothing deployed
@@ -209,17 +249,28 @@ impl ChromeRenderDisplayImageGenerator {
         }
     }
 
-    /// The dashboard as HTML. Fonts are referenced by relative path, so it
+    /// The page for `layout` as HTML. Fonts are referenced by relative path, so it
     /// renders correctly from a directory holding [`ASSETS`].
-    pub fn render_html(&self, glance_data: &GlanceData) -> anyhow::Result<String> {
+    pub fn render_html(
+        &self,
+        layout: &LayoutName,
+        glance_data: &GlanceData,
+    ) -> anyhow::Result<String> {
+        let (_, _, template) = LAYOUTS
+            .iter()
+            .find(|(name, _, _)| *name == layout.as_str())
+            .with_context(|| format!("There is no layout called {layout}"))?;
         let mut handlebars = Handlebars::new();
+        for (name, part) in PARTS {
+            handlebars.register_partial(name, part)?;
+        }
         for (name, svg) in ICONS {
             // Drop the XML prolog and comments: they are invalid inside HTML.
             let svg = &svg[svg.find("<svg").unwrap_or(0)..];
             handlebars.register_partial(name, svg)?;
         }
-        handlebars.register_template_string("dashboard", DASHBOARD_TEMPLATE)?;
-        Ok(handlebars.render("dashboard", glance_data)?)
+        handlebars.register_template_string("page", template)?;
+        Ok(handlebars.render("page", glance_data)?)
     }
 
     /// Writes the HTML and its assets to `dir`, returning the HTML file's path.
@@ -374,8 +425,9 @@ impl DisplayImageGenerator for ChromeRenderDisplayImageGenerator {
         &self,
         data: GlanceData,
         profile: &DisplayProfile,
+        layout: &LayoutName,
     ) -> anyhow::Result<ImageData> {
-        let html = self.render_html(&data)?;
+        let html = self.render_html(layout, &data)?;
         // Keep the directory alive until the screenshot has been taken.
         let dir = tempfile::tempdir().context("Failed to create render directory")?;
         let page = self.write_page(dir.path(), &html)?;
@@ -408,7 +460,9 @@ mod tests {
             DEFAULT_IDLE_TIMEOUT,
             ChromeSource::PreferSystem,
         );
-        generator.render_html(data).unwrap()
+        generator
+            .render_html(&LayoutName::parse(DEFAULT_LAYOUT).unwrap(), data)
+            .unwrap()
     }
 
     #[test]
@@ -452,6 +506,63 @@ mod tests {
         ));
         assert!(!off.contains("Weather unavailable"));
         assert!(!off.contains("container has-weather"));
+    }
+
+    fn page_of(layout: &str, data: &GlanceData) -> String {
+        ChromeRenderDisplayImageGenerator::new(
+            PathBuf::from("unused"),
+            DEFAULT_IDLE_TIMEOUT,
+            ChromeSource::PreferSystem,
+        )
+        .render_html(&LayoutName::parse(layout).unwrap(), data)
+        .unwrap()
+    }
+
+    #[test]
+    fn the_dashboard_is_the_default_layout_and_every_layout_renders_its_own_page() {
+        let layouts = layouts();
+        assert_eq!(layouts.default_layout().name.as_str(), DEFAULT_LAYOUT);
+        let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
+
+        for layout in layouts.all() {
+            let html = page_of(layout.name.as_str(), &data);
+            // Every partial a page names was found and filled in, and the data reached the page.
+            assert!(!html.contains("{{"), "{}", layout.name);
+            assert!(html.contains("<style>"), "{}", layout.name);
+            assert!(html.contains("class=\"header\""), "{}", layout.name);
+            assert!(html.contains("class=\"departures\""), "{}", layout.name);
+        }
+    }
+
+    #[test]
+    fn the_departures_layout_leaves_the_weather_out() {
+        let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
+
+        let dashboard = page_of(DEFAULT_LAYOUT, &data);
+        let departures = page_of("departures", &data);
+
+        assert!(dashboard.contains("class=\"weather\""));
+        assert!(dashboard.contains("container has-weather"));
+        assert!(!departures.contains("class=\"weather\""));
+        assert!(!departures.contains("has-weather\">"));
+        // The same boards, though.
+        assert!(departures.contains("class=\"board\""));
+    }
+
+    #[test]
+    fn a_layout_that_does_not_exist_is_an_error() {
+        let generator = ChromeRenderDisplayImageGenerator::new(
+            PathBuf::from("unused"),
+            DEFAULT_IDLE_TIMEOUT,
+            ChromeSource::PreferSystem,
+        );
+        let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
+
+        let error = generator
+            .render_html(&LayoutName::parse("nonesuch").unwrap(), &data)
+            .unwrap_err();
+
+        assert!(format!("{error}").contains("nonesuch"), "{error}");
     }
 
     #[test]
@@ -565,12 +676,16 @@ mod tests {
             DEFAULT_IDLE_TIMEOUT,
             ChromeSource::PreferSystem,
         )
-        .generate(data, &profile)
+        .generate(data, &profile, &dashboard())
         .await
         .unwrap();
 
         let decoded = image::load_from_memory(&image.data).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (800, 480));
+    }
+
+    fn dashboard() -> LayoutName {
+        LayoutName::parse(DEFAULT_LAYOUT).unwrap()
     }
 
     fn sample_data() -> GlanceData {
@@ -603,9 +718,15 @@ mod tests {
             ChromeSource::PreferSystem,
         );
 
-        generator.generate(sample_data(), &profile).await.unwrap();
+        generator
+            .generate(sample_data(), &profile, &dashboard())
+            .await
+            .unwrap();
         let first = kept_pid(&generator).expect("Chrome is kept after a render");
-        generator.generate(sample_data(), &profile).await.unwrap();
+        generator
+            .generate(sample_data(), &profile, &dashboard())
+            .await
+            .unwrap();
         assert_eq!(kept_pid(&generator), Some(first), "second render reused it");
 
         assert!(
@@ -617,7 +738,10 @@ mod tests {
                 .success()
         );
         std::thread::sleep(Duration::from_millis(500));
-        generator.generate(sample_data(), &profile).await.unwrap();
+        generator
+            .generate(sample_data(), &profile, &dashboard())
+            .await
+            .unwrap();
         let relaunched = kept_pid(&generator).expect("Chrome is kept after relaunch");
         assert_ne!(relaunched, first, "a dead Chrome was replaced");
     }
@@ -639,13 +763,19 @@ mod tests {
         );
 
         let started = std::time::Instant::now();
-        let image = generator.generate(sample_data(), &profile).await.unwrap();
+        let image = generator
+            .generate(sample_data(), &profile, &dashboard())
+            .await
+            .unwrap();
         let decoded = image::load_from_memory(&image.data).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (800, 480));
         let first = kept_pid(&generator).expect("Chrome is kept after a render");
 
         let second_started = std::time::Instant::now();
-        generator.generate(sample_data(), &profile).await.unwrap();
+        generator
+            .generate(sample_data(), &profile, &dashboard())
+            .await
+            .unwrap();
         assert_eq!(kept_pid(&generator), Some(first), "second render reused it");
         assert!(
             second_started.elapsed() < Duration::from_secs(15),

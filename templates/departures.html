@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Departures</title>
+    {{> style}}
+    <style>
+        /* With no weather column the boards have the whole width, so they are set side by side in two columns, which
+           lets the type be larger. Each board keeps its own columns, since boards beside each other can't share them. */
+        .departures {
+            grid-template-columns: 1fr 1fr;
+            column-gap: 4vw;
+            row-gap: 0;
+            justify-content: stretch;
+            /* Boards go in two columns, so the tallest holds a little over half the lines (boards are rarely the
+               same length, and a column can end up with more than its share). */
+            font-size: min(3.6vw, calc(68vh / ((var(--lines) * 0.6 + 1) * 1.35)));
+            align-items: start;
+        }
+
+        .departures .board {
+            grid-column: auto;
+            grid-template-columns:
+                minmax(2.6em, max-content)
+                minmax(2.6em, max-content)
+                minmax(0, 1fr)
+                minmax(2.8em, max-content);
+            align-content: start;
+        }
+
+        /* Every board's heading sits the same distance from the top, not just the first. */
+        .departures .board h2,
+        .departures .board:first-child h2 {
+            padding-top: 0.5em;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    {{> header}}
+
+    {{> departures}}
+</div>
+</body>
+</html>

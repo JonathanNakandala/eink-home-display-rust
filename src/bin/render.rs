@@ -17,12 +17,13 @@ use home_display_server::config::cache::{CacheConfig, CachePaths};
 use home_display_server::domain::models::GlanceData;
 use home_display_server::domain::models::display::{DisplayProfile, Dither, Palette};
 use home_display_server::domain::models::image::ImageData;
+use home_display_server::domain::models::layout::{DEFAULT_LAYOUT, LayoutName};
 use home_display_server::domain::models::location::Location;
 use home_display_server::domain::services::display_image_generator::DisplayImageGenerator;
 use home_display_server::domain::services::image_display_service::ImageDisplayService;
 use home_display_server::domain::services::image_repository::ImageRepository;
 
-/// Renders the dashboard to PNG files without touching any display, one set per display type.
+/// Renders every layout to PNG files without touching any display, one set per display type.
 #[tokio::main]
 async fn main() -> Result<()> {
     bootstrap::init_logging("info");
@@ -96,23 +97,33 @@ async fn main() -> Result<()> {
             profile.palette
         );
 
-        if args.html {
-            let dir = args.output_dir.join(format!("page_{name}"));
-            std::fs::create_dir_all(&dir)?;
-            generator.write_page(&dir, &generator.render_html(&data)?)?;
-        }
+        // Each layout, the default first; the default keeps the plain file names.
+        for layout in bootstrap::layouts().all() {
+            let name = if layout.name.as_str() == DEFAULT_LAYOUT {
+                name.to_owned()
+            } else {
+                format!("{name}_{}", layout.name)
+            };
+            if args.html {
+                let dir = args.output_dir.join(format!("page_{name}"));
+                std::fs::create_dir_all(&dir)?;
+                generator.write_page(&dir, &generator.render_html(&layout.name, &data)?)?;
+            }
 
-        let image = generator.generate(data.clone(), &profile).await?;
-        let render_path = args.output_dir.join(format!("page_render_{name}.png"));
-        let output_path = args.output_dir.join(format!("output_{name}.png"));
-        std::fs::write(&render_path, &image.data)
-            .with_context(|| format!("Failed to write {}", render_path.display()))?;
-        preview_on_panel(&image, &profile, dither)?.save(&output_path)?;
-        log::info!(
-            "Wrote {} and {} (dither: {dither:?})",
-            render_path.display(),
-            output_path.display()
-        );
+            let image = generator
+                .generate(data.clone(), &profile, &layout.name)
+                .await?;
+            let render_path = args.output_dir.join(format!("page_render_{name}.png"));
+            let output_path = args.output_dir.join(format!("output_{name}.png"));
+            std::fs::write(&render_path, &image.data)
+                .with_context(|| format!("Failed to write {}", render_path.display()))?;
+            preview_on_panel(&image, &profile, dither)?.save(&output_path)?;
+            log::info!(
+                "Wrote {} and {} (dither: {dither:?})",
+                render_path.display(),
+                output_path.display()
+            );
+        }
     }
     Ok(())
 }
@@ -166,7 +177,12 @@ fn preview_on_panel(
 struct Capture(std::sync::mpsc::Sender<GlanceData>);
 
 impl DisplayImageGenerator for Capture {
-    async fn generate(&self, data: GlanceData, _: &DisplayProfile) -> Result<ImageData> {
+    async fn generate(
+        &self,
+        data: GlanceData,
+        _: &DisplayProfile,
+        _: &LayoutName,
+    ) -> Result<ImageData> {
         self.0.send(data)?;
         Ok(ImageData::new(vec![]))
     }
@@ -176,7 +192,7 @@ struct NoStore;
 
 #[async_trait::async_trait]
 impl ImageRepository for NoStore {
-    async fn store(&self, _: &ImageData) -> Result<()> {
+    async fn store(&self, _: &LayoutName, _: &ImageData) -> Result<()> {
         Ok(())
     }
 }
@@ -193,7 +209,7 @@ impl ImageDisplayService for NoDisplay {
         }
     }
 
-    async fn display(&self, _: &ImageData) -> Result<()> {
+    async fn display(&self, _: &LayoutName, _: &ImageData) -> Result<()> {
         Ok(())
     }
 }

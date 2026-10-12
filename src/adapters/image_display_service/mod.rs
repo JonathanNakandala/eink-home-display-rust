@@ -8,6 +8,7 @@ use crate::adapters::image_display_service::eink_waveshare::EinkWaveshareAdapter
 use crate::adapters::image_display_service::reterminal_e1003::ReTerminalE1003Adapter;
 use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::image::ImageData;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::services::image_display_service::ImageDisplayService;
 
 pub enum DisplayImpl {
@@ -24,10 +25,17 @@ impl ImageDisplayService for DisplayImpl {
         }
     }
 
-    async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
+    fn wants_every_layout(&self) -> bool {
         match self {
-            DisplayImpl::WaveshareEpd7in5V2(display) => display.display(data).await,
-            DisplayImpl::ReTerminalE1003(display) => display.display(data).await,
+            DisplayImpl::WaveshareEpd7in5V2(display) => display.wants_every_layout(),
+            DisplayImpl::ReTerminalE1003(display) => display.wants_every_layout(),
+        }
+    }
+
+    async fn display(&self, layout: &LayoutName, data: &ImageData) -> anyhow::Result<()> {
+        match self {
+            DisplayImpl::WaveshareEpd7in5V2(display) => display.display(layout, data).await,
+            DisplayImpl::ReTerminalE1003(display) => display.display(layout, data).await,
         }
     }
 }

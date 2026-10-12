@@ -21,7 +21,9 @@ use futures_util::FutureExt;
 use std::future::Future;
 
 use crate::domain::models::departures::Departures;
+use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::freshness::{Fetched, LastGood};
+use crate::domain::models::layout::{Layout, Layouts};
 use crate::domain::models::location::Location;
 use crate::domain::models::render_report::{RenderReport, SourceReport, SourceState};
 use crate::domain::models::source_error::SourceError;
@@ -182,6 +184,9 @@ where
     departure_boards: Vec<DepartureBoard<DS>>,
     policy: RenderPolicy,
     clock: Arc<dyn Clock>,
+    /// The layouts to draw; see `with_layouts`.
+    #[new(default)]
+    layouts: Layouts,
     #[new(default)]
     last_weather: LastGood<Option<WeatherInformation>>,
     /// Told how each run goes; see `with_observer`.
@@ -202,6 +207,12 @@ where
     /// will go on to read.
     pub fn with_observer(mut self, observer: Arc<dyn RenderObserver>) -> Self {
         self.observers.push(observer);
+        self
+    }
+
+    /// Has `layouts` drawn on each run (the first is the default) in place of the dashboard alone.
+    pub fn with_layouts(mut self, layouts: Layouts) -> Self {
+        self.layouts = layouts;
         self
     }
 
@@ -290,13 +301,51 @@ where
             }),
         );
         let profile = self.image_viewing_service.profile();
+        // A panel that is driven directly shows one picture, so the others would be drawn for nothing.
+        let layouts = if self.image_viewing_service.wants_every_layout() {
+            self.layouts.all()
+        } else {
+            std::slice::from_ref(self.layouts.default_layout())
+        };
+        for (position, layout) in layouts.iter().enumerate() {
+            match self.show(layout, &glance_data, &profile).await {
+                Ok(()) => {}
+                // Without the default there is no picture worth the name, and whatever went wrong would
+                // likely go wrong again for the rest.
+                Err(error) if position == 0 => return Err(error),
+                // One layout failing must not take the others with it. It is reported as a source that is
+                // down, so it shows as degraded, and the layout's last image stays in place.
+                Err(error) => {
+                    log::warn!("Failed to draw the {} layout: {error:#}", layout.name);
+                    sources.push(SourceReport {
+                        name: format!("layout {}", layout.name),
+                        state: SourceState::Unavailable {
+                            reason: "could not be drawn".to_owned(),
+                        },
+                    });
+                }
+            }
+        }
+        Ok(RenderReport { sources })
+    }
+
+    /// Draws one layout, keeps its picture and hands it to the display.
+    async fn show(
+        &self,
+        layout: &Layout,
+        glance_data: &GlanceData,
+        profile: &DisplayProfile,
+    ) -> anyhow::Result<()> {
         let image_data = self
             .display_image_generator
-            .generate(glance_data, &profile)
+            .generate(glance_data.clone(), profile, &layout.name)
             .await?;
-        self.image_repository.store(&image_data).await?;
-        self.image_viewing_service.display(&image_data).await?;
-        Ok(RenderReport { sources })
+        self.image_repository
+            .store(&layout.name, &image_data)
+            .await?;
+        self.image_viewing_service
+            .display(&layout.name, &image_data)
+            .await
     }
 }
 
@@ -311,8 +360,9 @@ mod tests {
     use super::*;
     use crate::adapters::clock::SystemClock;
     use crate::domain::models::departures::{DepartureService, DepartureStatus};
-    use crate::domain::models::display::{DisplayProfile, Palette};
+    use crate::domain::models::display::Palette;
     use crate::domain::models::image::ImageData;
+    use crate::domain::models::layout::LayoutName;
     use crate::domain::models::weather::WeatherCondition;
 
     type Flag = Arc<AtomicBool>;
@@ -376,6 +426,7 @@ mod tests {
             &self,
             data: GlanceData,
             _: &DisplayProfile,
+            _: &LayoutName,
         ) -> anyhow::Result<ImageData> {
             if self.1.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
@@ -395,7 +446,7 @@ mod tests {
                 palette: Palette::Mono,
             }
         }
-        async fn display(&self, _: &ImageData) -> anyhow::Result<()> {
+        async fn display(&self, _: &LayoutName, _: &ImageData) -> anyhow::Result<()> {
             Ok(())
         }
     }
@@ -403,7 +454,7 @@ mod tests {
     struct Store;
     #[async_trait]
     impl ImageRepository for Store {
-        async fn store(&self, _: &ImageData) -> anyhow::Result<()> {
+        async fn store(&self, _: &LayoutName, _: &ImageData) -> anyhow::Result<()> {
             Ok(())
         }
     }
@@ -712,7 +763,12 @@ mod tests {
     /// A renderer that panics while the flag is set, and otherwise answers.
     struct Unreliable(Flag);
     impl DisplayImageGenerator for Unreliable {
-        async fn generate(&self, _: GlanceData, _: &DisplayProfile) -> anyhow::Result<ImageData> {
+        async fn generate(
+            &self,
+            _: GlanceData,
+            _: &DisplayProfile,
+            _: &LayoutName,
+        ) -> anyhow::Result<ImageData> {
             if self.0.load(Ordering::SeqCst) {
                 panic!("Chrome sent something unreadable");
             }
@@ -760,5 +816,149 @@ mod tests {
             *events.0.lock().unwrap(),
             ["started", "failed", "started", "succeeded"]
         );
+    }
+
+    /// Notes each layout it is asked for, in each of the three places, and fails on request.
+    #[derive(Default)]
+    struct Journal {
+        generated: Mutex<Vec<String>>,
+        stored: Mutex<Vec<String>>,
+        shown: Mutex<Vec<String>>,
+        failing: Mutex<Option<String>>,
+        every_layout: bool,
+    }
+    struct Recording(Arc<Journal>);
+    impl DisplayImageGenerator for Recording {
+        async fn generate(
+            &self,
+            _: GlanceData,
+            _: &DisplayProfile,
+            layout: &LayoutName,
+        ) -> anyhow::Result<ImageData> {
+            if self.0.failing.lock().unwrap().as_deref() == Some(layout.as_str()) {
+                anyhow::bail!("Chrome fell over");
+            }
+            self.0.generated.lock().unwrap().push(layout.to_string());
+            Ok(ImageData::new(vec![]))
+        }
+    }
+    #[async_trait]
+    impl ImageRepository for Recording {
+        async fn store(&self, layout: &LayoutName, _: &ImageData) -> anyhow::Result<()> {
+            self.0.stored.lock().unwrap().push(layout.to_string());
+            Ok(())
+        }
+    }
+    #[async_trait]
+    impl ImageDisplayService for Recording {
+        fn profile(&self) -> DisplayProfile {
+            Panel.profile()
+        }
+        fn wants_every_layout(&self) -> bool {
+            self.0.every_layout
+        }
+        async fn display(&self, layout: &LayoutName, _: &ImageData) -> anyhow::Result<()> {
+            self.0.shown.lock().unwrap().push(layout.to_string());
+            Ok(())
+        }
+    }
+
+    fn two_layouts() -> Layouts {
+        Layouts::new(vec![
+            Layout::new("first", "The default"),
+            Layout::new("second", "Another"),
+        ])
+        .unwrap()
+    }
+
+    fn recording_app(
+        journal: &Arc<Journal>,
+    ) -> Application<Weather, Recording, Recording, Recording, Trains> {
+        Application::new(
+            Weather(Flag::default()),
+            Recording(journal.clone()),
+            Recording(journal.clone()),
+            Recording(journal.clone()),
+            vec![DepartureBoard::new(
+                "NORTHBOUND".into(),
+                4,
+                Trains(Flag::default(), Flag::default()),
+            )],
+            RenderPolicy::default(),
+            Arc::new(SystemClock::new(London)),
+        )
+        .with_layouts(two_layouts())
+    }
+
+    #[tokio::test]
+    async fn every_layout_is_drawn_stored_and_shown_when_displays_fetch_them() {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+
+        let report = recording_app(&journal)
+            .run(Location::new(0.0, 0.0))
+            .await
+            .unwrap();
+
+        for seen in [&journal.generated, &journal.stored, &journal.shown] {
+            assert_eq!(*seen.lock().unwrap(), ["first", "second"]);
+        }
+        assert!(!report.is_degraded());
+    }
+
+    #[tokio::test]
+    async fn a_panel_driven_directly_is_given_only_the_default_layout() {
+        let journal = Arc::new(Journal::default());
+
+        recording_app(&journal)
+            .run(Location::new(0.0, 0.0))
+            .await
+            .unwrap();
+
+        for seen in [&journal.generated, &journal.stored, &journal.shown] {
+            assert_eq!(*seen.lock().unwrap(), ["first"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_layout_that_fails_is_reported_and_the_others_still_appear() {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        *journal.failing.lock().unwrap() = Some("second".to_owned());
+
+        let report = recording_app(&journal)
+            .run(Location::new(0.0, 0.0))
+            .await
+            .expect("a layout besides the default doesn't fail the run");
+
+        assert_eq!(*journal.shown.lock().unwrap(), ["first"]);
+        assert!(report.is_degraded());
+        let down = report
+            .sources
+            .iter()
+            .find(|source| source.name == "layout second")
+            .unwrap();
+        assert!(matches!(down.state, SourceState::Unavailable { .. }));
+    }
+
+    #[tokio::test]
+    async fn the_default_layout_failing_fails_the_run() {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        *journal.failing.lock().unwrap() = Some("first".to_owned());
+
+        let error = recording_app(&journal)
+            .run(Location::new(0.0, 0.0))
+            .await
+            .unwrap_err();
+
+        assert!(format!("{error}").contains("Chrome fell over"), "{error}");
+        assert!(journal.shown.lock().unwrap().is_empty());
     }
 }

@@ -11,6 +11,7 @@ use image::{ExtendedColorType, ImageEncoder};
 use crate::adapters::image_display_service::quantise::quantise_grey;
 use crate::domain::models::display::{DisplayProfile, Dither, ImageFormat, Palette};
 use crate::domain::models::image::ImageData;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::services::image_display_service::ImageDisplayService;
 use crate::domain::services::published_images::PublishedImages;
 
@@ -39,14 +40,19 @@ impl ImageDisplayService for ReTerminalE1003Adapter {
         }
     }
 
-    async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
+    /// Displays fetch their images from the server, which has one for each layout.
+    fn wants_every_layout(&self) -> bool {
+        true
+    }
+
+    async fn display(&self, layout: &LayoutName, data: &ImageData) -> anyhow::Result<()> {
         let encoded = data.data.clone();
         let (dither, preferred) = (self.dither, self.format);
         // Dithering a 2.6 megapixel image is too much work to do on the async threads.
         let files =
             tokio::task::spawn_blocking(move || encode_all(&encoded, dither, preferred)).await??;
         for (format, bytes) in files {
-            self.images.publish(format, &bytes).await?;
+            self.images.publish(layout, format, &bytes).await?;
         }
         Ok(())
     }
@@ -189,11 +195,16 @@ mod tests {
         let images = Arc::new(DirectoryImages::new(tmp.path().join("out")));
         let adapter = ReTerminalE1003Adapter::new(Dither::None, ImageFormat::Png, images);
 
-        adapter.display(&ImageData::new(rendered())).await.unwrap();
+        let layout = LayoutName::parse("dashboard").unwrap();
+        adapter
+            .display(&layout, &ImageData::new(rendered()))
+            .await
+            .unwrap();
 
         // Every format is published, so the display can ask for any of them.
         for file in ["image.png", "image.bmp", "image.qoi"] {
-            let published = std::fs::read(tmp.path().join("out").join(file)).unwrap();
+            let published =
+                std::fs::read(tmp.path().join("out").join("dashboard").join(file)).unwrap();
             assert_eq!(
                 image::load_from_memory(&published).unwrap().width(),
                 WIDTH,

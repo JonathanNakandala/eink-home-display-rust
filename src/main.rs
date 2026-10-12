@@ -76,11 +76,13 @@ async fn main() -> Result<()> {
     };
     let now = clock.now();
     log_schedule(&schedule, now);
+    let layouts = bootstrap::layouts();
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
         && launch::served_image_is_current(
             images.as_ref(),
+            &layouts.default_layout().name,
             config.display.image_format.into(),
             &schedule,
             now,
@@ -151,6 +153,7 @@ async fn main() -> Result<()> {
         schedule.clone(),
         settings.timing,
         Handles {
+            layouts: layouts.clone(),
             refresh: refresh.clone(),
             status: status.clone(),
             devices: devices.clone(),

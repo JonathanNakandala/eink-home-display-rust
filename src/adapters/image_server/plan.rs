@@ -11,10 +11,12 @@ use utoipa::{IntoParams, IntoResponses};
 
 use super::health::image_written_at;
 use super::identity::{Caller, Named};
+use super::layouts::Wanted;
 use super::{Published, server_error};
 use crate::application::devices::{RawTelemetry, Telemetry};
 use crate::application::plan::{Plan, compute};
 use crate::application::refresh::RefreshOutcome;
+use crate::domain::models::layout::Layout;
 
 /// How long a button press waits for its render: a cold Chrome start can take a while.
 const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(40);
@@ -63,17 +65,23 @@ pub(super) enum PlanResponses {
     get,
     path = "/plan",
     tag = "displays",
-    params(Named, PlanQuery, RawTelemetry),
+    params(Named, Wanted, PlanQuery, RawTelemetry),
     responses(PlanResponses)
 )]
 pub(super) async fn plan(
     State(published): State<Arc<Published>>,
     Caller(caller): Caller,
+    Query(wanted): Query<Wanted>,
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
+    let layout = match wanted.resolve(&published) {
+        Ok(layout) => layout.clone(),
+        Err(refusal) => return refusal.into_response(),
+    };
     plan_response(
         &published,
+        &layout,
         query.have,
         caller.map(|device| telemetry.parse(device)),
     )
@@ -87,15 +95,20 @@ pub(super) async fn plan(
     post,
     path = "/refresh",
     tag = "displays",
-    params(Named, PlanQuery, RawTelemetry),
+    params(Named, Wanted, PlanQuery, RawTelemetry),
     responses(PlanResponses)
 )]
 pub(super) async fn refresh_now(
     State(published): State<Arc<Published>>,
     Caller(caller): Caller,
+    Query(wanted): Query<Wanted>,
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
+    let layout = match wanted.resolve(&published) {
+        Ok(layout) => layout.clone(),
+        Err(refusal) => return refusal.into_response(),
+    };
     match published.handles.refresh.request(REFRESH_TIMEOUT).await {
         RefreshOutcome::Rendered => log::info!("Rendered on request"),
         RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
@@ -105,6 +118,7 @@ pub(super) async fn refresh_now(
     }
     plan_response(
         &published,
+        &layout,
         query.have,
         caller.map(|device| telemetry.parse(device)),
     )
@@ -113,10 +127,11 @@ pub(super) async fn refresh_now(
 
 async fn plan_response(
     published: &Published,
+    layout: &Layout,
     have: Option<u32>,
     telemetry: Option<Telemetry>,
 ) -> Response {
-    let rendered_at = match image_written_at(published).await {
+    let rendered_at = match image_written_at(published, layout).await {
         Ok(Some(rendered_at)) => rendered_at,
         Ok(None) => {
             return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
@@ -149,6 +164,7 @@ mod tests {
     use super::super::testing::{publish, set_age, start};
     use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
+    use crate::domain::models::layout::LayoutName;
     use crate::domain::services::published_images::PublishedImages;
     use chrono_tz::Europe::London;
 
@@ -171,7 +187,7 @@ mod tests {
             .unwrap();
         let version = plan["version"].as_u64().unwrap();
         let expected = DirectoryImages::new(tmp.path())
-            .published_at(ImageFormat::Bmp)
+            .published_at(&LayoutName::parse("dashboard").unwrap(), ImageFormat::Bmp)
             .await
             .unwrap()
             .unwrap()

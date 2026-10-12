@@ -2,16 +2,17 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 
 use super::identity::{Caller, Named};
+use super::layouts::Wanted;
 use super::{Published, negotiate, transfer};
 use crate::domain::models::display::ImageFormat;
 
-/// Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can
+/// Serves the image of the layout asked for with `layout` (the default if none), in the format the client asked for with `Accept` (see `negotiate`): any it can
 /// decode, the server's preferred one if it has no preference. 406 if it can decode none of them.
 ///
 /// The reply carries an `ETag` (a hash of the file), and a client that sends it back as `If-None-Match` is
@@ -24,7 +25,7 @@ use crate::domain::models::display::ImageFormat;
     get,
     path = "/image",
     tag = "displays",
-    params(Named),
+    params(Named, Wanted),
     responses(
         (
             status = 200,
@@ -50,7 +51,7 @@ use crate::domain::models::display::ImageFormat;
         ),
         (
             status = 404,
-            description = "Nothing has been rendered yet.",
+            description = "Nothing has been rendered yet, or there is no such layout (the body lists the ones there are).",
             body = String,
             content_type = "text/plain"
         ),
@@ -72,12 +73,17 @@ use crate::domain::models::display::ImageFormat;
 pub(super) async fn image(
     State(published): State<Arc<Published>>,
     Caller(caller): Caller,
+    Query(wanted): Query<Wanted>,
     headers: HeaderMap,
 ) -> Response {
+    let layout = match wanted.resolve(&published) {
+        Ok(layout) => &layout.name,
+        Err(refusal) => return refusal.into_response(),
+    };
     let mut available = Vec::new();
     let mut unreadable = Vec::new();
     for format in ImageFormat::ALL {
-        match published.images.published_at(format).await {
+        match published.images.published_at(layout, format).await {
             Ok(Some(_)) => available.push(format),
             Ok(None) => {}
             Err(e) => {
@@ -113,7 +119,7 @@ pub(super) async fn image(
     // fall through to the next format the client accepts.
     let mut read_failed = false;
     for format in candidates {
-        match published.images.read(format).await {
+        match published.images.read(layout, format).await {
             Ok(Some(bytes)) => {
                 let etag = etag_of(&bytes);
                 if headers

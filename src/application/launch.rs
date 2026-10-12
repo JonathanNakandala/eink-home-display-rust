@@ -15,6 +15,7 @@ use chrono_tz::Tz;
 
 use crate::application::plan::render_due;
 use crate::domain::models::display::ImageFormat;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
@@ -45,15 +46,16 @@ pub fn first_render_at(
     Some(earliest.map_or(now, |earliest| earliest.max(now)))
 }
 
-/// Whether the image being served has no render due yet, so it needn't be redone at start-up.
+/// Whether the image of `layout` being served has no render due yet, so it needn't be redone at start-up.
 pub async fn served_image_is_current(
     images: &dyn PublishedImages,
+    layout: &LayoutName,
     format: ImageFormat,
     schedule: &Schedule,
     now: DateTime<Tz>,
 ) -> bool {
     images
-        .published_at(format)
+        .published_at(layout, format)
         .await
         .ok()
         .flatten()
@@ -203,17 +205,26 @@ mod tests {
 
     #[tokio::test]
     async fn an_image_is_current_until_its_next_slot() {
+        let dashboard = || LayoutName::parse("dashboard").unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let images = DirectoryImages::new(tmp.path());
         let schedule = Schedule::parse_every("1h").unwrap();
         let now = chrono::Utc::now().with_timezone(&London);
-        assert!(!served_image_is_current(&images, ImageFormat::Bmp, &schedule, now).await);
+        assert!(
+            !served_image_is_current(&images, &dashboard(), ImageFormat::Bmp, &schedule, now).await
+        );
 
-        images.publish(ImageFormat::Bmp, b"x").await.unwrap();
-        assert!(served_image_is_current(&images, ImageFormat::Bmp, &schedule, now).await);
+        images
+            .publish(&dashboard(), ImageFormat::Bmp, b"x")
+            .await
+            .unwrap();
+        assert!(
+            served_image_is_current(&images, &dashboard(), ImageFormat::Bmp, &schedule, now).await
+        );
         assert!(
             !served_image_is_current(
                 &images,
+                &dashboard(),
                 ImageFormat::Bmp,
                 &schedule,
                 now + chrono::Duration::hours(2)

@@ -1,0 +1,19 @@
+    {{#if departures}}
+    <div class="departures" style="--lines: {{departure_lines}}">
+        {{#each departures}}
+        <section class="board">
+            <h2>{{this.name}}{{#if this.station}} <span class="station">{{this.station}}</span>{{/if}}{{#if this.age}}<span class="age">{{this.age}} ago</span>{{/if}}</h2>
+            {{#each this.services}}
+            <div class="row {{this.status}}">
+                <span class="time">{{this.time}}</span>
+                {{#unless (eq this.status "live")}}<span class="expected">{{this.expected}}</span>{{/unless}}
+                <span class="destination">{{this.destination}}</span>
+                <span class="countdown">{{this.countdown}}</span>
+            </div>
+            {{else}}
+            <div class="row none">{{#if this.unavailable}}Unavailable{{#if this.reason}}: {{this.reason}}{{/if}}{{else}}No scheduled services{{/if}}</div>
+            {{/each}}
+        </section>
+        {{/each}}
+    </div>
+    {{/if}}
