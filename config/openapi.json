@@ -47,7 +47,7 @@
         "tags": [
           "displays"
         ],
-        "summary": "Serves the image in the format the client asked for with `Accept` (see `negotiate`): any it can\ndecode, the server's preferred one if it has no preference. 406 if it can decode none of them.",
+        "summary": "Serves the image of the layout asked for with `layout` (the default if none), in the format the client asked for with `Accept` (see `negotiate`): any it can\ndecode, the server's preferred one if it has no preference. 406 if it can decode none of them.",
         "description": "The reply carries an `ETag` (a hash of the file), and a client that sends it back as `If-None-Match` is\nanswered 304 with no body when it already has that image.\n\nA format whose file can't be inspected or read is skipped, so one bad file doesn't take the\nothers down with it. It is a 500 only when that leaves the client nothing it accepts, and never\na 404 or 406: those would say the image isn't there or isn't wanted, when the server failed.",
         "operationId": "image",
         "parameters": [
@@ -62,6 +62,18 @@
               "pattern": "^[A-Za-z0-9._-]+$"
             },
             "example": "reterminal-e1003-a1b2c3"
+          },
+          {
+            "name": "layout",
+            "in": "query",
+            "description": "The layout to use, one of the names `/layouts` lists. The default layout if left out.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "example": "departures"
           }
         ],
         "responses": {
@@ -123,7 +135,7 @@
             }
           },
           "404": {
-            "description": "Nothing has been rendered yet.",
+            "description": "Nothing has been rendered yet, or there is no such layout (the body lists the ones there are).",
             "content": {
               "text/plain": {
                 "schema": {
@@ -159,6 +171,38 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/layouts": {
+      "get": {
+        "tags": [
+          "displays"
+        ],
+        "summary": "The layouts there are, the default first.",
+        "operationId": "layouts",
+        "responses": {
+          "200": {
+            "description": "The layouts a request can ask for with `layout`.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayoutList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server could not work its state out."
           }
         }
       }
@@ -215,6 +259,18 @@
               "pattern": "^[A-Za-z0-9._-]+$"
             },
             "example": "reterminal-e1003-a1b2c3"
+          },
+          {
+            "name": "layout",
+            "in": "query",
+            "description": "The layout to use, one of the names `/layouts` lists. The default layout if left out.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "example": "departures"
           },
           {
             "name": "have",
@@ -472,6 +528,18 @@
               "pattern": "^[A-Za-z0-9._-]+$"
             },
             "example": "reterminal-e1003-a1b2c3"
+          },
+          {
+            "name": "layout",
+            "in": "query",
+            "description": "The layout to use, one of the names `/layouts` lists. The default layout if left out.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "example": "departures"
           },
           {
             "name": "have",
@@ -1046,6 +1114,61 @@
             "format": "int32",
             "description": "The same number `/plan` reports.",
             "minimum": 0
+          }
+        }
+      },
+      "LayoutEntry": {
+        "type": "object",
+        "description": "A layout, and where its image has got to.",
+        "required": [
+          "name",
+          "description",
+          "default"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What to put after `?layout=`.",
+            "examples": [
+              "dashboard"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "What the layout shows.",
+            "examples": [
+              "Departures with the weather beside them"
+            ]
+          },
+          "default": {
+            "type": "boolean",
+            "description": "Whether this is the layout a request without `layout` gets."
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The version `/plan` reports for this layout's image, or absent before it has been rendered.",
+            "examples": [
+              1791463200
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "LayoutList": {
+        "type": "object",
+        "required": [
+          "layouts"
+        ],
+        "properties": {
+          "layouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayoutEntry"
+            }
           }
         }
       },

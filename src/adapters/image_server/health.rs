@@ -12,17 +12,29 @@ use chrono_tz::Tz;
 use super::{Published, metrics, server_error};
 use crate::application::devices::ConnectionStatus;
 use crate::application::status::{MemberStatus, Status};
+use crate::domain::models::layout::Layout;
 
-/// When the served image was written; None before the first render.
+/// When the image of `layout` was written; None before it has been rendered.
 pub(super) async fn image_written_at(
     published: &Published,
+    layout: &Layout,
 ) -> anyhow::Result<Option<DateTime<Tz>>> {
     let zone = published.clock.now().timezone();
     Ok(published
         .images
-        .published_at(published.format)
+        .published_at(&layout.name, published.format)
         .await?
         .map(|at| at.with_timezone(&zone)))
+}
+
+/// The version `/plan` gives the image of `layout`, if it has been rendered.
+pub(super) async fn version_of_layout(
+    published: &Published,
+    layout: &Layout,
+) -> anyhow::Result<Option<u32>> {
+    Ok(image_written_at(published, layout)
+        .await?
+        .map(crate::application::plan::version_of))
 }
 
 /// How the service is doing: the render history, the sources' state, and the image's age.
@@ -93,7 +105,8 @@ pub(super) async fn healthz(State(published): State<Arc<Published>>) -> Response
 }
 
 async fn current_status(published: &Published) -> anyhow::Result<Status> {
-    let rendered_at = image_written_at(published).await?;
+    // The service is as healthy as its default layout: it is the one a display gets without asking.
+    let rendered_at = image_written_at(published, published.layouts.default_layout()).await?;
     let now = published.clock.now();
     let mut status =
         published

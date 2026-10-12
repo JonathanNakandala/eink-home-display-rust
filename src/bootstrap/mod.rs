@@ -12,7 +12,7 @@ mod serving;
 mod weather;
 mod zone;
 
-pub use self::application::{assemble, from_config};
+pub use self::application::{assemble, from_config, layouts};
 pub use self::departures::setup_departure_boards;
 pub use self::display::setup_display;
 pub use self::load::{

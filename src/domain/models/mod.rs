@@ -16,6 +16,7 @@ pub mod departures;
 pub mod device_id;
 pub mod display;
 pub mod freshness;
+pub mod layout;
 pub mod location;
 pub mod pairing;
 pub mod pollen;

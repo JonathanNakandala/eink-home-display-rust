@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::domain::models::display::{DisplayProfile, Dither, Palette};
 use crate::domain::models::image::ImageData;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::services::image_display_service::ImageDisplayService;
 
 use super::eink_driver::{HEIGHT, WIDTH};
@@ -23,7 +24,7 @@ impl ImageDisplayService for EinkWaveshareAdapter {
         }
     }
 
-    async fn display(&self, data: &ImageData) -> anyhow::Result<()> {
+    async fn display(&self, _layout: &LayoutName, data: &ImageData) -> anyhow::Result<()> {
         let frame = frame_from_encoded_image(&data.data, self.dither)?;
 
         // SPI and the panel's busy-wait are blocking, and a refresh takes seconds.

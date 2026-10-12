@@ -35,6 +35,29 @@ image, and the error text can name the failing source, so keep the port on the L
 `/status` keeps its history in memory, so a restart starts it again at `starting`. The sources list is
 from the last render that succeeded.
 
+## Layouts
+
+Each render draws every layout from the same data, so a source is fetched once however many layouts there are.
+Two are built in: `dashboard` (the default: departures with the weather beside them) and `departures` (the boards
+alone, in two columns and larger type).
+
+```
+curl --silent http://localhost:8080/layouts | jq        # what there is, which is the default, each one's version
+curl --output out.bmp 'http://localhost:8080/image?layout=departures'
+curl --silent 'http://localhost:8080/plan?layout=departures'
+```
+
+`/image`, `/plan` and `/refresh` take `layout=`; without it they answer for the default, as before. A name nothing
+has is a 404 that lists the ones there are. Each layout has its own images (`<server.directory>/<layout>/image.<ext>`),
+its own version and its own ETag. `/status` and `/healthz` judge the default layout, and a layout that fails to draw
+shows as a source called `layout NAME` and makes the service `degraded`, while the others still update. A display
+driven directly (the Waveshare) shows the default layout only, so the others are not drawn for it.
+
+A display chooses its layout by the path it fetches: a display pointed at `/image?layout=departures` and
+`/plan?layout=departures` shows that one. Switching a display from the server, without reflashing it, isn't there yet.
+When a display is switched between layouts the two renders may share a version (it is the render's time in seconds),
+so it shows the new layout from the next render, not at once.
+
 ## IPv4 and IPv6
 
 `server.bind` defaults to `[::]:8080`, one socket that takes IPv4 and IPv6 clients. The server sets that up
