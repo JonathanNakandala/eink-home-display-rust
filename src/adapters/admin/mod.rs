@@ -26,8 +26,8 @@ pub use self::api::{
 pub use self::client::{AdminClient, CallError, describe};
 pub use self::present::{
     age, approved, describe_entry, describe_layouts, describe_list, describe_viewers,
-    describe_window, forgotten, label, layout_changed, rejected, revoked, viewer_changed,
-    viewer_issued,
+    describe_window, forgotten, label, layout_changed, qr_for_terminal, rejected, revoked,
+    viewer_changed, viewer_issued,
 };
 pub use self::routes::{openapi_json, router};
 pub use self::transport::{LocalListener, SOCKET_FILE, bind, connect, default_path};

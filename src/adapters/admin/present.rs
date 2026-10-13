@@ -292,6 +292,60 @@ where
     )
 }
 
+/// The quiet zone round a QR code, in modules: the standard asks for four, which is what a camera needs to find the edge.
+pub(super) const QUIET_ZONE: usize = 4;
+
+/// The modules of a QR code of `text`, dark ones true, as a square with the quiet zone round it.
+pub(super) fn qr_modules(text: &str) -> Result<Vec<Vec<bool>>, qrcode::types::QrError> {
+    use qrcode::{Color, EcLevel, QrCode};
+
+    let code = QrCode::with_error_correction_level(text, EcLevel::M)?;
+    let width = code.width();
+    let colors = code.to_colors();
+    let side = width + 2 * QUIET_ZONE;
+    Ok((0..side)
+        .map(|y| {
+            (0..side)
+                .map(|x| {
+                    x >= QUIET_ZONE
+                        && y >= QUIET_ZONE
+                        && x - QUIET_ZONE < width
+                        && y - QUIET_ZONE < width
+                        && colors[(y - QUIET_ZONE) * width + (x - QUIET_ZONE)] == Color::Dark
+                })
+                .collect()
+        })
+        .collect())
+}
+
+/// A QR code of `text` to print in a terminal: black modules on white, in explicit colours so that it scans whatever the
+/// terminal's own theme is (a light code on a dark theme is what a camera often can't read), two rows of modules to a line
+/// by way of half blocks. It is for a person to point a camera at, so it holds whatever `text` holds: a one-time code is
+/// as secret as it was.
+pub fn qr_for_terminal(text: &str) -> Result<String, qrcode::types::QrError> {
+    let modules = qr_modules(text)?;
+    let side = modules.len();
+    let dark = |x: usize, y: usize| modules.get(y).is_some_and(|row| row[x]);
+    let mut out = String::new();
+    for y in (0..side).step_by(2) {
+        let mut last = None;
+        for x in 0..side {
+            // The upper half of the block is the foreground, the lower half the background.
+            let cell = (
+                if dark(x, y) { 30 } else { 37 },
+                if dark(x, y + 1) { 40 } else { 47 },
+            );
+            if last != Some(cell) {
+                out.push_str(&format!("\x1b[{};{}m", cell.0, cell.1));
+                last = Some(cell);
+            }
+            out.push('\u{2580}');
+        }
+        out.push_str("\x1b[0m\n");
+    }
+    Ok(out)
+}
+
 /// What was done, in a sentence, once a viewer was revoked or forgotten.
 pub fn viewer_changed(entry: &ViewerEntry, forgotten: bool) -> String {
     if forgotten {

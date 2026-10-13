@@ -59,6 +59,7 @@ interprocess = { version = "2.4", features = ["tokio"] }
 hyper-util = { version = "0.1.21", features = ["server", "http1", "tokio", "service"] }
 arc-swap = "1.9.2"
 yasna = "0.6"
+qrcode = { version = "0.14.1", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
@@ -66,6 +67,7 @@ httpmock = "0.8"
 speculoos = "0.13"
 cms = "0.2.3"
 jsonschema = { version = "0.58", default-features = false }
+rqrr = "0.11.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

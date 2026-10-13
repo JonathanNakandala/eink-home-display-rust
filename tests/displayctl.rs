@@ -501,3 +501,80 @@ async fn a_viewer_asked_for_wrongly_or_not_there_fails_with_a_reason_and_makes_n
     }
     assert!(out(&ctl(socket, &["viewer", "list"]).await).contains("There are no viewers"));
 }
+
+/// What a camera pointed at `printed` (the ANSI half blocks a terminal gets) would read.
+fn scan(printed: &str) -> String {
+    const SCALE: usize = 4;
+    let mut rows: Vec<Vec<bool>> = Vec::new();
+    for line in printed.lines() {
+        let (mut upper, mut lower) = (Vec::new(), Vec::new());
+        let (mut fg, mut bg) = ("37", "47");
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                let code: String = chars.by_ref().take_while(|c| *c != 'm').collect();
+                for part in code.trim_start_matches('[').split(';') {
+                    match part {
+                        "0" => (fg, bg) = ("37", "47"),
+                        "30" | "37" => fg = if part == "30" { "30" } else { "37" },
+                        "40" | "47" => bg = if part == "40" { "40" } else { "47" },
+                        other => panic!("{other}"),
+                    }
+                }
+            } else {
+                upper.push(fg == "30");
+                lower.push(bg == "40");
+            }
+        }
+        rows.push(upper);
+        rows.push(lower);
+    }
+    let side = rows[0].len();
+    rows.truncate(side);
+    let image = image::GrayImage::from_fn((side * SCALE) as u32, (side * SCALE) as u32, |x, y| {
+        image::Luma([if rows[y as usize / SCALE][x as usize / SCALE] {
+            0
+        } else {
+            255
+        }])
+    });
+    let mut prepared = rqrr::PreparedImage::prepare(image);
+    let grids = prepared.detect_grids();
+    assert_eq!(grids.len(), 1);
+    grids[0].decode().expect("it decodes").1
+}
+
+#[tokio::test]
+async fn the_qr_code_is_printed_on_request_and_scans_to_the_link_that_was_printed() {
+    let server = start().await;
+    let socket = path(&server.socket);
+
+    let with = ctl(socket, &["viewer", "create", "--label", "tablet", "--qr"]).await;
+    assert!(with.status.success(), "{}", err(&with));
+    let said = out(&with);
+    let link = said
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("https://display.test:8443/view#code=hdc1_"))
+        .unwrap()
+        .to_owned();
+    let code = said
+        .split("which opens the same link (it works once, too):\n\n")
+        .nth(1)
+        .expect("a QR code follows");
+    // Camera in hand: the code it reads is the link, the very one printed above.
+    assert_eq!(scan(code), link);
+
+    // Not asked for, and the output here is not a terminal: no code. And it can be refused outright.
+    let without = ctl(socket, &["viewer", "create", "--label", "other"]).await;
+    assert!(!out(&without).contains("Or scan this") && !out(&without).contains('\u{2580}'));
+    let refused = ctl(
+        socket,
+        &["viewer", "create", "--label", "x", "--qr", "--no-qr"],
+    )
+    .await;
+    assert!(
+        !refused.status.success(),
+        "the two flags contradict each other"
+    );
+}
