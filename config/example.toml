@@ -92,3 +92,5 @@ enabled = true
 
 [schedule]
 cron = ["*/10 * * * *"]
+
+[layouts]

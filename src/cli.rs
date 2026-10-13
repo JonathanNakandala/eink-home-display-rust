@@ -220,6 +220,10 @@ pub struct RenderArgs {
     #[arg(long)]
     pub degraded: bool,
 
+    /// A folder of layout templates to draw as well, in place of the config's `[layouts] directory`
+    #[arg(long)]
+    pub templates_dir: Option<PathBuf>,
+
     /// Also write each display's HTML and fonts to <output-dir>/page_<display>/, to open in a browser
     #[arg(long)]
     pub html: bool,

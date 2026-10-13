@@ -1,16 +1,16 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::adapters::departures::DeparturesServiceImpl;
 use crate::adapters::display_image_generator::chrome_render::{
-    self, ChromeRenderDisplayImageGenerator, ChromeSource,
+    ChromeRenderDisplayImageGenerator, ChromeSource, Templates,
 };
 use crate::adapters::image_repository::file_store::FileStoreImageRepository;
 use crate::adapters::weather::WeatherServiceImpl;
 use crate::application::{Application, RenderPolicy};
-use crate::config::application::ApplicationConfig;
+use crate::config::application::{ApplicationConfig, LayoutsConfig};
 use crate::config::cache::CachePaths;
-use crate::domain::models::layout::Layouts;
 use crate::domain::services::ImageDisplayService;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::departures_service::DeparturesService;
@@ -50,19 +50,29 @@ where
     ))
 }
 
-/// The layouts the service draws, the default first.
-pub fn layouts() -> Layouts {
-    chrome_render::layouts()
+/// The templates the service draws: the built-in ones, and those in the configured folder, each checked. `directory`,
+/// if given, is used in place of the configured one.
+pub fn load_templates(
+    config: &LayoutsConfig,
+    directory: Option<&Path>,
+) -> anyhow::Result<Templates> {
+    let templates = Templates::built_in();
+    match directory.or(config.directory.as_deref()) {
+        Some(directory) => templates.with_directory(directory),
+        None => Ok(templates),
+    }
 }
 
 /// The service as it runs: rendered by Chrome, shown on the configured display, and saved to the
-/// configured folder. `images` is where displays that fetch their image have it published.
+/// configured folder. `images` is where displays that fetch their image have it published, and `templates` are the
+/// layouts it draws (see `load_templates`).
 pub fn from_config(
     config: &ApplicationConfig,
     cache: &CachePaths,
     chrome_idle_timeout: Duration,
     chrome_source: ChromeSource,
     images: Arc<dyn PublishedImages>,
+    templates: Templates,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<
     Application<
@@ -73,12 +83,14 @@ pub fn from_config(
         impl DeparturesService,
     >,
 > {
+    let layouts = templates.layouts();
     Ok(assemble(
         config,
-        ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source),
+        ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source)
+            .with_templates(templates),
         setup_display(&config.display, images),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         clock,
     )?
-    .with_layouts(layouts()))
+    .with_layouts(layouts))
 }

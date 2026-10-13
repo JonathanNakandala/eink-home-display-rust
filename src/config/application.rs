@@ -38,6 +38,22 @@ pub struct ApplicationConfig {
     /// When to refresh. Left out, the program renders once and exits unless `--cron` or `--every` say otherwise.
     #[serde(default)]
     pub schedule: Option<ScheduleConfig>,
+    /// The layouts the picture can be drawn in, besides the ones built in.
+    #[serde(default)]
+    pub layouts: LayoutsConfig,
+}
+
+/// Layouts of your own. Every layout is drawn on each refresh, and a display is sent the one chosen for it (see
+/// `displayctl layout`) or the default, the first built in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct LayoutsConfig {
+    /// A folder of page templates: each `NAME.html` is a layout called `NAME`, written in the same Handlebars as the
+    /// built-in ones (see deploy/README.md). A file named for a built-in layout (`dashboard.html`) replaces it; any other
+    /// name adds one. Read once at start-up, and every template is checked then, so a mistake stops the program
+    /// with the file's name and what is wrong. Left out, only the built-in layouts are drawn. A relative path is from the
+    /// working directory.
+    #[serde(default)]
+    pub directory: Option<PathBuf>,
 }
 
 /// When a source fails, the dashboard shows what it said last time, labelled with its age, until it

@@ -59,7 +59,9 @@ async fn start() -> Server {
     let listener = admin::bind(&socket).await.unwrap();
     let app = admin::router(
         enrollment.clone(),
-        home_display_server::bootstrap::layouts(),
+        home_display_server::adapters::display_image_generator::chrome_render::Templates::built_in(
+        )
+        .layouts(),
     );
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;

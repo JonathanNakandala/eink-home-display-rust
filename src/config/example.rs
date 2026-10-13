@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::config::application::{
     ApplicationConfig, DisplayConfig, DisplayKind, DitherSetting, FileStoreConfig,
-    ImageFormatSetting, LimitsConfig, LocationConfig, StaleDataConfig,
+    ImageFormatSetting, LayoutsConfig, LimitsConfig, LocationConfig, StaleDataConfig,
 };
 use crate::config::cache::CacheConfig;
 use crate::config::departures::{
@@ -76,6 +76,7 @@ impl ApplicationConfig {
             limits: LimitsConfig::default(),
             server: ServerConfig::default(),
             schedule: Some(ScheduleConfig { cron: vec!["*/10 * * * *".to_owned()] }),
+            layouts: LayoutsConfig::default(),
         }
     }
 

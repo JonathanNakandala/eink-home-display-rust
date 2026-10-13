@@ -73,11 +73,20 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| CacheConfig::default().directory),
     );
     cache.ensure_exists()?;
+    let templates = bootstrap::load_templates(
+        &config
+            .as_ref()
+            .map(|config| config.layouts.clone())
+            .unwrap_or_default(),
+        args.templates_dir.as_deref(),
+    )?;
+    let layouts = templates.layouts();
     let generator = ChromeRenderDisplayImageGenerator::new(
         cache.chrome(),
         DEFAULT_IDLE_TIMEOUT,
         ChromeSource::from(args.bundled_chrome),
-    );
+    )
+    .with_templates(templates);
 
     for kind in kinds {
         let name = file_name(kind);
@@ -98,7 +107,7 @@ async fn main() -> Result<()> {
         );
 
         // Each layout, the default first; the default keeps the plain file names.
-        for layout in bootstrap::layouts().all() {
+        for layout in layouts.all() {
             let name = if layout.name.as_str() == DEFAULT_LAYOUT {
                 name.to_owned()
             } else {
