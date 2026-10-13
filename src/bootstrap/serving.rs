@@ -232,7 +232,7 @@ async fn open_admin(
         let listener = admin::bind(&path).await.with_context(|| {
             "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
         })?;
-        let app = admin::router(enrollment.clone());
+        let app = admin::router(enrollment.clone(), super::layouts());
         log::info!("Admin interface on {}", path.display());
         Ok(Some(AdminListener {
             path,

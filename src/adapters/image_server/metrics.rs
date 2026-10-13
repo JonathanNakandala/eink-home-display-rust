@@ -547,6 +547,7 @@ mod tests {
                     replacement_waiting: false,
                     profile: None,
                     replacement_profile: None,
+                    layout: None,
                 },
                 MemberStatus {
                     name: "hall".to_owned(),
@@ -559,6 +560,7 @@ mod tests {
                     replacement_waiting: true,
                     profile: None,
                     replacement_profile: None,
+                    layout: None,
                 },
             ],
             next_render: None,

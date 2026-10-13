@@ -76,7 +76,7 @@ pub(super) async fn image(
     Query(wanted): Query<Wanted>,
     headers: HeaderMap,
 ) -> Response {
-    let layout = match wanted.resolve(&published) {
+    let layout = match wanted.resolve(&published, caller.as_ref()).await {
         Ok(layout) => &layout.name,
         Err(refusal) => return refusal.into_response(),
     };
@@ -143,6 +143,7 @@ pub(super) async fn image(
                 if let Some(device) = &caller {
                     published.handles.devices.image_served(
                         device,
+                        layout,
                         format,
                         bytes.len() as u64,
                         published.clock.now(),

@@ -53,10 +53,28 @@ its own version and its own ETag. `/status` and `/healthz` judge the default lay
 shows as a source called `layout NAME` and makes the service `degraded`, while the others still update. A display
 driven directly (the Waveshare) shows the default layout only, so the others are not drawn for it.
 
-A display chooses its layout by the path it fetches: a display pointed at `/image?layout=departures` and
-`/plan?layout=departures` shows that one. Switching a display from the server, without reflashing it, isn't there yet.
-When a display is switched between layouts the two renders may share a version (it is the render's time in seconds),
-so it shows the new layout from the next render, not at once.
+### Choosing a layout for a display
+
+A request for a layout gets it: a display pointed at `/image?layout=departures` and `/plan?layout=departures` shows that
+one. Without `layout=`, a display gets the layout the owner chose for it, or the default if they chose none:
+
+```
+displayctl -c config.toml layout list                    # what there is
+displayctl -c config.toml layout set kitchen departures  # from the kitchen display's next check-in
+displayctl -c config.toml layout clear kitchen           # back to the default
+displayctl -c config.toml displays show kitchen          # says "layout departures"
+```
+
+The choice is kept with the display's pairing (so it survives a restart) and is shown in `displays list`, in `/status`
+(`members[].layout`, and `devices[].last_image.layout` for the one it was last sent). It can be set for a display that is
+still waiting to be approved. Like everything `displayctl` does it needs the admin socket, which the server offers when it
+serves HTTPS, so a display on plain HTTP can only be pointed at a layout by its URL.
+
+A display that is given another layout is told on its next `/plan` that its picture has changed, so it fetches and draws the
+new one at once. (The version alone can't say so: it is the render's time in seconds, which two layouts of one run can share.)
+This is judged from what the server last sent that display, so it is forgotten at a restart: a display switched while the
+server was down shows the new layout from the next render. A layout that no longer exists, for a display that was given it,
+is not an error: it is sent the default.
 
 ## IPv4 and IPv6
 

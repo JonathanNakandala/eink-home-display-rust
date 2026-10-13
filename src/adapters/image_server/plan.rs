@@ -75,7 +75,7 @@ pub(super) async fn plan(
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
-    let layout = match wanted.resolve(&published) {
+    let layout = match wanted.resolve(&published, caller.as_ref()).await {
         Ok(layout) => layout.clone(),
         Err(refusal) => return refusal.into_response(),
     };
@@ -105,7 +105,7 @@ pub(super) async fn refresh_now(
     Query(query): Query<PlanQuery>,
     Query(telemetry): Query<RawTelemetry>,
 ) -> Response {
-    let layout = match wanted.resolve(&published) {
+    let layout = match wanted.resolve(&published, caller.as_ref()).await {
         Ok(layout) => layout.clone(),
         Err(refusal) => return refusal.into_response(),
     };
@@ -146,7 +146,18 @@ async fn plan_response(
         published.timing,
         have,
     ) {
-        Ok(plan) => {
+        Ok(mut plan) => {
+            // A display given another layout has the render it asks about and not the picture it should be showing,
+            // however new the render: the version alone can't say so (two layouts rendered in one second share one).
+            if let Some(telemetry) = &telemetry
+                && published
+                    .handles
+                    .devices
+                    .layout_shown(&telemetry.device)
+                    .is_some_and(|shown| shown != layout.name)
+            {
+                plan.changed = true;
+            }
             if let Some(telemetry) = telemetry {
                 published
                     .handles

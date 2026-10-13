@@ -57,7 +57,10 @@ async fn start() -> Server {
     ));
     let socket = admin::default_path(directory.path());
     let listener = admin::bind(&socket).await.unwrap();
-    let app = admin::router(enrollment.clone());
+    let app = admin::router(
+        enrollment.clone(),
+        home_display_server::bootstrap::layouts(),
+    );
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -307,4 +310,57 @@ async fn naming_a_display_that_is_not_known_or_cannot_be_one_fails_with_a_reason
     );
     let notcode = displayctl(&["--socket", socket, "approve", "ghost", "abc"]).await;
     assert!(!notcode.status.success());
+}
+
+#[tokio::test]
+async fn a_display_is_given_a_layout_and_has_it_taken_away_with_the_real_command() {
+    let server = start().await;
+    let socket = path(&server.socket);
+    let hall = Display::new("hall");
+    server.enrollment.open_window(Duration::minutes(10));
+    hall.asks(&server).await;
+
+    let listed = ctl(socket, &["layout", "list"]).await;
+    assert!(listed.status.success(), "{}", err(&listed));
+    assert!(out(&listed).contains("dashboard"), "{}", out(&listed));
+    assert!(out(&listed).contains("(default)"), "{}", out(&listed));
+    assert!(out(&listed).contains("departures"), "{}", out(&listed));
+
+    let set = ctl(socket, &["layout", "set", "hall", "departures"]).await;
+    assert!(set.status.success(), "{}", err(&set));
+    assert!(out(&set).contains("departures layout"), "{}", out(&set));
+    let hall_now = DeviceId::parse("hall").unwrap();
+    // The server it talked to has really kept it.
+    assert_eq!(
+        server
+            .enrollment
+            .layout_of(&hall_now)
+            .await
+            .unwrap()
+            .as_str(),
+        "departures"
+    );
+    let shown = ctl(socket, &["displays", "show", "hall"]).await;
+    assert!(out(&shown).contains("layout departures"), "{}", out(&shown));
+
+    let refused = ctl(socket, &["layout", "set", "hall", "nonesuch"]).await;
+    assert!(!refused.status.success());
+    assert!(
+        err(&refused).contains("no such layout"),
+        "{}",
+        err(&refused)
+    );
+    assert_eq!(
+        server
+            .enrollment
+            .layout_of(&hall_now)
+            .await
+            .unwrap()
+            .as_str(),
+        "departures"
+    );
+
+    let cleared = ctl(socket, &["layout", "clear", "hall"]).await;
+    assert!(cleared.status.success(), "{}", err(&cleared));
+    assert!(server.enrollment.layout_of(&hall_now).await.is_none());
 }

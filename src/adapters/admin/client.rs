@@ -11,7 +11,10 @@ use hyper_util::rt::TokioIo;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::api::{ApiError, ApproveRequest, DisplayEntry, DisplayList, OpenWindow, WindowState};
+use super::api::{
+    ApiError, ApproveRequest, ChooseLayout, DisplayEntry, DisplayList, LayoutList, OpenWindow,
+    WindowState,
+};
 use super::transport;
 use crate::domain::models::device_id::DeviceId;
 
@@ -165,6 +168,34 @@ impl AdminClient {
         self.call(
             Method::POST,
             &Self::display_path(name, "/revoke")?,
+            None::<&()>,
+        )
+        .await
+    }
+
+    /// The layouts a display can be given.
+    pub async fn layouts(&self) -> Result<LayoutList, CallError> {
+        self.call(Method::GET, "/v1/layouts", None::<&()>).await
+    }
+
+    /// Gives `name` the layout called `layout`.
+    pub async fn choose_layout(&self, name: &str, layout: &str) -> Result<DisplayEntry, CallError> {
+        let body = ChooseLayout {
+            layout: layout.to_owned(),
+        };
+        self.call(
+            Method::PUT,
+            &Self::display_path(name, "/layout")?,
+            Some(&body),
+        )
+        .await
+    }
+
+    /// Takes `name`'s chosen layout away.
+    pub async fn clear_layout(&self, name: &str) -> Result<DisplayEntry, CallError> {
+        self.call(
+            Method::DELETE,
+            &Self::display_path(name, "/layout")?,
             None::<&()>,
         )
         .await

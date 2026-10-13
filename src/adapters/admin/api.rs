@@ -89,6 +89,10 @@ pub struct DisplayEntry {
     pub profile: Option<ProfileStatus>,
     /// What the key that is waiting to take this member's name says it is, if there is one and it said.
     pub replacement_profile: Option<ProfileStatus>,
+    /// The layout the owner chose for this display, which it is sent when it doesn't ask for one. Left out, it gets the
+    /// default layout.
+    #[schema(examples("departures"))]
+    pub layout: Option<String>,
 }
 
 impl DisplayEntry {
@@ -121,8 +125,35 @@ impl DisplayEntry {
                 .as_ref()
                 .and_then(|replacement| replacement.profile.as_ref())
                 .map(ProfileStatus::from),
+            layout: pairing.layout.as_ref().map(ToString::to_string),
         }
     }
+}
+
+/// The layouts a display can be given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LayoutList {
+    /// The default first.
+    pub layouts: Vec<LayoutEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LayoutEntry {
+    #[schema(examples("departures"))]
+    pub name: String,
+    /// What the layout shows.
+    #[schema(examples("Departures alone, in larger type"))]
+    pub description: String,
+    /// What a display with no layout chosen is sent.
+    pub default: bool,
+}
+
+/// The layout to give a display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ChooseLayout {
+    /// One of the names `GET /v1/layouts` lists.
+    #[schema(examples("departures"))]
+    pub layout: String,
 }
 
 /// Every display the server knows.
@@ -181,6 +212,8 @@ pub enum ErrorCode {
     NotWaiting,
     /// The display is not a member, so there is nothing to revoke.
     NotAMember,
+    /// No layout of that name exists (or the name could not be one). `GET /v1/layouts` lists them.
+    UnknownLayout,
     /// There is nothing at that path.
     NotFound,
     /// That path exists but not for that method.
@@ -197,7 +230,7 @@ impl ErrorCode {
             }
             Self::WrongCode => StatusCode::FORBIDDEN,
             Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
-            Self::NotFound | Self::UnknownDisplay => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::UnknownDisplay | Self::UnknownLayout => StatusCode::NOT_FOUND,
             Self::NotWaiting | Self::NotAMember => StatusCode::CONFLICT,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,

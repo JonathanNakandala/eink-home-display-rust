@@ -12,6 +12,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::health::version_of_layout;
 use super::{Published, server_error};
+use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::layout::Layout;
 
 /// Which layout a request is about. Optional: without it, the default.
@@ -24,14 +25,16 @@ pub(super) struct Wanted {
 }
 
 impl Wanted {
-    /// The layout asked for, or the default when none was; or the answer to give when there is no such layout.
-    /// A name that isn't one is the same as a name nothing has: not found, and what is.
-    pub(super) fn resolve<'a>(
+    /// The layout for a request: the one it asks for, else the one the owner chose for the display asking, else the
+    /// default. Or the answer to give when the one asked for does not exist: a name that isn't one is the same as a
+    /// name nothing has, not found, with what is.
+    pub(super) async fn resolve<'a>(
         &self,
         published: &'a Published,
+        caller: Option<&DeviceId>,
     ) -> Result<&'a Layout, (StatusCode, String)> {
         let Some(name) = self.layout.as_deref() else {
-            return Ok(published.layouts.default_layout());
+            return Ok(chosen_or_default(published, caller).await);
         };
         published.layouts.find(name).ok_or_else(|| {
             let known: Vec<_> = published
@@ -46,6 +49,25 @@ impl Wanted {
                 format!("There is no such layout. Layouts: {}", known.join(", ")),
             )
         })
+    }
+}
+
+/// The layout the owner chose for `caller`, or the default if they chose none, or `caller` is not named, or what they
+/// chose has since gone.
+async fn chosen_or_default<'a>(published: &'a Published, caller: Option<&DeviceId>) -> &'a Layout {
+    let chosen = match (caller, &published.handles.members) {
+        (Some(device), Some(members)) => members.layout_of(device).await,
+        _ => None,
+    };
+    match chosen {
+        Some(name) => published.layouts.find(name.as_str()).unwrap_or_else(|| {
+            log::warn!(
+                "The layout chosen for {} is {name}, which there is no longer; sending the default",
+                caller.map(|device| device.to_string()).unwrap_or_default()
+            );
+            published.layouts.default_layout()
+        }),
+        None => published.layouts.default_layout(),
     }
 }
 
@@ -239,5 +261,195 @@ mod tests {
         let (_, text) = body(format!("{base}/layouts")).await;
         let list: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(list["layouts"].as_array().unwrap().len(), 1);
+    }
+
+    use std::sync::Arc;
+
+    use super::super::testing::start_layouts;
+    use crate::adapters::certificate_authority::{self, Create};
+    use crate::adapters::clock::SystemClock;
+    use crate::adapters::pairing_store::{FilePairingStore, Missing};
+    use crate::adapters::published_images::DirectoryImages;
+    use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
+    use crate::domain::models::device_id::DeviceId;
+    use crate::domain::models::layout::{DEFAULT_LAYOUT, Layout, LayoutName, Layouts};
+    use crate::domain::models::pairing::{Pairing, PairingState, PublicKey};
+    use crate::domain::services::pairing_store::PairingStore;
+    use chrono_tz::Europe::London;
+
+    /// A server with two layouts, in which `kitchen` is a member, and its enrollment to choose layouts with.
+    async fn with_a_member(directory: &std::path::Path) -> (String, Arc<Enrollment>) {
+        let pki = tempfile::tempdir().unwrap();
+        let authority =
+            Arc::new(certificate_authority::open(pki.path(), Create::IfMissing).unwrap());
+        let store = Arc::new(
+            FilePairingStore::open(pki.path(), Missing::StartEmpty)
+                .await
+                .unwrap(),
+        );
+        let now = chrono::Utc::now();
+        store
+            .put(&Pairing::new(
+                DeviceId::parse("kitchen").unwrap(),
+                PublicKey::from_der(vec![1; 91]),
+                PairingState::Enrolled {
+                    serial: "01".to_owned(),
+                    not_after: now + chrono::Duration::days(20),
+                },
+                now,
+            ))
+            .await
+            .unwrap();
+        let enrollment = Arc::new(Enrollment::new(
+            authority,
+            store,
+            Arc::new(SystemClock::new(London)),
+            EnrollmentPolicy {
+                certificate_lifetime: chrono::Duration::days(90),
+                retry_after: chrono::Duration::minutes(5),
+                require_channel_binding: false,
+            },
+        ));
+        let layouts = Layouts::new(vec![
+            Layout::new(DEFAULT_LAYOUT, "Everything"),
+            Layout::new("departures", "Just the trains"),
+        ])
+        .unwrap();
+        let (base, _) = start_layouts(
+            Arc::new(DirectoryImages::new(directory.to_path_buf())),
+            ImageFormat::Bmp,
+            Arc::new(SystemClock::new(London)),
+            Some(enrollment.clone()),
+            layouts,
+        )
+        .await;
+        // The authority's directory has to outlive the test.
+        std::mem::forget(pki);
+        (base, enrollment)
+    }
+
+    async fn choose(enrollment: &Enrollment, layout: Option<&str>) {
+        enrollment
+            .set_layout(
+                &DeviceId::parse("kitchen").unwrap(),
+                layout.map(|name| LayoutName::parse(name).unwrap()),
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn publish_both(directory: &std::path::Path) {
+        publish(directory, ImageFormat::Bmp, b"all of it")
+            .await
+            .unwrap();
+        publish_layout(directory, "departures", ImageFormat::Bmp, b"trains")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_display_is_sent_the_layout_the_owner_chose_for_it_unless_it_asks_for_another() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, enrollment) = with_a_member(tmp.path()).await;
+        publish_both(tmp.path()).await;
+        let image = |query: &'static str| {
+            let url = format!("{base}/image{query}");
+            async move { body(url).await.1 }
+        };
+
+        assert_eq!(image("?device=kitchen").await, "all of it");
+        choose(&enrollment, Some("departures")).await;
+
+        assert_eq!(image("?device=kitchen").await, "trains");
+        // What the display itself asks for wins, and a display nobody chose for gets the default.
+        assert_eq!(image("?device=kitchen&layout=dashboard").await, "all of it");
+        assert_eq!(image("").await, "all of it");
+        assert_eq!(image("?device=hall").await, "all of it");
+
+        choose(&enrollment, None).await;
+        assert_eq!(image("?device=kitchen").await, "all of it");
+    }
+
+    #[tokio::test]
+    async fn a_layout_that_has_since_gone_is_not_a_reason_to_send_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, enrollment) = with_a_member(tmp.path()).await;
+        publish_both(tmp.path()).await;
+        // The file of displays outlives a configuration that no longer has the layout.
+        enrollment
+            .set_layout(
+                &DeviceId::parse("kitchen").unwrap(),
+                Some(LayoutName::parse("retired").unwrap()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            body(format!("{base}/image?device=kitchen")).await.1,
+            "all of it"
+        );
+        assert_eq!(body(format!("{base}/plan?device=kitchen")).await.0, 200);
+    }
+
+    #[tokio::test]
+    async fn a_display_given_another_layout_is_told_its_picture_changed_even_at_the_same_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, enrollment) = with_a_member(tmp.path()).await;
+        publish_both(tmp.path()).await;
+        // Rendered in the same second, as two layouts of one run can be: the same version.
+        let moment = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        for file in ["image.bmp"] {
+            for folder in [DEFAULT_LAYOUT, "departures"] {
+                std::fs::File::options()
+                    .write(true)
+                    .open(tmp.path().join(folder).join(file))
+                    .unwrap()
+                    .set_modified(moment)
+                    .unwrap();
+            }
+        }
+        let plan = |query: String| {
+            let url = format!("{base}/plan?device=kitchen{query}");
+            async move { serde_json::from_str::<serde_json::Value>(&body(url).await.1).unwrap() }
+        };
+        let version = plan(String::new()).await["version"].as_u64().unwrap();
+
+        // It fetches the default layout and has it.
+        body(format!("{base}/image?device=kitchen")).await;
+        assert_eq!(plan(format!("&have={version}")).await["changed"], false);
+
+        // The owner gives it the other layout. Same version, but not the picture it shows.
+        choose(&enrollment, Some("departures")).await;
+        let told = plan(format!("&have={version}")).await;
+        assert_eq!(told["version"].as_u64().unwrap(), version);
+        assert_eq!(told["changed"], true);
+        // Until it fetches that picture; and then it is up to date.
+        assert_eq!(plan(format!("&have={version}")).await["changed"], true);
+        assert_eq!(
+            body(format!("{base}/image?device=kitchen")).await.1,
+            "trains"
+        );
+        assert_eq!(plan(format!("&have={version}")).await["changed"], false);
+    }
+
+    #[tokio::test]
+    async fn a_display_that_has_not_fetched_anything_is_not_told_its_picture_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, enrollment) = with_a_member(tmp.path()).await;
+        publish_both(tmp.path()).await;
+        choose(&enrollment, Some("departures")).await;
+        let first: serde_json::Value =
+            serde_json::from_str(&body(format!("{base}/plan?device=kitchen")).await.1).unwrap();
+        let version = first["version"].as_u64().unwrap();
+
+        let again: serde_json::Value = serde_json::from_str(
+            &body(format!("{base}/plan?device=kitchen&have={version}"))
+                .await
+                .1,
+        )
+        .unwrap();
+
+        // Nothing is known of what it shows, so the version is all there is to go on.
+        assert_eq!(again["changed"], false);
     }
 }

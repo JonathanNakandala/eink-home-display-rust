@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::models::pairing::{Pairing, PairingState, PublicKey, Replacement, Rollover};
 use crate::domain::models::profile::DeviceProfile;
 use crate::domain::services::pairing_store::PairingStore;
@@ -189,6 +190,9 @@ struct Record {
     /// What the display said it is. Also added after version 1 first shipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     profile: Option<ProfileRecord>,
+    /// The layout the owner chose for the display. Also added after version 1 first shipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layout: Option<String>,
 }
 
 /// What a display said it is (domain/models/profile.rs), as it is kept in the file.
@@ -291,6 +295,7 @@ impl From<&BTreeMap<DeviceId, Pairing>> for File {
                         profile: r.profile.as_ref().map(ProfileRecord::of),
                     }),
                     profile: p.profile.as_ref().map(ProfileRecord::of),
+                    layout: p.layout.as_ref().map(ToString::to_string),
                 })
                 .collect(),
         }
@@ -352,6 +357,12 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, Pairing>> {
                     })
                     .transpose()?,
                 profile: record.profile.and_then(|profile| profile.read(&device)),
+                // As with the profile, what is kept about a display is not worth refusing to start over.
+                layout: record.layout.and_then(|name| {
+                    LayoutName::parse(&name)
+                        .inspect_err(|e| log::warn!("Ignoring the layout kept for {device}: {e}"))
+                        .ok()
+                }),
                 device,
             };
         if pairings.insert(pairing.device.clone(), pairing).is_some() {
@@ -435,6 +446,26 @@ mod tests {
         let bytes = serde_json::to_vec_pretty(&File::from(&all)).unwrap();
         let read = parse(&bytes).unwrap();
         assert_eq!(read[&member.device], member);
+    }
+
+    #[test]
+    fn a_chosen_layout_survives_the_file_and_a_bad_one_is_dropped_with_the_display_kept() {
+        let mut kitchen = pairing("kitchen", PairingState::Approved);
+        kitchen.layout = Some(LayoutName::parse("departures").unwrap());
+        let mut all = BTreeMap::new();
+        all.insert(kitchen.device.clone(), kitchen.clone());
+        let bytes = serde_json::to_vec_pretty(&File::from(&all)).unwrap();
+        assert_eq!(parse(&bytes).unwrap()[&kitchen.device], kitchen);
+
+        let odd = String::from_utf8(bytes)
+            .unwrap()
+            .replace("departures", "../../etc");
+        let read = parse(odd.as_bytes()).unwrap();
+        assert!(read[&kitchen.device].layout.is_none());
+        assert!(matches!(
+            read[&kitchen.device].state,
+            PairingState::Approved
+        ));
     }
 
     #[test]

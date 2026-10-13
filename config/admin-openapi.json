@@ -334,6 +334,181 @@
         }
       }
     },
+    "/v1/displays/{name}/layout": {
+      "put": {
+        "tags": [
+          "layouts"
+        ],
+        "summary": "Gives a display a layout: from its next check-in it is sent that one when it doesn't ask for another itself (a\n`layout` in its own request wins). Any display the server knows can be given one, approved or not.",
+        "operationId": "choose_layout",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "requestBody": {
+          "description": "The layout to give it.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChooseLayout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The display, with its layout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is known, or no such layout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "layouts"
+        ],
+        "summary": "Takes a display's chosen layout away, so it is sent the default again.",
+        "operationId": "clear_layout",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The display's name, as `displays` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._-]+$"
+            },
+            "example": "reterminal-e1003-a1b2c3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The display, with no layout of its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No display of that name is known.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/displays/{name}/reject": {
       "post": {
         "tags": [
@@ -494,6 +669,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/layouts": {
+      "get": {
+        "tags": [
+          "layouts"
+        ],
+        "summary": "The layouts there are, the default first.",
+        "operationId": "list_layouts",
+        "responses": {
+          "200": {
+            "description": "The layouts a display can be given.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayoutList"
                 }
               }
             }
@@ -697,6 +912,22 @@
           }
         }
       },
+      "ChooseLayout": {
+        "type": "object",
+        "description": "The layout to give a display.",
+        "required": [
+          "layout"
+        ],
+        "properties": {
+          "layout": {
+            "type": "string",
+            "description": "One of the names `GET /v1/layouts` lists.",
+            "examples": [
+              "departures"
+            ]
+          }
+        }
+      },
       "DisplayEntry": {
         "type": "object",
         "description": "A display the server knows, and where it stands. Nothing here is secret: it never carries a pairing code, a key\nor a certificate.",
@@ -774,6 +1005,16 @@
                 "type": "null"
               }
             ]
+          },
+          "layout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The layout the owner chose for this display, which it is sent when it doesn't ask for one. Left out, it gets the\ndefault layout.",
+            "examples": [
+              "departures"
+            ]
           }
         }
       },
@@ -836,10 +1077,54 @@
           "unknown_display",
           "not_waiting",
           "not_a_member",
+          "unknown_layout",
           "not_found",
           "method_not_allowed",
           "internal"
         ]
+      },
+      "LayoutEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "default"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "examples": [
+              "departures"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "What the layout shows.",
+            "examples": [
+              "Departures alone, in larger type"
+            ]
+          },
+          "default": {
+            "type": "boolean",
+            "description": "What a display with no layout chosen is sent."
+          }
+        }
+      },
+      "LayoutList": {
+        "type": "object",
+        "description": "The layouts a display can be given.",
+        "required": [
+          "layouts"
+        ],
+        "properties": {
+          "layouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayoutEntry"
+            },
+            "description": "The default first."
+          }
+        }
       },
       "OpenWindow": {
         "type": "object",
@@ -948,6 +1233,10 @@
     {
       "name": "displays",
       "description": "The displays the server knows, and what the owner decides about them."
+    },
+    {
+      "name": "layouts",
+      "description": "The ways the picture can be laid out, and which a display is given."
     }
   ]
 }

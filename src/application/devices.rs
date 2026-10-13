@@ -24,6 +24,7 @@ use super::api_schema::ImageFormatSchema;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::display::ImageFormat;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::models::profile::firmware_version;
 
 /// More than a household has; stops a stray client filling memory with made-up names.
@@ -292,6 +293,9 @@ impl ConnectionStatus {
 /// The last image a display was sent: which format, how big, and when.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeliveryStatus {
+    /// Which layout it was.
+    #[schema(examples("dashboard"))]
+    pub layout: String,
     #[schema(value_type = ImageFormatSchema)]
     pub format: ImageFormat,
     pub bytes: u64,
@@ -299,8 +303,9 @@ pub struct DeliveryStatus {
     pub age_seconds: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Delivery {
+    layout: LayoutName,
     format: ImageFormat,
     bytes: u64,
     at: DateTime<Tz>,
@@ -413,7 +418,7 @@ impl DeviceBoard {
         }
         let delivery = devices
             .get(&telemetry.device)
-            .and_then(|record| record.delivery);
+            .and_then(|record| record.delivery.clone());
         devices.insert(
             telemetry.device.clone(),
             Record {
@@ -431,6 +436,7 @@ impl DeviceBoard {
     pub fn image_served(
         &self,
         device: &DeviceId,
+        layout: &LayoutName,
         format: ImageFormat,
         bytes: u64,
         now: DateTime<Tz>,
@@ -438,6 +444,7 @@ impl DeviceBoard {
         match self.devices().get_mut(device) {
             Some(record) => {
                 record.delivery = Some(Delivery {
+                    layout: layout.clone(),
                     format,
                     bytes,
                     at: now,
@@ -445,6 +452,15 @@ impl DeviceBoard {
             }
             None => log::debug!("{device} fetched the image without checking in first"),
         }
+    }
+
+    /// The layout `device` was last sent an image of, if it has fetched one since the server started. A display that
+    /// is then given another layout is told its picture has changed, though the render it has is as new as ever.
+    pub fn layout_shown(&self, device: &DeviceId) -> Option<LayoutName> {
+        self.devices()
+            .get(device)
+            .and_then(|record| record.delivery.as_ref())
+            .map(|delivery| delivery.layout.clone())
     }
 
     pub fn snapshot(&self, now: DateTime<Tz>) -> Vec<DeviceStatus> {
@@ -467,7 +483,8 @@ impl DeviceBoard {
                 last_heap_min_bytes: record.telemetry.last_heap_min_bytes,
                 firmware: record.telemetry.firmware.clone(),
                 connection: None,
-                last_image: record.delivery.map(|delivery| DeliveryStatus {
+                last_image: record.delivery.as_ref().map(|delivery| DeliveryStatus {
+                    layout: delivery.layout.to_string(),
                     format: delivery.format,
                     bytes: delivery.bytes,
                     at: delivery.at,
@@ -533,6 +550,10 @@ mod tests {
 
     fn id(name: &str) -> DeviceId {
         DeviceId::parse(name).unwrap()
+    }
+
+    fn dashboard() -> LayoutName {
+        LayoutName::parse("dashboard").unwrap()
     }
 
     fn telemetry(name: &str, state: Option<BatteryState>) -> Telemetry {
@@ -755,8 +776,14 @@ mod tests {
         assert!(board.snapshot(at(12, 1))[0].last_image.is_none());
 
         // Two displays fetching in the same minute are told apart by name, not by which asked last.
-        board.image_served(&id("a"), ImageFormat::Qoi, 163_000, at(12, 2));
-        board.image_served(&id("b"), ImageFormat::Bmp, 2_629_366, at(12, 2));
+        board.image_served(&id("a"), &dashboard(), ImageFormat::Qoi, 163_000, at(12, 2));
+        board.image_served(
+            &id("b"),
+            &dashboard(),
+            ImageFormat::Bmp,
+            2_629_366,
+            at(12, 2),
+        );
         let devices = board.snapshot(at(12, 5));
         let (a, b) = (
             devices[0].last_image.as_ref().unwrap(),
@@ -780,7 +807,13 @@ mod tests {
     #[test]
     fn a_display_that_never_checked_in_is_not_added_by_fetching() {
         let board = DeviceBoard::new(std::time::Duration::from_secs(900));
-        board.image_served(&id("stranger"), ImageFormat::Bmp, 1, at(12, 0));
+        board.image_served(
+            &id("stranger"),
+            &dashboard(),
+            ImageFormat::Bmp,
+            1,
+            at(12, 0),
+        );
         assert!(board.snapshot(at(12, 1)).is_empty());
     }
 }
