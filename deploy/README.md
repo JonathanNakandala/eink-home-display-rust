@@ -58,7 +58,10 @@ layouts = ["dashboard", "departures"]   # left out or empty: all of them
 displayctl -c config.toml viewer create --label "kitchen tablet" --layout departures --layout dashboard
 ```
 
-prints a link like `https://display.local:8443/view#code=hdc1_…`. Open it once, in the browser that is to look: the page trades
+prints a link like `https://display.local:8443/view#code=hdc1_…`, and, when the output is a terminal, the same link as a **QR code** to scan
+with a tablet or phone instead of typing it (`--qr` to force it into a pipe, `--no-qr` to leave it out). The code is black on white in
+colours of its own, so it scans on a dark theme too, and it is as secret as the link: it works once and is not shown again. Open the
+link once, in the browser that is to look: the page trades
 the code in it for a token the browser keeps, takes the code out of the address, and shows the picture; after that no link is
 needed, on reload or tomorrow. The link works **once** and for 15 minutes (`--code-minutes`); it is not shown again. If it is
 lost or not used in time, revoke the viewer and make another.

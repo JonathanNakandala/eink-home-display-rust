@@ -1,5 +1,6 @@
 //! Looks at a running home display server and changes it, from the same machine, over its admin socket.
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -8,8 +9,8 @@ use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use home_display_server::adapters::admin::{
     AdminClient, CallError, IssueViewer, approved, describe, describe_entry, describe_layouts,
-    describe_list, describe_viewers, describe_window, forgotten, layout_changed, rejected, revoked,
-    viewer_changed, viewer_issued,
+    describe_list, describe_viewers, describe_window, forgotten, layout_changed, qr_for_terminal,
+    rejected, revoked, viewer_changed, viewer_issued,
 };
 use home_display_server::bootstrap::load_application_config;
 
@@ -135,6 +136,13 @@ enum ViewerAction {
         /// How long the link works, in minutes (1 to 1440)
         #[arg(long, value_name = "MINUTES")]
         code_minutes: Option<u32>,
+        /// Print the link as a QR code too, to scan with a tablet or phone instead of typing it. Done anyway when the
+        /// output is a terminal.
+        #[arg(long, conflicts_with = "no_qr")]
+        qr: bool,
+        /// Do not print the QR code, even to a terminal
+        #[arg(long)]
+        no_qr: bool,
     },
     /// Every viewer, with where it stands
     List,
@@ -248,6 +256,8 @@ async fn run(args: Args) -> Result<(), String> {
                     layouts,
                     lifetime_days,
                     code_minutes,
+                    qr,
+                    no_qr,
                 } => {
                     let issued = client
                         .issue_viewer(&IssueViewer {
@@ -259,6 +269,17 @@ async fn run(args: Args) -> Result<(), String> {
                         .await
                         .map_err(failed)?;
                     println!("{}", viewer_issued(&issued, Utc::now(), &Local));
+                    if qr || (!no_qr && std::io::stdout().is_terminal()) {
+                        match qr_for_terminal(&issued.link) {
+                            Ok(code) => println!(
+                                "Or scan this with the device's camera, which opens the same link (it works once, too):\n\n{code}"
+                            ),
+                            // The link is above, so this costs only the convenience.
+                            Err(e) => eprintln!(
+                                "Could not draw a QR code for the link ({e}); use the link above"
+                            ),
+                        }
+                    }
                 }
                 ViewerAction::List => {
                     let list = client.viewers().await.map_err(failed)?;

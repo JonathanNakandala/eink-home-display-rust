@@ -1906,3 +1906,120 @@ fn what_was_done_is_said_in_a_sentence_that_depends_on_what_it_was() {
     assert!(revoked(&entry(DisplayState::Revoked)).contains("very next request"));
     assert!(forgotten(&entry(DisplayState::Member)).contains("pairing window"));
 }
+
+// --- the QR code ---------------------------------------------------------------------------------------------
+
+use super::present::{QUIET_ZONE, qr_modules};
+
+/// What a camera would read out of `modules` (dark ones true): drawn as a picture a few pixels to a module, as it would be
+/// on a screen, and decoded.
+fn scanned(modules: &[Vec<bool>]) -> String {
+    const SCALE: usize = 4;
+    let side = modules.len();
+    let image = image::GrayImage::from_fn((side * SCALE) as u32, (side * SCALE) as u32, |x, y| {
+        image::Luma([if modules[y as usize / SCALE][x as usize / SCALE] {
+            0
+        } else {
+            255
+        }])
+    });
+    let mut prepared = rqrr::PreparedImage::prepare(image);
+    let grids = prepared.detect_grids();
+    assert_eq!(grids.len(), 1, "one code in the picture");
+    let (_, content) = grids[0].decode().expect("it decodes");
+    content
+}
+
+/// The modules a terminal would show for `ansi`: each cell's foreground and background say its upper and lower module.
+fn as_shown(ansi: &str) -> Vec<Vec<bool>> {
+    let mut rows = Vec::new();
+    for line in ansi.lines() {
+        let (mut upper, mut lower) = (Vec::new(), Vec::new());
+        let (mut fg, mut bg) = (37, 47);
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                let mut code = String::new();
+                for next in chars.by_ref() {
+                    if next == 'm' {
+                        break;
+                    }
+                    code.push(next);
+                }
+                for part in code.trim_start_matches('[').split(';') {
+                    match part {
+                        "0" => (fg, bg) = (37, 47),
+                        "30" | "37" => fg = part.parse().unwrap(),
+                        "40" | "47" => bg = part.parse().unwrap(),
+                        other => panic!("an escape this does not use: {other}"),
+                    }
+                }
+            } else {
+                assert_eq!(c, '\u{2580}', "only upper half blocks");
+                upper.push(fg == 30);
+                lower.push(bg == 40);
+            }
+        }
+        rows.push(upper);
+        rows.push(lower);
+    }
+    rows
+}
+
+#[test]
+fn the_qr_code_decodes_to_the_link_it_was_made_from() {
+    let link =
+        "https://display.local:8443/view#code=hdc1_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE";
+
+    let modules = qr_modules(link).unwrap();
+
+    assert_eq!(scanned(&modules), link);
+    // Square, with the quiet zone clear all round.
+    assert!(modules.iter().all(|row| row.len() == modules.len()));
+    let side = modules.len();
+    for edge in 0..QUIET_ZONE {
+        assert!(modules[edge].iter().all(|m| !m) && modules[side - 1 - edge].iter().all(|m| !m));
+        assert!(
+            modules
+                .iter()
+                .all(|row| !row[edge] && !row[side - 1 - edge])
+        );
+    }
+}
+
+#[test]
+fn what_is_printed_for_a_terminal_scans_to_the_link_whatever_the_terminals_theme() {
+    let link =
+        "https://display.local:8443/view#code=hdc1_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE";
+
+    let printed = qr_for_terminal(link).unwrap();
+
+    // Set in colours of its own (black on white), reset at the end of every line, and half a line to a module row.
+    assert!(printed.contains("\u{1b}[30;47m") || printed.contains("\u{1b}[37;47m"));
+    assert!(printed.lines().all(|line| line.ends_with("\u{1b}[0m")));
+    let modules = qr_modules(link).unwrap();
+    assert_eq!(printed.lines().count(), modules.len().div_ceil(2));
+    // Read back as a terminal draws it, it is the same picture, and it decodes.
+    let mut shown = as_shown(&printed);
+    shown.truncate(modules.len());
+    assert_eq!(shown, modules);
+    assert_eq!(scanned(&shown), link);
+}
+
+#[test]
+fn a_qr_code_of_a_real_link_fits_a_terminal_and_a_text_too_long_for_one_is_an_error() {
+    let issued_like = format!("{VIEW_BASE}/view#code=hdc1_{}", "x".repeat(43));
+    let printed = qr_for_terminal(&issued_like).unwrap();
+    // Narrow enough for an ordinary terminal, and short enough to see whole.
+    let width = printed
+        .lines()
+        .next()
+        .unwrap()
+        .chars()
+        .filter(|c| *c == '\u{2580}')
+        .count();
+    assert!(width <= 60, "{width} columns");
+    assert!(printed.lines().count() <= 30);
+
+    assert!(qr_for_terminal(&"x".repeat(5000)).is_err());
+}
