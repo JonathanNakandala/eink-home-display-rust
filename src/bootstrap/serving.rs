@@ -108,15 +108,20 @@ pub async fn open_security(
         enrollment,
         handshakes: Arc::default(),
         layout_choices: Arc::new(layout_choices),
-        viewers: Arc::new(Viewers::new(
-            Arc::new(
-                FileViewerRegistry::open(&config.tls.directory)
-                    .await
-                    .context("Failed to open the viewers of the web page")?,
-            ),
-            clock.clone(),
-            Arc::new(OsEntropy),
-        )),
+        viewers: Arc::new(
+            Viewers::new(
+                Arc::new(
+                    FileViewerRegistry::open(&config.tls.directory)
+                        .await
+                        .context("Failed to open the viewers of the web page")?,
+                ),
+                clock.clone(),
+                Arc::new(OsEntropy),
+            )
+            .with_access_lifetime(chrono::Duration::minutes(
+                config.web.access_token_minutes.into(),
+            )),
+        ),
         clock,
     }))
 }

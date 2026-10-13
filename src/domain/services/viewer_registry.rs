@@ -20,4 +20,8 @@ pub trait ViewerRegistry: Send + Sync {
 
     /// The viewer that has this token, if any.
     async fn find_by_token(&self, token: &SecretHash) -> anyhow::Result<Option<Viewer>>;
+
+    /// The viewer whose current refresh token this is, or whose one before it, which is how a refresh token shown again is
+    /// told from one never issued.
+    async fn find_by_refresh(&self, token: &SecretHash) -> anyhow::Result<Option<Viewer>>;
 }

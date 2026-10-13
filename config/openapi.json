@@ -1134,10 +1134,10 @@
         "tags": [
           "web"
         ],
-        "summary": "Trades the one-time code from the owner's link for a token, once.",
+        "summary": "Trades the one-time code from the owner's link for a token, once; or, for a viewer made with `--refresh`, trades its\nrefresh token for a new access token and a new refresh token (which replaces it).",
         "operationId": "token_endpoint",
         "requestBody": {
-          "description": "An OAuth token request for the pre-authorized code grant.",
+          "description": "An OAuth token request: the pre-authorized code grant for the code in a link, or the refresh token grant.",
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
@@ -1173,7 +1173,7 @@
             }
           },
           "400": {
-            "description": "`invalid_request` (not a form, or a field missing), `unsupported_grant_type`, or `invalid_grant`: the code is not one there is, has been used, or has run out, which are not told apart.",
+            "description": "`invalid_request` (not a form, or a field missing), `unsupported_grant_type`, or `invalid_grant`: the code or refresh token is not one there is, has been used, or has run out or been revoked, which are not told apart. A refresh token used again after it was replaced ends the session.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2112,21 +2112,33 @@
       },
       "TokenRequest": {
         "type": "object",
-        "description": "What a token request is: the grant, and the code.",
+        "description": "What a token request is: the grant, and the code or the refresh token.",
         "required": [
-          "grant_type",
-          "pre-authorized_code"
+          "grant_type"
         ],
         "properties": {
           "grant_type": {
             "type": "string",
-            "description": "Always `urn:ietf:params:oauth:grant-type:pre-authorized_code`."
+            "description": "`urn:ietf:params:oauth:grant-type:pre-authorized_code` to trade the code in a link, or `refresh_token` to trade a\nrefresh token."
           },
           "pre-authorized_code": {
-            "type": "string",
-            "description": "The one-time code from the link `displayctl viewer create` printed.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With the code grant: the one-time code from the link `displayctl viewer create` printed.",
             "examples": [
               "hdc1_…"
+            ]
+          },
+          "refresh_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With the refresh grant: the refresh token the last answer gave, which works once.",
+            "examples": [
+              "hdr1_…"
             ]
           }
         }
@@ -2144,6 +2156,13 @@
           "access_token": {
             "type": "string",
             "description": "The bearer token, shown here and nowhere else, once."
+          },
+          "refresh_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a viewer made with `--refresh`: the token to ask for the next access token with. It works once, and each answer\nbrings a new one, which replaces it (RFC 6749 section 6, with the rotation of RFC 9700 section 4.14)."
           },
           "token_type": {
             "type": "string",

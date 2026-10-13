@@ -173,6 +173,12 @@ pub struct IssueViewer {
     /// How long the link works, from 1 to 1440 minutes. Left out, 15.
     #[serde(default)]
     pub code_minutes: Option<u32>,
+    /// Give it short-lived access tokens (an hour, unless `[server.web] access_token_minutes` says) and a rotating refresh
+    /// token to renew them with, in place of one token that lasts `lifetime_days`. A token that is lost is then good for an
+    /// hour and not a quarter of a year, and a refresh token that is copied is noticed, which ends the session. `lifetime_days`
+    /// is then how long the session lasts.
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// Where a viewer stands.
@@ -214,10 +220,13 @@ pub struct ViewerEntry {
     /// What it may look at: `layout:*`, or `layout:NAME` for each layout.
     #[schema(examples("layout:*"))]
     pub scope: String,
+    /// Whether it has short-lived access tokens and a refresh token, and not one token that lasts.
+    pub refreshing: bool,
     pub created_at: DateTime<Utc>,
     /// For one waiting, when its link stops working.
     pub link_expires_at: Option<DateTime<Utc>>,
-    /// Once signed in, when the token runs out.
+    /// Once signed in, when its access ends: for a plain viewer, when the token runs out, and for a refreshing one, when the
+    /// session does (its access tokens run out and are renewed all the time).
     pub expires_at: Option<DateTime<Utc>>,
     /// When it was last used, to within ten minutes or so.
     pub last_used_at: Option<DateTime<Utc>>,
@@ -233,8 +242,13 @@ impl ViewerEntry {
             ViewerState::Active {
                 expires_at,
                 last_used_at,
+                refresh,
                 ..
-            } => (None, Some(*expires_at), *last_used_at),
+            } => (
+                None,
+                Some(refresh.as_ref().map_or(*expires_at, |r| r.session_ends_at)),
+                *last_used_at,
+            ),
             ViewerState::Revoked { .. } => (None, None, None),
         };
         Self {
@@ -242,6 +256,7 @@ impl ViewerEntry {
             label: viewer.label.to_string(),
             status: viewer.standing(now).into(),
             scope: viewer.scope.to_scope_string(),
+            refreshing: viewer.refreshing,
             created_at: viewer.created_at,
             link_expires_at,
             expires_at,

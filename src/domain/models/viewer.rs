@@ -2,8 +2,14 @@
 //!
 //! The owner makes a viewer and is given a one-time **code** (shown once, in a link). The browser exchanges the code for an
 //! access **token** (also shown once, to the browser alone) and sends that with every request, as a bearer token (RFC 6750).
-//! Neither secret is kept: only a SHA-256 hash of each, which is enough to recognise one and useless to anyone who reads
-//! the file, as both are 256 random bits and so can't be guessed or looked up in a list of likely ones.
+//! None of these secrets is kept: only a SHA-256 hash of each, which is enough to recognise one and useless to anyone who
+//! reads the file, as all are 256 random bits and so can't be guessed or looked up in a list of likely ones.
+//!
+//! A viewer is one of two kinds. A **plain** one is given a single access token that lasts as long as the viewer does. A
+//! **refreshing** one (RFC 6749 section 6, with the rotation and reuse detection of RFC 9700 section 4.14) is given a short-lived
+//! access token and a **refresh token**, and trades the refresh token for a new pair whenever the access token runs out. A
+//! refresh token works once: using it gives a new one, and the old one is remembered, so that it being shown again, which
+//! only a copy of it could do, is noticed and ends the whole session.
 
 use std::fmt;
 
@@ -234,6 +240,11 @@ secret!(
     "The access token a browser sends: a bearer token (RFC 6750)."
 );
 secret!(
+    RefreshToken,
+    "hdr1_",
+    "The token a browser trades, once, for a new access token and a new one of these (RFC 6749 section 6)."
+);
+secret!(
     ExchangeCode,
     "hdc1_",
     "The one-time code in the link the owner is given, which a browser exchanges for a token."
@@ -252,10 +263,30 @@ pub enum ViewerState {
         expires_at: DateTime<Utc>,
         /// When it was last used, to within a few minutes (it is not written on every request).
         last_used_at: Option<DateTime<Utc>>,
+        /// For a refreshing viewer, where its refresh tokens stand.
+        refresh: Option<RefreshState>,
     },
     Revoked {
         at: DateTime<Utc>,
     },
+}
+
+/// The refresh tokens of a refreshing viewer's session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefreshState {
+    /// The one that works now.
+    pub current: SecretHash,
+    /// The one it replaced, and when. Shown again after a moment, it is a retry of a request whose answer was lost; shown
+    /// later, it is a copy, and the session ends.
+    pub previous: Option<Rotated>,
+    /// When the session ends whatever is shown: the viewer's lifetime from when it signed in.
+    pub session_ends_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rotated {
+    pub hash: SecretHash,
+    pub at: DateTime<Utc>,
 }
 
 /// Where a viewer stands, in words for the owner.
@@ -288,8 +319,10 @@ pub struct Viewer {
     pub id: ViewerId,
     pub label: ViewerLabel,
     pub scope: LayoutScope,
-    /// How long the token lasts once the link has been used.
+    /// How long the token lasts once the link has been used; for a refreshing viewer, how long the session does.
     pub lifetime: Duration,
+    /// Whether it is given short-lived access tokens and refresh tokens, and not one that lasts.
+    pub refreshing: bool,
     pub created_at: DateTime<Utc>,
     pub state: ViewerState,
 }
@@ -301,6 +334,14 @@ impl Viewer {
                 code_expires_at, ..
             } if now < *code_expires_at => ViewerStanding::Waiting,
             ViewerState::Pending { .. } => ViewerStanding::LinkExpired,
+            // A refreshing viewer's access token runs out all the time; what matters is its session.
+            ViewerState::Active {
+                refresh: Some(refresh),
+                ..
+            } if now < refresh.session_ends_at => ViewerStanding::Active,
+            ViewerState::Active {
+                refresh: Some(_), ..
+            } => ViewerStanding::Expired,
             ViewerState::Active { expires_at, .. } if now < *expires_at => ViewerStanding::Active,
             ViewerState::Active { .. } => ViewerStanding::Expired,
             ViewerState::Revoked { .. } => ViewerStanding::Revoked,
@@ -447,6 +488,7 @@ mod tests {
             label: ViewerLabel::parse("tablet").unwrap(),
             scope: LayoutScope::All,
             lifetime: Duration::days(90),
+            refreshing: false,
             created_at: now,
             state,
         };
@@ -462,6 +504,7 @@ mod tests {
             token: hash,
             expires_at: at(60),
             last_used_at: None,
+            refresh: None,
         });
         assert_eq!(active.standing(now), ViewerStanding::Active);
         assert_eq!(active.standing(at(60)), ViewerStanding::Expired);

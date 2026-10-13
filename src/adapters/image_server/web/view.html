@@ -73,35 +73,95 @@
   var signin = document.getElementById('signin');
   var signout = document.getElementById('signout');
   var TOKEN_KEY = 'hd.token';
+  var REFRESH_KEY = 'hd.refresh';
+  var EXPIRES_KEY = 'hd.expires';
   var GRANT = 'urn:ietf:params:oauth:grant-type:pre-authorized_code';
-  var memoryToken = null;   // where the token is kept if the browser will not keep it
+  var memory = {};          // where tokens are kept if the browser will not keep them
   var stopped = false;      // signed out: nothing to ask for until a link is opened
+  var ended = false;        // a refresh token was refused: this browser's access has ended
 
   var params = new URLSearchParams(location.search);
   var hash = new URLSearchParams(location.hash.replace(/^#/, ''));
   if (hash.has('kiosk') || params.has('kiosk')) document.body.classList.add('kiosk');
   try { chosen = params.get('layout') || localStorage.getItem('layout') || 'auto'; } catch (e) { chosen = params.get('layout') || 'auto'; }
 
-  function token() {
-    try { return localStorage.getItem(TOKEN_KEY) || memoryToken; } catch (e) { return memoryToken; }
+  function stored(key) {
+    try { return localStorage.getItem(key) || memory[key] || null; } catch (e) { return memory[key] || null; }
   }
 
-  function keep(value) {
-    memoryToken = value;
-    try {
-      if (value) localStorage.setItem(TOKEN_KEY, value); else localStorage.removeItem(TOKEN_KEY);
-    } catch (e) { /* kept in memory only; fine */ }
-    signout.hidden = !value;
+  function token() { return stored(TOKEN_KEY); }
+  function refreshToken() { return stored(REFRESH_KEY); }
+
+  // Keeps what a token answer gave, or (with nothing) forgets it all. A viewer that refreshes is given a refresh token and a
+  // short-lived access token, and the time that runs out is kept to renew it before then.
+  function keep(access, refresh, expiresIn) {
+    var values = {};
+    values[TOKEN_KEY] = access || null;
+    values[REFRESH_KEY] = access ? (refresh || null) : null;
+    values[EXPIRES_KEY] = access && refresh && expiresIn ? String(Date.now() + expiresIn * 1000) : null;
+    Object.keys(values).forEach(function (key) {
+      memory[key] = values[key];
+      try {
+        if (values[key]) localStorage.setItem(key, values[key]); else localStorage.removeItem(key);
+      } catch (e) { /* kept in memory only; fine */ }
+    });
+    signout.hidden = !access;
   }
 
-  // Every request to the API shows the token, as a bearer token and in no other way (never in an address).
-  function api(path, options) {
-    options = options || {};
+  function send(path, options) {
+    options = Object.assign({}, options);
     options.cache = 'no-store';
     options.headers = Object.assign({}, options.headers);
     var held = token();
     if (held) options.headers.Authorization = 'Bearer ' + held;
     return fetch(API + path, options);
+  }
+
+  // Trades the refresh token for a new pair, once, however many tabs ask at the same moment: a refresh token works once, and
+  // asking twice with it is how a copy of one looks. Within the lock the storage is read again, in case another tab renewed
+  // while this one waited. True if there is a good access token now, false if the viewer's access has ended, null if the
+  // server could not be reached (nothing is forgotten, and it is tried again).
+  async function renew() {
+    var before = token();
+    var run = async function () {
+      var current = refreshToken();
+      if (!current) return false;
+      if (token() !== before) return true;
+      var body = new URLSearchParams();
+      body.set('grant_type', 'refresh_token');
+      body.set('refresh_token', current);
+      try {
+        var response = await fetch(API + 'token', {
+          method: 'POST', cache: 'no-store',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+          body: body.toString()
+        });
+        if (response.ok) {
+          var answer = await response.json();
+          keep(answer.access_token, answer.refresh_token, answer.expires_in);
+          return true;
+        }
+        if (response.status === 400) { keep(null); ended = true; return false; }
+        return null;
+      } catch (e) {
+        return null;
+      }
+    };
+    if (navigator.locks && navigator.locks.request) return navigator.locks.request('hd.refresh', run);
+    return run();
+  }
+
+  // Every request to the API shows the token, as a bearer token and in no other way (never in an address). An access token
+  // that is about to run out is renewed first, and one that has been refused is renewed once and the request made again.
+  async function api(path, options) {
+    var expires = Number(stored(EXPIRES_KEY));
+    if (refreshToken() && expires && expires - Date.now() < 60000) await renew();
+    var response = await send(path, options);
+    if (response.status === 401 && refreshToken()) {
+      var renewed = await renew();
+      if (renewed) response = await send(path, options);
+    }
+    return response;
   }
 
   function get(path) {
@@ -136,8 +196,10 @@
         body: body.toString()
       });
       if (response.ok) {
-        keep((await response.json()).access_token);
+        var answer = await response.json();
+        keep(answer.access_token, answer.refresh_token, answer.expires_in);
         stopped = false;
+        ended = false;
         signin.hidden = true;
         return true;
       }
@@ -153,7 +215,7 @@
   }
 
   async function leave() {
-    var held = token();
+    var held = refreshToken() || token();
     keep(null);
     needSignIn('Signed out', 'This browser no longer has access. Open a new link from the owner to look again.');
     if (held) {
@@ -241,7 +303,7 @@
   // A token that is missing or no good ends the asking until the owner's link is opened.
   function unauthorised(response) {
     if (response.status !== 401) return false;
-    if (token()) {
+    if (token() || ended) {
       keep(null);
       needSignIn('This browser\'s access has ended', 'The owner may have revoked it, or it has run out. Ask for a new link.');
     } else {

@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 use super::atomic_file::write_atomically;
 use crate::domain::models::viewer::{
-    LayoutScope, SecretHash, Viewer, ViewerId, ViewerLabel, ViewerState,
+    LayoutScope, RefreshState, Rotated, SecretHash, Viewer, ViewerId, ViewerLabel, ViewerState,
 };
 use crate::domain::services::viewer_registry::ViewerRegistry;
 
@@ -42,6 +42,9 @@ struct Record {
     label: String,
     scope: String,
     lifetime_seconds: i64,
+    /// Added after version 1 first shipped; a file without it is read as a plain viewer.
+    #[serde(default, skip_serializing_if = "is_false")]
+    refreshing: bool,
     created_at: DateTime<Utc>,
     state: State,
 }
@@ -60,10 +63,31 @@ enum State {
         expires_at: DateTime<Utc>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         last_used_at: Option<DateTime<Utc>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refresh: Option<RefreshRecord>,
     },
     Revoked {
         at: DateTime<Utc>,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+/// A refreshing viewer's refresh tokens, as hashes.
+#[derive(Serialize, Deserialize)]
+struct RefreshRecord {
+    current: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous: Option<RotatedRecord>,
+    session_ends_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RotatedRecord {
+    hash: String,
+    at: DateTime<Utc>,
 }
 
 fn write_hash(hash: &SecretHash) -> String {
@@ -88,6 +112,7 @@ impl From<&Viewer> for Record {
             label: viewer.label.to_string(),
             scope: viewer.scope.to_scope_string(),
             lifetime_seconds: viewer.lifetime.num_seconds(),
+            refreshing: viewer.refreshing,
             created_at: viewer.created_at,
             state: match &viewer.state {
                 ViewerState::Pending {
@@ -101,10 +126,19 @@ impl From<&Viewer> for Record {
                     token,
                     expires_at,
                     last_used_at,
+                    refresh,
                 } => State::Active {
                     token: write_hash(token),
                     expires_at: *expires_at,
                     last_used_at: *last_used_at,
+                    refresh: refresh.as_ref().map(|refresh| RefreshRecord {
+                        current: write_hash(&refresh.current),
+                        previous: refresh.previous.as_ref().map(|rotated| RotatedRecord {
+                            hash: write_hash(&rotated.hash),
+                            at: rotated.at,
+                        }),
+                        session_ends_at: refresh.session_ends_at,
+                    }),
                 },
                 ViewerState::Revoked { at } => State::Revoked { at: *at },
             },
@@ -122,6 +156,7 @@ impl Record {
             scope: LayoutScope::from_scope_string(&self.scope)
                 .with_context(|| format!("The scope of {id} is not valid"))?,
             lifetime: Duration::seconds(self.lifetime_seconds),
+            refreshing: self.refreshing,
             created_at: self.created_at,
             state: match self.state {
                 State::Pending {
@@ -135,10 +170,31 @@ impl Record {
                     token,
                     expires_at,
                     last_used_at,
+                    refresh,
                 } => ViewerState::Active {
                     token: read_hash(&token).with_context(|| format!("The token of {id}"))?,
                     expires_at,
                     last_used_at,
+                    refresh: refresh
+                        .map(|refresh| {
+                            anyhow::Ok(RefreshState {
+                                current: read_hash(&refresh.current)
+                                    .with_context(|| format!("The refresh token of {id}"))?,
+                                previous: refresh
+                                    .previous
+                                    .map(|rotated| {
+                                        anyhow::Ok(Rotated {
+                                            hash: read_hash(&rotated.hash).with_context(|| {
+                                                format!("The earlier refresh token of {id}")
+                                            })?,
+                                            at: rotated.at,
+                                        })
+                                    })
+                                    .transpose()?,
+                                session_ends_at: refresh.session_ends_at,
+                            })
+                        })
+                        .transpose()?,
                 },
                 State::Revoked { at } => ViewerState::Revoked { at },
             },
@@ -240,6 +296,23 @@ impl ViewerRegistry for FileViewerRegistry {
             .cloned())
     }
 
+    async fn find_by_refresh(&self, token: &SecretHash) -> anyhow::Result<Option<Viewer>> {
+        Ok(self
+            .viewers
+            .lock()
+            .await
+            .values()
+            .find(|viewer| {
+                matches!(
+                    &viewer.state,
+                    ViewerState::Active { refresh: Some(refresh), .. }
+                        if refresh.current == *token
+                            || refresh.previous.as_ref().is_some_and(|rotated| rotated.hash == *token)
+                )
+            })
+            .cloned())
+    }
+
     async fn find_by_token(&self, token: &SecretHash) -> anyhow::Result<Option<Viewer>> {
         Ok(self
             .viewers
@@ -254,7 +327,7 @@ impl ViewerRegistry for FileViewerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::viewer::{ExchangeCode, ViewerToken};
+    use crate::domain::models::viewer::{ExchangeCode, RefreshToken, ViewerToken};
 
     fn at(minutes: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_790_000_000, 0).unwrap() + Duration::minutes(minutes)
@@ -266,6 +339,7 @@ mod tests {
             label: ViewerLabel::parse(&format!("viewer {seed}")).unwrap(),
             scope: LayoutScope::All,
             lifetime: Duration::days(90),
+            refreshing: false,
             created_at: at(i64::from(seed)),
             state,
         }
@@ -295,6 +369,7 @@ mod tests {
                 token: ViewerToken::generate([2; 32]).hash(),
                 expires_at: at(1000),
                 last_used_at: Some(at(5)),
+                refresh: None,
             },
         );
         let revoked = viewer(3, ViewerState::Revoked { at: at(7) });
@@ -330,6 +405,7 @@ mod tests {
                     token: token.hash(),
                     expires_at: at(1000),
                     last_used_at: None,
+                    refresh: None,
                 },
             ))
             .await
@@ -437,5 +513,87 @@ mod tests {
         assert!(registry.put(&waiting(2)).await.is_err());
 
         assert_eq!(registry.all().await.unwrap().len(), 1);
+    }
+
+    fn refreshing_viewer(seed: u8) -> (Viewer, SecretHash, SecretHash) {
+        let (current, earlier) = (
+            RefreshToken::generate([seed; 32]).hash(),
+            RefreshToken::generate([seed.wrapping_add(100); 32]).hash(),
+        );
+        let mut viewer = viewer(
+            seed,
+            ViewerState::Active {
+                token: ViewerToken::generate([seed; 32]).hash(),
+                expires_at: at(60),
+                last_used_at: Some(at(5)),
+                refresh: Some(RefreshState {
+                    current,
+                    previous: Some(Rotated {
+                        hash: earlier,
+                        at: at(30),
+                    }),
+                    session_ends_at: at(100_000),
+                }),
+            },
+        );
+        viewer.refreshing = true;
+        (viewer, current, earlier)
+    }
+
+    #[tokio::test]
+    async fn a_refreshing_viewer_survives_a_restart_with_both_its_refresh_tokens_and_is_found_by_either()
+     {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = FileViewerRegistry::open(directory.path()).await.unwrap();
+        let (viewer, current, earlier) = refreshing_viewer(6);
+        registry.put(&viewer).await.unwrap();
+        registry.put(&waiting(7)).await.unwrap();
+
+        let reopened = FileViewerRegistry::open(directory.path()).await.unwrap();
+
+        assert_eq!(reopened.get(&viewer.id).await.unwrap().unwrap(), viewer);
+        for token in [&current, &earlier] {
+            assert_eq!(
+                reopened.find_by_refresh(token).await.unwrap().unwrap().id,
+                viewer.id
+            );
+        }
+        // Neither another kind of secret nor one never issued is a refresh token.
+        assert!(
+            reopened
+                .find_by_refresh(&RefreshToken::generate([1; 32]).hash())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            reopened
+                .find_by_refresh(&ViewerToken::generate([6; 32]).hash())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // And only hashes were written.
+        let written = std::fs::read_to_string(directory.path().join(FILE)).unwrap();
+        assert!(!written.contains(&RefreshToken::generate([6; 32]).expose()[5..]));
+    }
+
+    #[tokio::test]
+    async fn a_file_from_before_refresh_tokens_is_read_as_plain_viewers() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join(FILE),
+            r#"{"version":1,"viewers":[{"id":"abcdefgh","label":"old","scope":"layout:*","lifetime_seconds":7776000,"created_at":"2026-10-12T10:00:00Z","state":{"state":"active","token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","expires_at":"2027-01-10T10:00:00Z"}}]}"#,
+        )
+        .unwrap();
+
+        let registry = FileViewerRegistry::open(directory.path()).await.unwrap();
+
+        let viewer = registry.all().await.unwrap().remove(0);
+        assert!(!viewer.refreshing);
+        assert!(matches!(
+            viewer.state,
+            ViewerState::Active { refresh: None, .. }
+        ));
     }
 }

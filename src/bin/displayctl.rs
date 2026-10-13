@@ -130,9 +130,13 @@ enum ViewerAction {
         /// A layout it may look at, as `layout list` shows it. Repeat for several. Left out, all of them.
         #[arg(long = "layout")]
         layouts: Vec<String>,
-        /// How long its token lasts once the link is used, in days (1 to 3650)
+        /// How long its token lasts once the link is used, in days (1 to 3650); with --refresh, how long the session lasts
         #[arg(long, value_name = "DAYS")]
         lifetime_days: Option<u32>,
+        /// Give it short-lived access tokens renewed with a refresh token that changes each time, so that a lost token is
+        /// good for an hour and a copied refresh token is noticed and ends the session
+        #[arg(long)]
+        refresh: bool,
         /// How long the link works, in minutes (1 to 1440)
         #[arg(long, value_name = "MINUTES")]
         code_minutes: Option<u32>,
@@ -255,6 +259,7 @@ async fn run(args: Args) -> Result<(), String> {
                     label,
                     layouts,
                     lifetime_days,
+                    refresh,
                     code_minutes,
                     qr,
                     no_qr,
@@ -265,6 +270,7 @@ async fn run(args: Args) -> Result<(), String> {
                             layouts,
                             lifetime_days,
                             code_minutes,
+                            refresh,
                         })
                         .await
                         .map_err(failed)?;

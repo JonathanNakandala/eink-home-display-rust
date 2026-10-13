@@ -15,7 +15,8 @@ use tokio::sync::Mutex;
 
 use crate::domain::models::layout::Layouts;
 use crate::domain::models::viewer::{
-    ExchangeCode, LayoutScope, Viewer, ViewerError, ViewerId, ViewerLabel, ViewerState, ViewerToken,
+    ExchangeCode, LayoutScope, RefreshState, RefreshToken, Rotated, Viewer, ViewerError, ViewerId,
+    ViewerLabel, ViewerStanding, ViewerState, ViewerToken,
 };
 use crate::domain::services::clock::Clock;
 use crate::domain::services::entropy::Entropy;
@@ -31,6 +32,14 @@ pub const MOST_LIFETIME_DAYS: u32 = 3650;
 /// How long the link works, unless the owner says.
 pub const DEFAULT_CODE_MINUTES: u32 = 15;
 pub const MOST_CODE_MINUTES: u32 = 24 * 60;
+/// How long an access token lasts for a refreshing viewer, unless the server is set otherwise: short enough that one that
+/// is lost or copied is soon no use, long enough that the page is not renewing it all the time.
+pub const DEFAULT_ACCESS_MINUTES: u32 = 60;
+pub const MOST_ACCESS_MINUTES: u32 = 24 * 60;
+/// How soon after a refresh token was used for the last time it may be shown again and be taken for a retry, not a copy: a
+/// request whose answer was lost on a bad connection is sent again with the same token, and ending the session for that would
+/// punish the one who is meant to have it. Shown after this, it is a copy, and ends the session (RFC 9700 section 4.14.2).
+pub const REFRESH_LEEWAY: Duration = Duration::seconds(30);
 /// How often the time a token was last used is written down: a request is far more often than that, and each write is the
 /// whole file.
 const LAST_USED_EVERY: Duration = Duration::minutes(10);
@@ -43,6 +52,8 @@ pub struct IssueRequest {
     pub layouts: Vec<String>,
     pub lifetime_days: Option<u32>,
     pub code_minutes: Option<u32>,
+    /// Give it short-lived access tokens and a refresh token to renew them with, instead of one token that lasts.
+    pub refreshing: bool,
 }
 
 /// A viewer made, and the code for its link, which is shown now and never again.
@@ -68,10 +79,12 @@ pub enum IssueError {
     Failed(#[from] anyhow::Error),
 }
 
-/// A token, made when a code is exchanged, which is the only time it is known.
+/// A token, made when a code is exchanged or a refresh token used, which is the only time it is known.
 #[derive(Debug)]
 pub struct Grant {
     pub token: ViewerToken,
+    /// For a refreshing viewer, the token to ask for the next one with, which replaces the one just used.
+    pub refresh_token: Option<RefreshToken>,
     pub expires_in: Duration,
     pub scope: LayoutScope,
     pub viewer: ViewerId,
@@ -116,6 +129,8 @@ pub struct Viewers {
     registry: Arc<dyn ViewerRegistry>,
     clock: Arc<dyn Clock>,
     entropy: Arc<dyn Entropy>,
+    /// How long an access token lasts for a refreshing viewer.
+    access_lifetime: Duration,
     changes: Mutex<()>,
 }
 
@@ -129,8 +144,15 @@ impl Viewers {
             registry,
             clock,
             entropy,
+            access_lifetime: Duration::minutes(DEFAULT_ACCESS_MINUTES.into()),
             changes: Mutex::new(()),
         }
+    }
+
+    /// How long an access token lasts for a refreshing viewer, in place of the default.
+    pub fn with_access_lifetime(mut self, lifetime: Duration) -> Self {
+        self.access_lifetime = lifetime;
+        self
     }
 
     fn now(&self) -> DateTime<Utc> {
@@ -180,6 +202,7 @@ impl Viewers {
             label,
             scope: LayoutScope::of(scope),
             lifetime: Duration::days(lifetime_days.into()),
+            refreshing: request.refreshing,
             created_at: now,
             state: ViewerState::Pending {
                 code: code.hash(),
@@ -214,11 +237,27 @@ impl Viewers {
             return Err(ExchangeError::InvalidGrant);
         }
         let token = ViewerToken::generate(self.random());
-        let expires_at = now + viewer.lifetime;
+        let session_ends_at = now + viewer.lifetime;
+        let (expires_at, refresh_token, refresh) = if viewer.refreshing {
+            let refresh_token = RefreshToken::generate(self.random());
+            let state = RefreshState {
+                current: refresh_token.hash(),
+                previous: None,
+                session_ends_at,
+            };
+            (
+                (now + self.access_lifetime).min(session_ends_at),
+                Some(refresh_token),
+                Some(state),
+            )
+        } else {
+            (session_ends_at, None, None)
+        };
         viewer.state = ViewerState::Active {
             token: token.hash(),
             expires_at,
             last_used_at: None,
+            refresh,
         };
         // Written before the token is given out, so a token that fails to be kept is never handed over, and the code
         // that is spent is spent.
@@ -226,6 +265,90 @@ impl Viewers {
         log::info!("{} ({}) has signed in", viewer.id, viewer.label);
         Ok(Grant {
             token,
+            refresh_token,
+            expires_in: expires_at - now,
+            scope: viewer.scope,
+            viewer: viewer.id,
+        })
+    }
+
+    /// Trades a refresh token for a new access token and a new refresh token, which replace it. A refresh token that is not
+    /// good in any way (not one, not one there is, one of a session that has ended or been revoked) is `InvalidGrant`.
+    ///
+    /// One that was already used and is shown again later is a copy of one that was given out: the session it belongs to is
+    /// ended at once, so a thief and the owner can't both go on, and whichever of them comes next has to be given a new link.
+    /// Shown again within `REFRESH_LEEWAY`, it is taken for a retry of a request whose answer was lost, and answered afresh.
+    pub async fn refresh(&self, token: &str) -> Result<Grant, ExchangeError> {
+        let Ok(presented) = RefreshToken::parse(token) else {
+            return Err(ExchangeError::InvalidGrant);
+        };
+        let hash = presented.hash();
+        let _changing = self.changes.lock().await;
+        let now = self.now();
+        let Some(mut viewer) = self.registry.find_by_refresh(&hash).await? else {
+            return Err(ExchangeError::InvalidGrant);
+        };
+        if !matches!(viewer.standing(now), ViewerStanding::Active) {
+            return Err(ExchangeError::InvalidGrant);
+        }
+        let ViewerState::Active {
+            last_used_at,
+            refresh: Some(state),
+            ..
+        } = &viewer.state
+        else {
+            return Err(ExchangeError::InvalidGrant);
+        };
+        let retry = state.current != hash;
+        if retry {
+            let rotated = state.previous.expect("found by its earlier refresh token");
+            if now - rotated.at > REFRESH_LEEWAY {
+                viewer.state = ViewerState::Revoked { at: now };
+                self.registry.put(&viewer).await?;
+                log::warn!(
+                    "A refresh token of {} ({}) was used again after it had been replaced, so it was copied: the viewer is revoked",
+                    viewer.id,
+                    viewer.label
+                );
+                return Err(ExchangeError::InvalidGrant);
+            }
+            log::info!(
+                "{} ({}) sent a refresh token again at once; taking it for a retry",
+                viewer.id,
+                viewer.label
+            );
+        }
+        // A retry keeps what the first rotation recorded, so that every retry within the leeway of it is answered, and the leeway
+        // is counted from the first. Any other rotation records the token it replaces.
+        let previous = if retry {
+            state.previous
+        } else {
+            Some(Rotated {
+                hash: state.current,
+                at: now,
+            })
+        };
+        let (session_ends_at, last_used_at) = (state.session_ends_at, *last_used_at);
+        let (token, refresh_token) = (
+            ViewerToken::generate(self.random()),
+            RefreshToken::generate(self.random()),
+        );
+        let expires_at = (now + self.access_lifetime).min(session_ends_at);
+        viewer.state = ViewerState::Active {
+            token: token.hash(),
+            expires_at,
+            last_used_at,
+            refresh: Some(RefreshState {
+                current: refresh_token.hash(),
+                previous,
+                session_ends_at,
+            }),
+        };
+        // Kept before the new tokens are given out, as with the code.
+        self.registry.put(&viewer).await?;
+        Ok(Grant {
+            token,
+            refresh_token: Some(refresh_token),
             expires_in: expires_at - now,
             scope: viewer.scope,
             viewer: viewer.id,
@@ -308,10 +431,14 @@ impl Viewers {
     /// Ends the access of whoever holds `token`, as the holder asks (RFC 7009). A token that is not good, or not there, is
     /// not an error: the answer must not say which tokens exist.
     pub async fn revoke_token(&self, token: &str) -> Result<(), ChangeError> {
-        let Ok(token) = ViewerToken::parse(token) else {
+        // An access token or a refresh token: either ends the whole session.
+        let found = if let Ok(token) = ViewerToken::parse(token) {
+            self.registry.find_by_token(&token.hash()).await?
+        } else if let Ok(token) = RefreshToken::parse(token) {
+            self.registry.find_by_refresh(&token.hash()).await?
+        } else {
             return Ok(());
         };
-        let found = self.registry.find_by_token(&token.hash()).await?;
         match found {
             Some(viewer) => self.revoke(&viewer.id).await.map(|_| ()),
             None => Ok(()),
@@ -358,7 +485,7 @@ mod tests {
     use crate::adapters::clock::FixedClock;
     use crate::adapters::viewer_registry::FileViewerRegistry;
     use crate::domain::models::layout::{Layout, LayoutName};
-    use crate::domain::models::viewer::ViewerStanding;
+    use crate::domain::models::viewer::{ExchangeCode, RefreshToken, ViewerStanding};
 
     /// Randomness that counts, so each secret differs and a test can say what it was.
     struct Counting(AtomicU8);
@@ -498,6 +625,7 @@ mod tests {
                     layouts: vec!["departures".into()],
                     lifetime_days: Some(30),
                     code_minutes: Some(5),
+                    refreshing: false,
                 },
                 &rig.layouts,
             )
@@ -797,6 +925,375 @@ mod tests {
                 .issue(request("one more"), &rig.layouts)
                 .await
                 .is_ok()
+        );
+    }
+
+    // --- refreshing ------------------------------------------------------------------------------------------
+
+    fn refreshing(label: &str) -> IssueRequest {
+        IssueRequest {
+            label: label.to_owned(),
+            refreshing: true,
+            ..IssueRequest::default()
+        }
+    }
+
+    /// A refreshing viewer signed in: its id and what it was first given.
+    async fn signed_in_refreshing(rig: &Rig) -> (ViewerId, Grant) {
+        let issued = rig
+            .viewers
+            .issue(refreshing("tablet"), &rig.layouts)
+            .await
+            .unwrap();
+        let grant = rig.viewers.exchange(issued.code.expose()).await.unwrap();
+        (grant.viewer.clone(), grant)
+    }
+
+    fn refresh_of(grant: &Grant) -> String {
+        grant
+            .refresh_token
+            .as_ref()
+            .expect("a refresh token")
+            .expose()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn a_refreshing_viewer_is_given_a_short_access_token_and_a_refresh_token_and_a_plain_one_is_not()
+     {
+        let rig = rig().await;
+
+        let (id, grant) = signed_in_refreshing(&rig).await;
+
+        assert!(
+            grant
+                .refresh_token
+                .as_ref()
+                .unwrap()
+                .expose()
+                .starts_with("hdr1_")
+        );
+        // An hour for the access token, though the session is ninety days.
+        assert_eq!(grant.expires_in, Duration::minutes(60));
+        let viewer = rig.viewers.get(&id).await.unwrap();
+        assert!(viewer.refreshing);
+        assert_eq!(viewer.standing(rig.viewers.time()), ViewerStanding::Active);
+        // And nothing that can be used is kept in the clear.
+        assert!(!format!("{viewer:?}").contains(&refresh_of(&grant)[5..]));
+
+        let plain = rig
+            .viewers
+            .issue(request("plain"), &rig.layouts)
+            .await
+            .unwrap();
+        let plain_grant = rig.viewers.exchange(plain.code.expose()).await.unwrap();
+        assert!(plain_grant.refresh_token.is_none());
+        assert_eq!(plain_grant.expires_in, Duration::days(90));
+    }
+
+    #[tokio::test]
+    async fn a_refresh_token_is_traded_for_a_new_pair_and_the_session_goes_on_past_the_access_tokens_end()
+     {
+        let rig = rig().await;
+        let (id, first) = signed_in_refreshing(&rig).await;
+        assert!(rig.viewers.authenticate(first.token.expose()).await.is_ok());
+
+        // The access token runs out in an hour; the session does not.
+        rig.clock.set(at(61));
+        assert!(matches!(
+            rig.viewers.authenticate(first.token.expose()).await,
+            Err(AuthError::InvalidToken)
+        ));
+        assert_eq!(
+            rig.viewers
+                .get(&id)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Active
+        );
+
+        let second = rig.viewers.refresh(&refresh_of(&first)).await.unwrap();
+
+        assert_ne!(second.token.expose(), first.token.expose());
+        assert_ne!(refresh_of(&second), refresh_of(&first));
+        assert_eq!(second.expires_in, Duration::minutes(60));
+        assert_eq!(second.scope, first.scope);
+        assert_eq!(second.viewer, id);
+        assert!(
+            rig.viewers
+                .authenticate(second.token.expose())
+                .await
+                .is_ok()
+        );
+        // The one it replaced is not accepted as an access token, nor is a refresh token one.
+        assert!(
+            rig.viewers
+                .authenticate(first.token.expose())
+                .await
+                .is_err()
+        );
+        assert!(
+            rig.viewers
+                .authenticate(&refresh_of(&second))
+                .await
+                .is_err()
+        );
+        // And it goes on: a third pair from the second.
+        rig.clock.set(at(130));
+        let third = rig.viewers.refresh(&refresh_of(&second)).await.unwrap();
+        assert!(rig.viewers.authenticate(third.token.expose()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_refresh_token_shown_again_at_once_is_a_retry_and_later_is_a_copy_that_ends_the_session()
+     {
+        let rig = rig().await;
+        let (id, first) = signed_in_refreshing(&rig).await;
+        let old = refresh_of(&first);
+        let second = rig.viewers.refresh(&old).await.unwrap();
+
+        // The answer was lost and the same request is sent again, a few seconds on: answered afresh, and the session lives.
+        rig.clock.set(at(0) + Duration::seconds(10));
+        let retry = rig.viewers.refresh(&old).await.unwrap();
+        assert!(rig.viewers.authenticate(retry.token.expose()).await.is_ok());
+        // (What the retry replaced is the answer that was lost.)
+        assert!(
+            rig.viewers
+                .authenticate(second.token.expose())
+                .await
+                .is_err()
+        );
+
+        // The same request again (it may have been lost again), still within the leeway of the first: answered too.
+        rig.clock.set(at(0) + Duration::seconds(20));
+        assert!(rig.viewers.refresh(&old).await.is_ok());
+        let current = refresh_of(&rig.viewers.refresh(&old).await.unwrap());
+
+        // A copy, shown long after the one it copies was replaced: the session ends, whoever comes next.
+        rig.clock.set(at(5));
+        assert!(matches!(
+            rig.viewers.refresh(&old).await,
+            Err(ExchangeError::InvalidGrant)
+        ));
+        let viewer = rig.viewers.get(&id).await.unwrap();
+        assert_eq!(viewer.standing(rig.viewers.time()), ViewerStanding::Revoked);
+        // Not even the owner's newest tokens work now: it is a new link they need.
+        assert!(
+            rig.viewers
+                .authenticate(retry.token.expose())
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            rig.viewers.refresh(&current).await,
+            Err(ExchangeError::InvalidGrant)
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_old_token_after_a_plain_rotation_is_a_copy_once_the_leeway_has_passed() {
+        let rig = rig().await;
+        let (id, first) = signed_in_refreshing(&rig).await;
+        let old = refresh_of(&first);
+        rig.viewers.refresh(&old).await.unwrap();
+
+        rig.clock.set(at(0) + REFRESH_LEEWAY + Duration::seconds(1));
+
+        assert!(matches!(
+            rig.viewers.refresh(&old).await,
+            Err(ExchangeError::InvalidGrant)
+        ));
+        assert_eq!(
+            rig.viewers
+                .get(&id)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Revoked
+        );
+    }
+
+    #[tokio::test]
+    async fn what_is_not_a_good_refresh_token_is_not_told_apart_and_changes_nothing() {
+        let rig = rig().await;
+        let (id, grant) = signed_in_refreshing(&rig).await;
+        let plain = rig
+            .viewers
+            .issue(request("plain"), &rig.layouts)
+            .await
+            .unwrap();
+        let plain_grant = rig.viewers.exchange(plain.code.expose()).await.unwrap();
+
+        for bad in [
+            RefreshToken::generate([77; 32]).expose().to_owned(),
+            // The other kinds of secret.
+            grant.token.expose().to_owned(),
+            ExchangeCode::generate([1; 32]).expose().to_owned(),
+            "hdr1_short".to_owned(),
+            String::new(),
+            // Nothing a plain viewer holds is a refresh token.
+            plain_grant.token.expose().to_owned(),
+        ] {
+            assert!(
+                matches!(
+                    rig.viewers.refresh(&bad).await,
+                    Err(ExchangeError::InvalidGrant)
+                ),
+                "{bad:?}"
+            );
+        }
+        // And the viewer is as it was.
+        assert!(rig.viewers.authenticate(grant.token.expose()).await.is_ok());
+        assert_eq!(
+            rig.viewers
+                .get(&id)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Active
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_ends_on_the_day_whatever_was_refreshed_and_the_access_token_never_outlasts_it()
+     {
+        let rig = rig().await;
+        let issued = rig
+            .viewers
+            .issue(
+                IssueRequest {
+                    lifetime_days: Some(1),
+                    ..refreshing("short")
+                },
+                &rig.layouts,
+            )
+            .await
+            .unwrap();
+        let first = rig.viewers.exchange(issued.code.expose()).await.unwrap();
+
+        // Late in a one-day session, an access token is cut to what is left.
+        rig.clock
+            .set(at(0) + Duration::hours(23) + Duration::minutes(30));
+        let late = rig.viewers.refresh(&refresh_of(&first)).await.unwrap();
+        assert_eq!(late.expires_in, Duration::minutes(30));
+
+        rig.clock.set(at(0) + Duration::days(1));
+        assert!(matches!(
+            rig.viewers.refresh(&refresh_of(&late)).await,
+            Err(ExchangeError::InvalidGrant)
+        ));
+        assert!(rig.viewers.authenticate(late.token.expose()).await.is_err());
+        assert_eq!(
+            rig.viewers
+                .get(&first.viewer)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Expired
+        );
+    }
+
+    #[tokio::test]
+    async fn an_access_lifetime_set_by_the_server_applies_and_revoking_ends_the_refresh_token_too()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = FixedClock::at(at(0));
+        let viewers = Viewers::new(
+            Arc::new(FileViewerRegistry::open(directory.path()).await.unwrap()),
+            clock.clone(),
+            Arc::new(Counting(AtomicU8::new(1))),
+        )
+        .with_access_lifetime(Duration::minutes(5));
+        let layouts = Layouts::default();
+        let issued = viewers.issue(refreshing("tablet"), &layouts).await.unwrap();
+        let grant = viewers.exchange(issued.code.expose()).await.unwrap();
+        assert_eq!(grant.expires_in, Duration::minutes(5));
+
+        viewers.revoke(&grant.viewer).await.unwrap();
+
+        assert!(matches!(
+            viewers.refresh(&refresh_of(&grant)).await,
+            Err(ExchangeError::InvalidGrant)
+        ));
+    }
+
+    #[tokio::test]
+    async fn giving_up_either_token_ends_the_session_and_use_does_not_disturb_the_refresh_state() {
+        let rig = rig().await;
+        let (id, first) = signed_in_refreshing(&rig).await;
+        // Using the access token notes the use, and leaves the refresh token working.
+        rig.viewers
+            .authenticate(first.token.expose())
+            .await
+            .unwrap();
+        let second = rig.viewers.refresh(&refresh_of(&first)).await.unwrap();
+        rig.viewers
+            .authenticate(second.token.expose())
+            .await
+            .unwrap();
+        assert!(rig.viewers.refresh(&refresh_of(&second)).await.is_ok());
+
+        // Giving up the refresh token (the page might) ends it all; so would the access token.
+        let third = rig.viewers.refresh(&refresh_of(&second)).await.unwrap();
+        rig.viewers.revoke_token(&refresh_of(&third)).await.unwrap();
+        assert_eq!(
+            rig.viewers
+                .get(&id)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Revoked
+        );
+        assert!(
+            rig.viewers
+                .authenticate(third.token.expose())
+                .await
+                .is_err()
+        );
+
+        let (other, grant) = signed_in_refreshing(&rig).await;
+        rig.viewers
+            .revoke_token(grant.token.expose())
+            .await
+            .unwrap();
+        assert_eq!(
+            rig.viewers
+                .get(&other)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Revoked
+        );
+    }
+
+    #[tokio::test]
+    async fn two_refreshes_of_one_token_at_once_do_not_end_the_session() {
+        let rig = Arc::new(rig().await);
+        let (id, first) = signed_in_refreshing(&rig).await;
+        let token = refresh_of(&first);
+
+        let attempts: Vec<_> = (0..6)
+            .map(|_| {
+                let (rig, token) = (rig.clone(), token.clone());
+                tokio::spawn(async move { rig.viewers.refresh(&token).await.is_ok() })
+            })
+            .collect();
+        for attempt in attempts {
+            assert!(
+                attempt.await.unwrap(),
+                "each is the retry of one that may have been lost"
+            );
+        }
+
+        // They happened together, so none was taken for a copy.
+        assert_eq!(
+            rig.viewers
+                .get(&id)
+                .await
+                .unwrap()
+                .standing(rig.viewers.time()),
+            ViewerStanding::Active
         );
     }
 }
