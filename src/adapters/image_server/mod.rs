@@ -474,6 +474,7 @@ mod api_description {
                     firmware: Some("0.1.0".to_owned()),
                     connection: None,
                     last_image: Some(DeliveryStatus {
+                        layout: "dashboard".to_owned(),
                         format,
                         bytes: 2_592_054,
                         at: at(11),
@@ -493,6 +494,7 @@ mod api_description {
                     replacement_waiting: true,
                     profile: None,
                     replacement_profile: None,
+                    layout: None,
                 },
                 MemberStatus {
                     name: "hall".to_owned(),
@@ -505,6 +507,7 @@ mod api_description {
                     replacement_waiting: false,
                     profile: None,
                     replacement_profile: None,
+                    layout: None,
                 },
             ],
             next_render: Some(at(12)),

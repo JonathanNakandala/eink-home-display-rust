@@ -142,6 +142,9 @@ pub struct MemberStatus {
     pub profile: Option<ProfileStatus>,
     /// What the key that is waiting to take the name says it is, if there is one and it said.
     pub replacement_profile: Option<ProfileStatus>,
+    /// The layout the owner chose for the display, if they did; otherwise it is sent the default.
+    #[schema(examples("departures"))]
+    pub layout: Option<String>,
 }
 
 impl MemberStatus {
@@ -168,6 +171,7 @@ impl MemberStatus {
                 .as_ref()
                 .and_then(|replacement| replacement.profile.as_ref())
                 .map(ProfileStatus::from),
+            layout: pairing.layout.as_ref().map(ToString::to_string),
         }
     }
 }

@@ -16,13 +16,13 @@ mod tests;
 mod transport;
 
 pub use self::api::{
-    ApiError, ApproveRequest, DisplayEntry, DisplayList, DisplayState, ErrorBody, ErrorCode,
-    MAX_WINDOW_MINUTES, OpenWindow, WindowState,
+    ApiError, ApproveRequest, ChooseLayout, DisplayEntry, DisplayList, DisplayState, ErrorBody,
+    ErrorCode, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES, OpenWindow, WindowState,
 };
 pub use self::client::{AdminClient, CallError, describe};
 pub use self::present::{
-    age, approved, describe_entry, describe_list, describe_window, forgotten, label, rejected,
-    revoked,
+    age, approved, describe_entry, describe_layouts, describe_list, describe_window, forgotten,
+    label, layout_changed, rejected, revoked,
 };
 pub use self::routes::{openapi_json, router};
 pub use self::transport::{LocalListener, SOCKET_FILE, bind, connect, default_path};

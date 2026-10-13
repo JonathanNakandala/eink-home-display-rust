@@ -7,8 +7,8 @@ use anyhow::Context;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use home_display_server::adapters::admin::{
-    AdminClient, CallError, approved, describe, describe_entry, describe_list, describe_window,
-    forgotten, rejected, revoked,
+    AdminClient, CallError, approved, describe, describe_entry, describe_layouts, describe_list,
+    describe_window, forgotten, layout_changed, rejected, revoked,
 };
 use home_display_server::bootstrap::load_application_config;
 
@@ -47,6 +47,11 @@ enum Command {
         #[command(subcommand)]
         action: DisplaysAction,
     },
+    /// The layouts there are, and which one a display is given
+    Layout {
+        #[command(subcommand)]
+        action: LayoutAction,
+    },
     /// Approve a display that is waiting, with the code shown on its own panel
     ///
     /// Type the code from the display itself, never from anywhere else: the server does not show it, because a code
@@ -82,6 +87,24 @@ enum DisplaysAction {
     List,
     /// One display
     Show {
+        /// The display's name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum LayoutAction {
+    /// The layouts there are, the default first
+    List,
+    /// Give a display a layout, which it is sent from its next check-in when it doesn't ask for another itself
+    Set {
+        /// The display's name
+        name: String,
+        /// The layout, as `layout list` shows it
+        layout: String,
+    },
+    /// Take a display's layout away, so it is sent the default again
+    Clear {
         /// The display's name
         name: String,
     },
@@ -157,6 +180,23 @@ async fn run(args: Args) -> Result<(), String> {
                         entry.name,
                         describe_entry(&entry, Utc::now(), &Local)
                     );
+                }
+            }
+            Ok(())
+        }
+        Command::Layout { action } => {
+            match action {
+                LayoutAction::List => {
+                    let list = client.layouts().await.map_err(failed)?;
+                    println!("{}", describe_layouts(&list));
+                }
+                LayoutAction::Set { name, layout } => {
+                    let entry = client.choose_layout(&name, &layout).await.map_err(failed)?;
+                    println!("{}", layout_changed(&entry));
+                }
+                LayoutAction::Clear { name } => {
+                    let entry = client.clear_layout(&name).await.map_err(failed)?;
+                    println!("{}", layout_changed(&entry));
                 }
             }
             Ok(())

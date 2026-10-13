@@ -5,7 +5,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use super::api::{DisplayEntry, DisplayList, DisplayState, WindowState};
+use super::api::{DisplayEntry, DisplayList, DisplayState, LayoutList, WindowState};
 
 /// How long ago, or how long to go, in the largest units that matter: `just now`, `3 min`, `2 h 5 min`, `3 days`.
 pub fn age(span: Duration) -> String {
@@ -102,6 +102,9 @@ where
     {
         text.push_str(&format!(" ({profile})"));
     }
+    if let Some(layout) = &entry.layout {
+        text.push_str(&format!("; layout {layout}"));
+    }
     if entry.replacement_waiting && entry.state == DisplayState::Member {
         text.push_str(&format!(
             "; another key asked {} ago to take its name{}. Approve it with the code on the display's own panel, or reject it",
@@ -157,6 +160,41 @@ where
         ));
     }
     lines.join("\n")
+}
+
+/// The layouts there are, as a table, with the default marked.
+pub fn describe_layouts(list: &LayoutList) -> String {
+    let width = list
+        .layouts
+        .iter()
+        .map(|layout| layout.name.len())
+        .max()
+        .unwrap_or(0)
+        .max("NAME".len());
+    let mut lines = vec![format!("{:width$}  DESCRIPTION", "NAME")];
+    for layout in &list.layouts {
+        lines.push(format!(
+            "{:width$}  {}{}",
+            layout.name,
+            layout.description,
+            if layout.default { " (default)" } else { "" }
+        ));
+    }
+    lines.join("\n")
+}
+
+/// What was done, in a sentence, once a display's layout was chosen or cleared.
+pub fn layout_changed(entry: &DisplayEntry) -> String {
+    match &entry.layout {
+        Some(layout) => format!(
+            "{} will be sent the {layout} layout from its next check-in. A layout it asks for itself (`?layout=`) still wins.",
+            entry.name
+        ),
+        None => format!(
+            "{} has no layout of its own, so it is sent the default.",
+            entry.name
+        ),
+    }
 }
 
 /// What was done, in a sentence, once approving worked.

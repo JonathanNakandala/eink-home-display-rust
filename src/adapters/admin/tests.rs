@@ -19,6 +19,7 @@ use crate::adapters::api_doc_testing as doc;
 use crate::adapters::certificate_authority::{self, Create};
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
+use crate::domain::models::layout::{Layout, Layouts};
 
 /// A temporary directory only its owner can use, as the PKI directory is: the admin socket refuses to live in
 /// any other (this system's temporary directories are open to others).
@@ -95,7 +96,12 @@ async fn start() -> Fixture {
     let (enrollment, authority, clock) = enrollment_in(directory.path()).await;
     let socket = default_path(directory.path());
     let listener = bind(&socket).await.unwrap();
-    let app = router(enrollment.clone());
+    let layouts = Layouts::new(vec![
+        Layout::new("dashboard", "Everything"),
+        Layout::new("departures", "Just the trains"),
+    ])
+    .unwrap();
+    let app = router(enrollment.clone(), layouts);
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -387,15 +393,21 @@ fn the_description_lists_exactly_the_routes_there_are() {
     routes.sort();
     // The statuses each can answer with: 400 only where there is input to get wrong, 404 and 409 only where a
     // display is named, 403 only where a code is checked.
-    let expected: [(&str, &str, &[&str]); 9] = [
+    let expected: [(&str, &str, &[&str]); 12] = [
         (
             "DELETE",
             "/v1/displays/{name}",
             &["200", "400", "404", "500"],
         ),
+        (
+            "DELETE",
+            "/v1/displays/{name}/layout",
+            &["200", "400", "404", "500"],
+        ),
         ("DELETE", "/v1/window", &["200", "500"]),
         ("GET", "/v1/displays", &["200", "500"]),
         ("GET", "/v1/displays/{name}", &["200", "400", "404", "500"]),
+        ("GET", "/v1/layouts", &["200", "500"]),
         ("GET", "/v1/window", &["200", "500"]),
         (
             "POST",
@@ -411,6 +423,11 @@ fn the_description_lists_exactly_the_routes_there_are() {
             "POST",
             "/v1/displays/{name}/revoke",
             &["200", "400", "404", "409", "500"],
+        ),
+        (
+            "PUT",
+            "/v1/displays/{name}/layout",
+            &["200", "400", "404", "500"],
         ),
         ("PUT", "/v1/window", &["200", "400", "500"]),
     ];
@@ -545,7 +562,7 @@ mod socket {
         let listener = bind(&path).await.unwrap();
         // And it works.
         let (enrollment, _, _) = enrollment_in(directory.path()).await;
-        let app = router(enrollment);
+        let app = router(enrollment, Layouts::default());
         let server = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -758,6 +775,7 @@ async fn nothing_that_comes_back_from_the_api_is_a_code_a_key_or_a_certificate()
             "certificate_expired",
             "certificate_not_after",
             "changing_keys",
+            "layout",
             "name",
             "profile",
             "renewal_overdue",
@@ -1083,6 +1101,106 @@ async fn revoking_ends_membership_at_once() {
 }
 
 #[tokio::test]
+async fn the_layouts_are_listed_with_the_default_first() {
+    let f = start().await;
+    let list = f.client.layouts().await.unwrap();
+    let names: Vec<_> = list.layouts.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["dashboard", "departures"]);
+    assert_eq!(
+        list.layouts.iter().map(|l| l.default).collect::<Vec<_>>(),
+        [true, false]
+    );
+}
+
+#[tokio::test]
+async fn a_display_can_be_given_a_layout_and_have_it_taken_away() {
+    use crate::domain::models::device_id::DeviceId;
+    let f = start().await;
+    member(&f, "kitchen").await;
+    let kitchen = DeviceId::parse("kitchen").unwrap();
+    assert_eq!(f.client.display("kitchen").await.unwrap().layout, None);
+    assert!(f.enrollment.layout_of(&kitchen).await.is_none());
+
+    let chosen = f
+        .client
+        .choose_layout("kitchen", "departures")
+        .await
+        .unwrap();
+
+    assert_eq!(chosen.layout.as_deref(), Some("departures"));
+    assert_eq!(
+        f.client.display("kitchen").await.unwrap().layout.as_deref(),
+        Some("departures")
+    );
+    assert_eq!(
+        f.client.displays().await.unwrap().displays[0]
+            .layout
+            .as_deref(),
+        Some("departures")
+    );
+    assert_eq!(
+        f.enrollment.layout_of(&kitchen).await.unwrap().as_str(),
+        "departures"
+    );
+    // Its membership is as it was.
+    assert_eq!(chosen.state, DisplayState::Member);
+
+    let cleared = f.client.clear_layout("kitchen").await.unwrap();
+    assert_eq!(cleared.layout, None);
+    assert!(f.enrollment.layout_of(&kitchen).await.is_none());
+}
+
+#[tokio::test]
+async fn a_layout_that_does_not_exist_or_a_display_that_does_not_is_refused_and_nothing_changes() {
+    let f = start().await;
+    member(&f, "kitchen").await;
+
+    for layout in ["nonesuch", "../etc", "", "Dashboard"] {
+        assert_eq!(
+            code_of(f.client.choose_layout("kitchen", layout).await.unwrap_err()),
+            ErrorCode::UnknownLayout,
+            "{layout:?}"
+        );
+    }
+    assert_eq!(
+        code_of(
+            f.client
+                .choose_layout("attic", "departures")
+                .await
+                .unwrap_err()
+        ),
+        ErrorCode::UnknownDisplay
+    );
+    assert_eq!(
+        code_of(f.client.clear_layout("attic").await.unwrap_err()),
+        ErrorCode::UnknownDisplay
+    );
+    assert_eq!(f.client.display("kitchen").await.unwrap().layout, None);
+}
+
+#[tokio::test]
+async fn a_display_waiting_to_be_approved_can_be_given_a_layout_too() {
+    let f = start().await;
+    waiting(&f, "hall").await;
+
+    let entry = f.client.choose_layout("hall", "departures").await.unwrap();
+
+    assert_eq!(entry.state, DisplayState::Waiting);
+    assert_eq!(entry.layout.as_deref(), Some("departures"));
+}
+
+#[test]
+fn the_layout_chosen_is_part_of_what_is_said_about_a_display() {
+    let mut chosen = entry(DisplayState::Member);
+    assert!(!describe_entry(&chosen, Utc::now(), &Utc).contains("layout"));
+    chosen.layout = Some("departures".to_owned());
+    assert!(describe_entry(&chosen, Utc::now(), &Utc).contains("; layout departures"));
+    assert!(layout_changed(&chosen).contains("departures layout"));
+    chosen.layout = None;
+    assert!(layout_changed(&chosen).contains("the default"));
+}
+
+#[tokio::test]
 async fn forgetting_removes_a_display_and_says_what_it_was() {
     let f = start().await;
     member(&f, "kitchen").await;
@@ -1326,6 +1444,7 @@ fn entry(state: DisplayState) -> DisplayEntry {
         replacement_waiting: false,
         profile: None,
         replacement_profile: None,
+        layout: None,
     }
 }
 

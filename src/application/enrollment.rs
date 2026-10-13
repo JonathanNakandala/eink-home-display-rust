@@ -20,6 +20,7 @@ use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::models::pairing::{
     Pairing, PairingCode, PairingState, PublicKey, Replacement, Rollover, renewal_overdue,
 };
@@ -651,6 +652,41 @@ impl Enrollment {
         let _changing = self.changes.lock().await;
         self.sweep(self.now()).await?;
         self.store.all().await
+    }
+
+    /// Chooses the layout `device` is sent when it doesn't ask for one, or with `None` clears the choice so it gets the
+    /// default again. The caller has checked the layout exists. Any display the server knows can be given one,
+    /// including one that has not been approved yet.
+    pub async fn set_layout(
+        &self,
+        device: &DeviceId,
+        layout: Option<LayoutName>,
+    ) -> Result<(), ApproveError> {
+        let _changing = self.changes.lock().await;
+        let mut pairing = self
+            .store
+            .get(device)
+            .await?
+            .ok_or_else(|| ApproveError::Unknown(device.clone()))?;
+        pairing.layout = layout;
+        self.store.put(&pairing).await?;
+        match &pairing.layout {
+            Some(layout) => log::info!("{device} is to be sent the {layout} layout"),
+            None => log::info!("{device} is to be sent the default layout"),
+        }
+        Ok(())
+    }
+
+    /// The layout the owner chose for `device`, if there is one. Read on every request for an image, so it takes no lock
+    /// beyond the store's own and does no sweeping.
+    pub async fn layout_of(&self, device: &DeviceId) -> Option<LayoutName> {
+        match self.store.get(device).await {
+            Ok(pairing) => pairing.and_then(|pairing| pairing.layout),
+            Err(e) => {
+                log::warn!("Could not look up the layout chosen for {device}: {e:#}");
+                None
+            }
+        }
     }
 
     /// One display, if the server knows it.

@@ -14,11 +14,13 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::api::{
-    ApiError, ApproveRequest, BadRequest, DisplayEntry, DisplayList, DisplayPath, DisplayState,
-    ErrorBody, ErrorCode, MAX_WINDOW_MINUTES, OpenWindow, ServerFailure, WindowState,
+    ApiError, ApproveRequest, BadRequest, ChooseLayout, DisplayEntry, DisplayList, DisplayPath,
+    DisplayState, ErrorBody, ErrorCode, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES, OpenWindow,
+    ServerFailure, WindowState,
 };
 use crate::application::enrollment::{ApproveError, Enrollment};
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::models::layout::Layouts;
 use crate::domain::models::pairing::PairingCode;
 
 /// More than any request here needs.
@@ -28,6 +30,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) struct Admin {
     pub(super) enrollment: Arc<Enrollment>,
+    /// The layouts a display can be given.
+    pub(super) layouts: Layouts,
 }
 
 #[derive(OpenApi)]
@@ -43,7 +47,8 @@ pub(super) struct Admin {
     components(schemas(ApiError, ErrorBody, ErrorCode, DisplayState)),
     tags(
         (name = "pairing", description = "Letting displays join."),
-        (name = "displays", description = "The displays the server knows, and what the owner decides about them.")
+        (name = "displays", description = "The displays the server knows, and what the owner decides about them."),
+        (name = "layouts", description = "The ways the picture can be laid out, and which a display is given.")
     )
 )]
 struct ApiDoc;
@@ -58,6 +63,8 @@ fn routes() -> OpenApiRouter<Arc<Admin>> {
         .routes(routes!(approve_display))
         .routes(routes!(reject_display))
         .routes(routes!(revoke_display))
+        .routes(routes!(list_layouts))
+        .routes(routes!(choose_layout, clear_layout))
 }
 
 /// The API description (OpenAPI 3.1), as committed in `config/admin-openapi.json` and served at `/openapi.json`.
@@ -68,7 +75,7 @@ pub fn openapi_json() -> String {
         + "\n"
 }
 
-pub fn router(enrollment: Arc<Enrollment>) -> Router {
+pub fn router(enrollment: Arc<Enrollment>, layouts: Layouts) -> Router {
     let (router, _) = routes().split_for_parts();
     let description: Arc<str> = openapi_json().into();
     router
@@ -96,7 +103,10 @@ pub fn router(enrollment: Arc<Enrollment>) -> Router {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,
         ))
-        .with_state(Arc::new(Admin { enrollment }))
+        .with_state(Arc::new(Admin {
+            enrollment,
+            layouts,
+        }))
 }
 
 fn window_state(admin: &Admin) -> WindowState {
@@ -409,5 +419,105 @@ async fn revoke_display(
         .revoke(&device)
         .await
         .map_err(|e| refused(e, true))?;
+    Ok(Json(entry_of(&admin, &device).await?))
+}
+
+/// The layouts there are, the default first.
+#[utoipa::path(
+    get,
+    path = "/v1/layouts",
+    tag = "layouts",
+    responses(
+        (status = 200, description = "The layouts a display can be given.", body = LayoutList),
+        ServerFailure
+    )
+)]
+async fn list_layouts(State(admin): State<Arc<Admin>>) -> Json<LayoutList> {
+    Json(LayoutList {
+        layouts: admin
+            .layouts
+            .summaries()
+            .into_iter()
+            .map(|layout| LayoutEntry {
+                name: layout.name,
+                description: layout.description,
+                default: layout.default,
+            })
+            .collect(),
+    })
+}
+
+/// Gives a display a layout: from its next check-in it is sent that one when it doesn't ask for another itself (a
+/// `layout` in its own request wins). Any display the server knows can be given one, approved or not.
+#[utoipa::path(
+    put,
+    path = "/v1/displays/{name}/layout",
+    tag = "layouts",
+    params(DisplayPath),
+    request_body(content = ChooseLayout, description = "The layout to give it."),
+    responses(
+        (status = 200, description = "The display, with its layout.", body = DisplayEntry),
+        (status = 404, description = "No display of that name is known, or no such layout.", body = ApiError),
+        BadRequest,
+        ServerFailure
+    )
+)]
+async fn choose_layout(
+    State(admin): State<Arc<Admin>>,
+    Path(DisplayPath { name }): Path<DisplayPath>,
+    body: Result<Json<ChooseLayout>, JsonRejection>,
+) -> Result<Json<DisplayEntry>, ApiError> {
+    let device = device_id(&name)?;
+    let Json(ChooseLayout { layout }) = body.map_err(|rejection| {
+        ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "The body must be JSON like {{\"layout\": \"departures\"}} ({})",
+                rejection.body_text()
+            ),
+        )
+    })?;
+    let layout = admin
+        .layouts
+        .find(&layout)
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::UnknownLayout,
+                "There is no such layout; GET /v1/layouts lists them",
+            )
+        })?
+        .name
+        .clone();
+    admin
+        .enrollment
+        .set_layout(&device, Some(layout))
+        .await
+        .map_err(|e| refused(e, false))?;
+    Ok(Json(entry_of(&admin, &device).await?))
+}
+
+/// Takes a display's chosen layout away, so it is sent the default again.
+#[utoipa::path(
+    delete,
+    path = "/v1/displays/{name}/layout",
+    tag = "layouts",
+    params(DisplayPath),
+    responses(
+        (status = 200, description = "The display, with no layout of its own.", body = DisplayEntry),
+        (status = 404, description = "No display of that name is known.", body = ApiError),
+        BadRequest,
+        ServerFailure
+    )
+)]
+async fn clear_layout(
+    State(admin): State<Arc<Admin>>,
+    Path(DisplayPath { name }): Path<DisplayPath>,
+) -> Result<Json<DisplayEntry>, ApiError> {
+    let device = device_id(&name)?;
+    admin
+        .enrollment
+        .set_layout(&device, None)
+        .await
+        .map_err(|e| refused(e, false))?;
     Ok(Json(entry_of(&admin, &device).await?))
 }

@@ -862,12 +862,20 @@
         "type": "object",
         "description": "The last image a display was sent: which format, how big, and when.",
         "required": [
+          "layout",
           "format",
           "bytes",
           "at",
           "age_seconds"
         ],
         "properties": {
+          "layout": {
+            "type": "string",
+            "description": "Which layout it was.",
+            "examples": [
+              "dashboard"
+            ]
+          },
           "format": {
             "$ref": "#/components/schemas/ImageFormat"
           },
@@ -1246,6 +1254,16 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "layout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The layout the owner chose for the display, if they did; otherwise it is sent the default.",
+            "examples": [
+              "departures"
             ]
           }
         }
