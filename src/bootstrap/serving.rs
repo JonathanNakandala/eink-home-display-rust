@@ -29,6 +29,7 @@ use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::application::handshakes::Handshakes;
 use crate::config::server::{ServerConfig, Transport};
 use crate::domain::models::display::ImageFormat;
+use crate::domain::models::layout::Layouts;
 use crate::domain::services::certificate_authority::CertificateAuthority;
 use crate::domain::services::clock::Clock;
 
@@ -97,6 +98,7 @@ pub async fn start(
     config: &ServerConfig,
     app: Router,
     format: ImageFormat,
+    layouts: Layouts,
     security: Option<Security>,
 ) -> anyhow::Result<Listening> {
     let settings = ServerSettings::from(config);
@@ -127,7 +129,7 @@ pub async fn start(
         ..EstSettings::default()
     };
 
-    let admin = open_admin(config, &enrollment).await?;
+    let admin = open_admin(config, &enrollment, layouts).await?;
     let admin_path = admin.as_ref().map(|admin| admin.path.clone());
     let admin = admin.map(|admin| admin.serving);
 
@@ -213,6 +215,7 @@ struct AdminListener {
 async fn open_admin(
     config: &ServerConfig,
     enrollment: &Arc<Enrollment>,
+    layouts: Layouts,
 ) -> anyhow::Result<Option<AdminListener>> {
     if !config.admin.enabled {
         log::info!("The admin interface is turned off; no display can be paired until it is on");
@@ -220,7 +223,7 @@ async fn open_admin(
     }
     #[cfg(not(unix))]
     {
-        let _ = enrollment;
+        let _ = (enrollment, layouts);
         log::warn!(
             "The admin interface is not available on this platform yet, so the pairing window cannot be opened"
         );
@@ -232,7 +235,7 @@ async fn open_admin(
         let listener = admin::bind(&path).await.with_context(|| {
             "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
         })?;
-        let app = admin::router(enrollment.clone(), super::layouts());
+        let app = admin::router(enrollment.clone(), layouts);
         log::info!("Admin interface on {}", path.display());
         Ok(Some(AdminListener {
             path,
@@ -374,7 +377,14 @@ mod tests {
     async fn started(config: &ServerConfig, init_pki: bool) -> anyhow::Result<Listening> {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
         let security = open_security(config, clock, init_pki).await?;
-        start(config, stand_in_display(), ImageFormat::Bmp, security).await
+        start(
+            config,
+            stand_in_display(),
+            ImageFormat::Bmp,
+            Layouts::default(),
+            security,
+        )
+        .await
     }
 
     /// What plain HTTP answers to a GET of `path`: the status and the body.

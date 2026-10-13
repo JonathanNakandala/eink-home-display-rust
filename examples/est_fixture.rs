@@ -161,7 +161,14 @@ async fn main() -> anyhow::Result<()> {
             }),
         );
 
-    let listening = start_serving(&config, display, ImageFormat::Png, Some(security)).await?;
+    let listening = start_serving(
+        &config,
+        display,
+        ImageFormat::Png,
+        home_display_server::domain::models::layout::Layouts::default(),
+        Some(security),
+    )
+    .await?;
     if let Some(enrollment) = &listening.enrollment {
         enrollment.open_window(Duration::days(1));
     }

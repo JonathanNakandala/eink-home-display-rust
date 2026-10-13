@@ -53,6 +53,41 @@ its own version and its own ETag. `/status` and `/healthz` judge the default lay
 shows as a source called `layout NAME` and makes the service `degraded`, while the others still update. A display
 driven directly (the Waveshare) shows the default layout only, so the others are not drawn for it.
 
+### Layouts of your own
+
+Point `[layouts] directory` at a folder of templates (or pass `--templates-dir` to the `render` preview tool):
+
+```toml
+[layouts]
+directory = "./layouts"
+```
+
+Each `NAME.html` in it is a layout called `NAME` (lower-case letters, digits and hyphens, starting with a letter). A
+file named for a built-in layout, such as `dashboard.html`, replaces it and keeps its place, which is how the default is
+changed; any other name adds a layout after the built-in ones. The page's `<title>` is the description `/layouts` and
+`displayctl layout list` show.
+
+A template is Handlebars, like the ones in [templates/](../templates/), which are the best examples to start from. It is
+a page of exactly the panel's size, and what it can draw is what the dashboard is given:
+
+- `date.currentTime`, `date.currentDay`, `date.currentDate`;
+- `departures`: each board has `name`, `station`, `age` (set when it is from an earlier fetch), `unavailable`, `reason`
+  and `services` (each with `time`, `expected`, `destination`, `countdown`, `status`); `departure_lines` is how many rows
+  they need in all, for sizing the text;
+- `weather_information` (absent when weather is off): `temperature`, `min`, `max`, `feels_like`, `condition`, `sun`,
+  `uv_index`, `precipitation`, `air_quality`; and `weather_age`, `weather_unavailable` and `weather_reason`.
+
+These partials are available: `{{> style}}` (the dashboard's CSS), `{{> header}}` (the clock, sun times and date),
+`{{> departures}}` (the boards), and the weather icons by condition name. The Overpass fonts the built-in layouts use are
+beside the page (`fonts/Overpass/...`); anything else a page needs it has to carry in itself, since it is drawn from a
+temporary folder.
+
+The folder is read once, when the program starts, and every template is drawn with sample data then (everything there,
+sources down, and nothing to show). A template that isn't valid Handlebars, names a partial that doesn't exist, is not UTF-8
+or is over 512 KB stops the program with the file's name and what is wrong, so a mistake shows when you restart, not at the
+first render. Editing a template takes a restart. At most 16 layouts are drawn, since each costs a render on every run.
+Preview one first with `cargo run --bin render -- --templates-dir ./layouts`, which writes every layout, yours included.
+
 ### Choosing a layout for a display
 
 A request for a layout gets it: a display pointed at `/image?layout=departures` and `/plan?layout=departures` shows that

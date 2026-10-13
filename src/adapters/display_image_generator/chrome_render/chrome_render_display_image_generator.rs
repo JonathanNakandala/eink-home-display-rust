@@ -12,10 +12,11 @@ use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
 use headless_chrome::{Browser, FetcherOptions, LaunchOptions, Tab};
 use url::Url;
 
+use super::Templates;
 use crate::domain::models::GlanceData;
 use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::image::ImageData;
-use crate::domain::models::layout::{DEFAULT_LAYOUT, Layout, LayoutName, Layouts};
+use crate::domain::models::layout::{DEFAULT_LAYOUT, LayoutName};
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -25,7 +26,7 @@ const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The layouts there are, the default first: what each is called, what it shows, and its template.
-const LAYOUTS: &[(&str, &str, &str)] = &[
+pub(super) const LAYOUTS: &[(&str, &str, &str)] = &[
     (
         DEFAULT_LAYOUT,
         "Departures with the weather beside them",
@@ -53,17 +54,6 @@ const PARTS: &[(&str, &str)] = &[
         include_str!("../../../../templates/shared/departures.html"),
     ),
 ];
-
-/// The layouts this renderer can draw.
-pub fn layouts() -> Layouts {
-    Layouts::new(
-        LAYOUTS
-            .iter()
-            .map(|(name, description, _)| Layout::new(name, description))
-            .collect(),
-    )
-    .expect("the layouts built in are valid")
-}
 
 /// Files the template references by relative path. They are compiled in and
 /// written next to the rendered HTML, so the binary needs nothing deployed
@@ -126,6 +116,7 @@ pub enum ChromeSource {
 /// launch. It is shut down when the generator is dropped.
 pub struct ChromeRenderDisplayImageGenerator {
     inner: Arc<Inner>,
+    templates: Templates,
 }
 
 struct Inner {
@@ -246,7 +237,14 @@ impl ChromeRenderDisplayImageGenerator {
                 browser: Mutex::new(None),
                 chrome_pid: AtomicU32::new(0),
             }),
+            templates: Templates::built_in(),
         }
+    }
+
+    /// Draws with `templates` (the built-in ones are what it has otherwise).
+    pub fn with_templates(mut self, templates: Templates) -> Self {
+        self.templates = templates;
+        self
     }
 
     /// The page for `layout` as HTML. Fonts are referenced by relative path, so it
@@ -256,21 +254,11 @@ impl ChromeRenderDisplayImageGenerator {
         layout: &LayoutName,
         glance_data: &GlanceData,
     ) -> anyhow::Result<String> {
-        let (_, _, template) = LAYOUTS
-            .iter()
-            .find(|(name, _, _)| *name == layout.as_str())
+        let template = self
+            .templates
+            .source(layout)
             .with_context(|| format!("There is no layout called {layout}"))?;
-        let mut handlebars = Handlebars::new();
-        for (name, part) in PARTS {
-            handlebars.register_partial(name, part)?;
-        }
-        for (name, svg) in ICONS {
-            // Drop the XML prolog and comments: they are invalid inside HTML.
-            let svg = &svg[svg.find("<svg").unwrap_or(0)..];
-            handlebars.register_partial(name, svg)?;
-        }
-        handlebars.register_template_string("page", template)?;
-        Ok(handlebars.render("page", glance_data)?)
+        render_page(template, glance_data)
     }
 
     /// Writes the HTML and its assets to `dir`, returning the HTML file's path.
@@ -284,6 +272,21 @@ impl ChromeRenderDisplayImageGenerator {
         std::fs::write(&page, html)?;
         Ok(page)
     }
+}
+
+/// `template` drawn with `glance_data`, with the partials every layout can use.
+pub(super) fn render_page(template: &str, glance_data: &GlanceData) -> anyhow::Result<String> {
+    let mut handlebars = Handlebars::new();
+    for (name, part) in PARTS {
+        handlebars.register_partial(name, part)?;
+    }
+    for (name, svg) in ICONS {
+        // Drop the XML prolog and comments: they are invalid inside HTML.
+        let svg = &svg[svg.find("<svg").unwrap_or(0)..];
+        handlebars.register_partial(name, svg)?;
+    }
+    handlebars.register_template_string("page", template)?;
+    Ok(handlebars.render("page", glance_data)?)
 }
 
 impl Inner {
@@ -520,7 +523,7 @@ mod tests {
 
     #[test]
     fn the_dashboard_is_the_default_layout_and_every_layout_renders_its_own_page() {
-        let layouts = layouts();
+        let layouts = Templates::built_in().layouts();
         assert_eq!(layouts.default_layout().name.as_str(), DEFAULT_LAYOUT);
         let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
 
