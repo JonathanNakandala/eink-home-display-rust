@@ -144,8 +144,11 @@ pub struct LayoutEntry {
     /// What the layout shows.
     #[schema(examples("Departures alone, in larger type"))]
     pub description: String,
-    /// What a display with no layout chosen is sent.
+    /// The layout a display with none chosen is given if the schedule doesn't say otherwise.
     pub default: bool,
+    /// What a display with none chosen is sent now: the default, unless the layout schedule says another for this
+    /// time.
+    pub current: bool,
 }
 
 /// The layout to give a display.

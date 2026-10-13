@@ -1131,7 +1131,8 @@
         "required": [
           "name",
           "description",
-          "default"
+          "default",
+          "current"
         ],
         "properties": {
           "name": {
@@ -1150,7 +1151,11 @@
           },
           "default": {
             "type": "boolean",
-            "description": "Whether this is the layout a request without `layout` gets."
+            "description": "Whether this is the first layout, the one a display is sent when nothing else says."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Whether a display with no layout of its own is sent this one now: the default, unless the layout schedule\nputs another in its place for this time of day."
           },
           "version": {
             "type": [

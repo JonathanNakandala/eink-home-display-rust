@@ -73,20 +73,20 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| CacheConfig::default().directory),
     );
     cache.ensure_exists()?;
-    let templates = bootstrap::load_templates(
+    let loaded = bootstrap::load_layouts(
         &config
             .as_ref()
             .map(|config| config.layouts.clone())
             .unwrap_or_default(),
         args.templates_dir.as_deref(),
     )?;
-    let layouts = templates.layouts();
+    let layouts = loaded.layouts;
     let generator = ChromeRenderDisplayImageGenerator::new(
         cache.chrome(),
         DEFAULT_IDLE_TIMEOUT,
         ChromeSource::from(args.bundled_chrome),
     )
-    .with_templates(templates);
+    .with_templates(loaded.templates);
 
     for kind in kinds {
         let name = file_name(kind);

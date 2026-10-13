@@ -28,7 +28,8 @@
       "description": "The layouts the picture can be drawn in, besides the ones built in.",
       "$ref": "#/$defs/LayoutsConfig",
       "default": {
-        "directory": null
+        "directory": null,
+        "schedule": []
       }
     },
     "limits": {
@@ -301,6 +302,37 @@
         }
       ]
     },
+    "LayoutRuleConfig": {
+      "description": "When a layout is wanted.",
+      "type": "object",
+      "properties": {
+        "days": {
+          "description": "The days it applies on, as `mon`, `tue`... (or `monday`...). Every day if left out. For a rule that runs overnight,\nthe day it starts on.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "from": {
+          "description": "From this time of day, `HH:MM` on the 24-hour clock, inclusive.",
+          "type": "string"
+        },
+        "layout": {
+          "description": "The layout, as `displayctl layout list` shows it.",
+          "type": "string"
+        },
+        "until": {
+          "description": "Until this time, exclusive. Earlier than `from`, the rule runs overnight into the next day.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "layout",
+        "from",
+        "until"
+      ]
+    },
     "LayoutsConfig": {
       "description": "Layouts of your own. Every layout is drawn on each refresh, and a display is sent the one chosen for it (see\n`displayctl layout`) or the default, the first built in.",
       "type": "object",
@@ -312,6 +344,14 @@
             "null"
           ],
           "default": null
+        },
+        "schedule": {
+          "description": "Which layout a display with none chosen for it is sent at which time of day, in the server's zone: for example the\ndepartures alone on weekday mornings. Rules are tried in order and the first one in force wins; outside every rule\nthe display gets the default (the first built-in layout). A layout chosen for a display with `displayctl layout set`,\nor asked for with `?layout=`, is not affected. A rule for a layout that doesn't exist stops the program at start-up.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LayoutRuleConfig"
+          }
         }
       }
     },

@@ -57,8 +57,8 @@ async fn main() -> Result<()> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(zone));
 
     // Read and checked before anything runs, so a template with a mistake in it stops the program here.
-    let templates = bootstrap::load_templates(&config.layouts, None)?;
-    let layouts = templates.layouts();
+    let layouts = bootstrap::load_layouts(&config.layouts, None)?;
+    let served_layouts = layouts.layouts.clone();
     let configured = config
         .schedule
         .as_ref()
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
             DEFAULT_IDLE_TIMEOUT,
             chrome_source,
             Arc::new(DirectoryImages::new(config.server.directory.clone())),
-            templates,
+            layouts,
             clock,
         )?
         .run(location)
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
     let image_is_current = config.display.kind.fetches_image()
         && launch::served_image_is_current(
             images.as_ref(),
-            &layouts.default_layout().name,
+            &served_layouts.default_layout().name,
             config.display.image_format.into(),
             &schedule,
             now,
@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
         PERIODIC_IDLE_TIMEOUT,
         chrome_source,
         images.clone(),
-        templates,
+        layouts,
         clock.clone(),
     )?
     .with_observer(Arc::new(launch::AttemptMarker::new(marker, clock.clone())))
@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
         schedule.clone(),
         settings.timing,
         Handles {
-            layouts: layouts.clone(),
+            layouts: served_layouts.clone(),
             refresh: refresh.clone(),
             status: status.clone(),
             devices: devices.clone(),
@@ -167,8 +167,14 @@ async fn main() -> Result<()> {
         clock.clone(),
     );
     // Opened before anything runs, so a port that is taken stops the program here too.
-    let listening =
-        bootstrap::start_serving(&config.server, display_routes, format, layouts, security).await?;
+    let listening = bootstrap::start_serving(
+        &config.server,
+        display_routes,
+        format,
+        served_layouts,
+        security,
+    )
+    .await?;
     tokio::select! {
         result = periodic => result,
         result = listening.run() => result,

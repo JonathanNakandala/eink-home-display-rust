@@ -1088,7 +1088,8 @@
         "required": [
           "name",
           "description",
-          "default"
+          "default",
+          "current"
         ],
         "properties": {
           "name": {
@@ -1106,7 +1107,11 @@
           },
           "default": {
             "type": "boolean",
-            "description": "What a display with no layout chosen is sent."
+            "description": "The layout a display with none chosen is given if the schedule doesn't say otherwise."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "What a display with none chosen is sent now: the default, unless the layout schedule says another for this\ntime."
           }
         }
       },

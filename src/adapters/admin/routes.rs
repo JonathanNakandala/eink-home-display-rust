@@ -436,12 +436,13 @@ async fn list_layouts(State(admin): State<Arc<Admin>>) -> Json<LayoutList> {
     Json(LayoutList {
         layouts: admin
             .layouts
-            .summaries()
+            .summaries(admin.enrollment.local_now())
             .into_iter()
             .map(|layout| LayoutEntry {
                 name: layout.name,
                 description: layout.description,
                 default: layout.default,
+                current: layout.current,
             })
             .collect(),
     })
