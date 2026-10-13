@@ -30,10 +30,13 @@ use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::application::handshakes::Handshakes;
 use crate::config::server::{ServerConfig, Transport};
 use crate::domain::models::display::ImageFormat;
-use crate::domain::models::layout::Layouts;
+use crate::domain::models::layout::{LayoutName, Layouts};
+use crate::domain::models::schedule::Schedule;
 use crate::domain::services::certificate_authority::CertificateAuthority;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::layout_choices::LayoutChoices;
+use crate::domain::services::published_images::PublishedImages;
+use image_server::Handles;
 
 /// The authority's certificate ending within this long is worth a warning at start-up: nothing yet
 /// carries displays across a change of authority, so every one would have to be paired again.
@@ -104,11 +107,13 @@ pub async fn open_security(
     }))
 }
 
-/// Opens what `config.transport` calls for, with `app` as the display routes. `security` is what
+/// Opens what `config.transport` calls for, with `app` as the display routes and `web`, if there is one, the page for a
+/// browser, which decides for itself who may use it and so is never put behind the certificate gate. `security` is what
 /// `open_security` returned, which must be something when the transport serves HTTPS.
 pub async fn start(
     config: &ServerConfig,
     app: Router,
+    web: Option<Router>,
     format: ImageFormat,
     layouts: Layouts,
     security: Option<Security>,
@@ -116,6 +121,7 @@ pub async fn start(
     let settings = ServerSettings::from(config);
     log::info!("Displays reach this server by: {}", config.transport.name());
     if !config.transport.serves_https() {
+        let app = with_web(app, web);
         let http = image_server::bind_http(&settings)?;
         let address = http.local_addr()?;
         return Ok(Listening {
@@ -150,7 +156,11 @@ pub async fn start(
     if config.transport.serves_http() {
         // Both. The plain side serves as always; the HTTPS side adds the certificate to who is asking.
         let http = image_server::bind_http(&settings)?;
-        let secure_app = guarded(app.clone(), enrollment.clone(), Access::Open);
+        let secure_app = with_web(
+            guarded(app.clone(), enrollment.clone(), Access::Open),
+            web.clone(),
+        );
+        let app = with_web(app, web);
         let https = EstServer::bind(
             est_settings,
             authority.clone(),
@@ -181,7 +191,7 @@ pub async fn start(
     }
 
     // HTTPS only. Nothing listens in plain, so the announcement points straight at the HTTPS port.
-    let secure_app = guarded(app, enrollment.clone(), Access::Members);
+    let secure_app = with_web(guarded(app, enrollment.clone(), Access::Members), web);
     let https = EstServer::bind(
         est_settings,
         authority.clone(),
@@ -213,6 +223,14 @@ pub async fn start(
             }
         }),
     })
+}
+
+/// `routes` with the page for a browser beside them, if there is one.
+fn with_web(routes: Router, web: Option<Router>) -> Router {
+    match web {
+        Some(web) => routes.merge(web),
+        None => routes,
+    }
 }
 
 type Serving = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -348,6 +366,49 @@ async fn open_authority(
     Ok((authority, enrollment))
 }
 
+/// The page for a browser, if `[server.web]` turns it on, and what it shows: a layout the page may show that there is not is
+/// an error that stops the start. It says plainly, when it starts, who can see the picture through it.
+pub fn web_routes(
+    config: &ServerConfig,
+    images: Arc<dyn PublishedImages>,
+    format: ImageFormat,
+    schedule: Schedule,
+    handles: Handles,
+    clock: Arc<dyn Clock>,
+) -> anyhow::Result<Option<Router>> {
+    let web = &config.web;
+    if !web.enabled {
+        return Ok(None);
+    }
+    web.check().map_err(anyhow::Error::msg)?;
+    let settings = image_server::WebSettings {
+        layouts: web
+            .layouts
+            .iter()
+            .map(|name| LayoutName::parse(name).map_err(|e| anyhow::anyhow!("{name:?}: {e}")))
+            .collect::<Result<_, _>>()?,
+    };
+    let router = image_server::web_router(
+        &settings,
+        images,
+        format,
+        schedule,
+        ServerSettings::from(config).timing,
+        handles,
+        clock,
+    )
+    .map_err(anyhow::Error::msg)?;
+    log::warn!(
+        "The web view at /view is open: anyone who can reach this server can see the picture{}",
+        if config.transport.requires_certificate() {
+            ", with no certificate, which /image still asks for"
+        } else {
+            ""
+        }
+    );
+    Ok(Some(router))
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -391,11 +452,20 @@ mod tests {
     }
 
     async fn started(config: &ServerConfig, init_pki: bool) -> anyhow::Result<Listening> {
+        started_with_web(config, init_pki, None).await
+    }
+
+    async fn started_with_web(
+        config: &ServerConfig,
+        init_pki: bool,
+        web: Option<Router>,
+    ) -> anyhow::Result<Listening> {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
         let security = open_security(config, clock, init_pki).await?;
         start(
             config,
             stand_in_display(),
+            web,
             ImageFormat::Bmp,
             Layouts::default(),
             security,
@@ -529,6 +599,72 @@ mod tests {
             .unwrap();
         assert_eq!(secure_get(&harness, "/who", Some(&kitchen)).await.0, 403);
         assert_eq!(plain_get(http, "/who").await, (200, "anonymous".to_owned()));
+    }
+
+    /// Stands in for the page for a browser: what matters here is where it is mounted.
+    fn a_page() -> Router {
+        Router::new().route("/view", axum::routing::get(|| async { "the page" }))
+    }
+
+    #[tokio::test]
+    async fn the_page_for_a_browser_is_served_on_plain_http_only_when_there_is_one() {
+        let pki = tempfile::tempdir().unwrap();
+        let without = started_with_web(&config(Transport::Http, pki.path()), true, None)
+            .await
+            .unwrap();
+        let without_address = without.http.expect("plain HTTP is served");
+        let _without_server = tokio::spawn(without.run());
+        let with = started_with_web(&config(Transport::Http, pki.path()), true, Some(a_page()))
+            .await
+            .unwrap();
+        let with_address = with.http.expect("plain HTTP is served");
+        let _with_server = tokio::spawn(with.run());
+
+        assert_eq!(plain_get(without_address, "/view").await.0, 404);
+        assert_eq!(
+            plain_get(with_address, "/view").await,
+            (200, "the page".to_owned())
+        );
+        // The display routes are as they were.
+        assert_eq!(
+            plain_get(with_address, "/image").await,
+            (200, "image-bytes".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_page_for_a_browser_is_outside_the_certificate_gate_which_the_display_routes_stay_behind()
+     {
+        let pki = tempfile::tempdir().unwrap();
+        let listening =
+            started_with_web(&config(Transport::Https, pki.path()), true, Some(a_page()))
+                .await
+                .unwrap();
+        let harness = harness_for(listening, pki);
+
+        // A browser has no certificate, and gets the page; a display's route still needs one.
+        assert_eq!(
+            secure_get(&harness, "/view", None).await,
+            (200, "the page".to_owned())
+        );
+        assert_eq!(secure_get(&harness, "/image", None).await.0, 403);
+    }
+
+    #[tokio::test]
+    async fn prefer_https_puts_the_page_on_both_listeners() {
+        let pki = tempfile::tempdir().unwrap();
+        let listening = started_with_web(
+            &config(Transport::PreferHttps, pki.path()),
+            true,
+            Some(a_page()),
+        )
+        .await
+        .unwrap();
+        let http = listening.http.expect("plain HTTP is served");
+        let harness = harness_for(listening, pki);
+
+        assert_eq!(plain_get(http, "/view").await.0, 200);
+        assert_eq!(secure_get(&harness, "/view", None).await.0, 200);
     }
 
     #[tokio::test]

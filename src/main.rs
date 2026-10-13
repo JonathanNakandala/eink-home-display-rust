@@ -151,26 +151,36 @@ async fn main() -> Result<()> {
     // The certificate authority and the list of displays are opened first, so that a missing or unreadable
     // one stops the program here, and so `/status` can report on them.
     let security = bootstrap::open_security(&config.server, clock.clone(), args.init_pki).await?;
+    let handles = Handles {
+        layouts: served_layouts.clone(),
+        refresh: refresh.clone(),
+        status: status.clone(),
+        devices: devices.clone(),
+        layout_choices: security.as_ref().map(|s| s.layout_choices.clone()),
+        members: security.as_ref().map(|s| s.enrollment.clone()),
+        handshakes: security.as_ref().map(|s| s.handshakes.clone()),
+    };
+    let web = bootstrap::web_routes(
+        &config.server,
+        images.clone(),
+        format,
+        schedule.clone(),
+        handles.clone(),
+        clock.clone(),
+    )?;
     let display_routes = router(
         images,
         format,
         schedule.clone(),
         settings.timing,
-        Handles {
-            layouts: served_layouts.clone(),
-            refresh: refresh.clone(),
-            status: status.clone(),
-            devices: devices.clone(),
-            layout_choices: security.as_ref().map(|s| s.layout_choices.clone()),
-            members: security.as_ref().map(|s| s.enrollment.clone()),
-            handshakes: security.as_ref().map(|s| s.handshakes.clone()),
-        },
+        handles,
         clock.clone(),
     );
     // Opened before anything runs, so a port that is taken stops the program here too.
     let listening = bootstrap::start_serving(
         &config.server,
         display_routes,
+        web,
         format,
         served_layouts,
         security,

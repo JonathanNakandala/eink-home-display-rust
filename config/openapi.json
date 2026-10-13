@@ -809,6 +809,182 @@
           }
         }
       }
+    },
+    "/view": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The page.",
+        "operationId": "page",
+        "responses": {
+          "200": {
+            "description": "A web page that shows the picture and keeps it up to date.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/view/api/image": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "A layout's picture, as a PNG (a BMP if there is no PNG).",
+        "operationId": "image",
+        "parameters": [
+          {
+            "name": "layout",
+            "in": "query",
+            "description": "One of the names `/view/api/layouts` lists, or `auto`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "departures"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The picture. Always a PNG when there is one, whatever the request accepts: this is for a browser, which can show it.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              },
+              "etag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Identifies this file's bytes."
+              }
+            },
+            "content": {
+              "image/png": {},
+              "image/bmp": {}
+            }
+          },
+          "304": {
+            "description": "The client's `If-None-Match` names this picture. No body."
+          },
+          "404": {
+            "description": "Nothing has been rendered yet, or there is no such layout.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An image exists but could not be read."
+          }
+        }
+      }
+    },
+    "/view/api/layouts": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The layouts the page may show.",
+        "operationId": "layouts",
+        "responses": {
+          "200": {
+            "description": "The layouts, and which one `auto` means now.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayoutItems"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/view/api/state": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The state of a layout's picture: the same facts `/plan` gives a display, without recording anyone.",
+        "operationId": "state",
+        "parameters": [
+          {
+            "name": "layout",
+            "in": "query",
+            "description": "One of the names `/view/api/layouts` lists, or `auto`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "departures"
+          },
+          {
+            "name": "have",
+            "in": "query",
+            "description": "The version the page shows, so the answer can say whether it has changed.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "example": 1791463200
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The picture's version, its age, whether it is stale, and how long to wait before asking again.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing has been rendered yet, or there is no such layout (the body lists the ones there are).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server could not work the state out."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1171,6 +1347,46 @@
           }
         }
       },
+      "LayoutItem": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "current"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What to put after `layout=`.",
+            "examples": [
+              "departures"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "What the layout shows."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Whether this is the one `auto` means now."
+          }
+        }
+      },
+      "LayoutItems": {
+        "type": "object",
+        "required": [
+          "layouts"
+        ],
+        "properties": {
+          "layouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayoutItem"
+            },
+            "description": "The layouts the page may show, the first being what it falls back to."
+          }
+        }
+      },
       "LayoutList": {
         "type": "object",
         "required": [
@@ -1347,6 +1563,76 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "Plan": {
+        "type": "object",
+        "description": "What a display is told after it asks: which image is current, whether it is out of date, and when to come back.",
+        "required": [
+          "version",
+          "changed",
+          "stale",
+          "pending",
+          "next_seconds",
+          "age_seconds",
+          "timezone",
+          "utc_offset_seconds"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "When the image was rendered, in seconds since 1970. Newer images have larger versions.",
+            "examples": [
+              1791463200
+            ],
+            "minimum": 0
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "False when the display said it already shows this version, so it can skip the download and refresh."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "A scheduled render is long overdue, so the image is older than it should be."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "A render is due or running, so a new image is about to appear."
+          },
+          "next_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the display should sleep before asking again.",
+            "examples": [
+              600
+            ],
+            "minimum": 0
+          },
+          "age_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Time since the image was rendered.",
+            "examples": [
+              100
+            ],
+            "minimum": 0
+          },
+          "timezone": {
+            "type": "string",
+            "description": "The zone the server works in (an IANA name such as `Europe/London`), so the display needn't be told it in\nits own configuration, where it could disagree.",
+            "examples": [
+              "Europe/London"
+            ]
+          },
+          "utc_offset_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How far ahead of UTC that zone is right now, in seconds (3600 in the UK in summer). A display has no\ntimezone database, so this is what it needs to show local time; it is right until the next clock change.",
+            "examples": [
+              3600
+            ]
           }
         }
       },
@@ -1591,6 +1877,29 @@
             "type": "string"
           }
         }
+      },
+      "ViewState": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Plan"
+          },
+          {
+            "type": "object",
+            "required": [
+              "layout"
+            ],
+            "properties": {
+              "layout": {
+                "type": "string",
+                "description": "The layout this is the state of: what `auto` came to.",
+                "examples": [
+                  "dashboard"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Which render the picture is, how old, and when to look again."
       }
     }
   },
@@ -1602,6 +1911,10 @@
     {
       "name": "monitoring",
       "description": "How the service is doing, for monitors and for the owner."
+    },
+    {
+      "name": "web",
+      "description": "A page for a web browser to look at the picture, and what it asks of the server. Served only when [server.web] is enabled."
     }
   ]
 }

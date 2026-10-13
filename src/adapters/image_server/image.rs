@@ -183,7 +183,7 @@ pub(super) async fn image(
 
 /// A name for these bytes: a strong validator, since it is the hash of the file itself, so a render that
 /// comes out the same has the same one and a different one never does. Per format, as the bytes differ.
-fn etag_of(bytes: &[u8]) -> String {
+pub(super) fn etag_of(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
     format!("\"{hex}\"")
@@ -191,7 +191,7 @@ fn etag_of(bytes: &[u8]) -> String {
 
 /// Whether an `If-None-Match` value names `etag`: `*`, or any of a comma-separated list. Compared weakly, as
 /// the header is (RFC 9110 section 13.1.2), so a `W/` the client or a proxy added makes no difference.
-fn names(header: &str, etag: &str) -> bool {
+pub(super) fn names(header: &str, etag: &str) -> bool {
     header.trim() == "*"
         || header
             .split(',')

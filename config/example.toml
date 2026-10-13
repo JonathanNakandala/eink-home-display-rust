@@ -91,6 +91,11 @@ require_channel_binding = false
 [server.admin]
 enabled = true
 
+[server.web]
+enabled = false
+open = false
+layouts = []
+
 [schedule]
 cron = ["*/10 * * * *"]
 
