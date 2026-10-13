@@ -5,7 +5,10 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use super::api::{DisplayEntry, DisplayList, DisplayState, LayoutList, WindowState};
+use super::api::{
+    DisplayEntry, DisplayList, DisplayState, LayoutList, ViewerEntry, ViewerIssued, ViewerList,
+    ViewerStatus, WindowState,
+};
 
 /// How long ago, or how long to go, in the largest units that matter: `just now`, `3 min`, `2 h 5 min`, `3 days`.
 pub fn age(span: Duration) -> String {
@@ -194,6 +197,113 @@ pub fn layout_changed(entry: &DisplayEntry) -> String {
             "{} has no layout of its own, so it is sent the default.",
             entry.name
         ),
+    }
+}
+
+/// The viewers, as a table.
+pub fn describe_viewers<Z: chrono::TimeZone>(
+    list: &ViewerList,
+    now: DateTime<Utc>,
+    zone: &Z,
+) -> String
+where
+    Z::Offset: std::fmt::Display,
+{
+    if list.viewers.is_empty() {
+        return "There are no viewers. Make one with `displayctl viewer create --label NAME`."
+            .to_owned();
+    }
+    let width = list
+        .viewers
+        .iter()
+        .map(|viewer| viewer.label.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("LABEL".len());
+    let mut lines = vec![format!(
+        "{:8}  {:width$}  {:12}  DETAIL",
+        "ID", "LABEL", "STATE"
+    )];
+    for viewer in &list.viewers {
+        let detail = match viewer.status {
+            ViewerStatus::Waiting => format!(
+                "link works for {} more; {}",
+                viewer
+                    .link_expires_at
+                    .map_or_else(|| "a while".to_owned(), |at| age(at - now)),
+                viewer.scope
+            ),
+            ViewerStatus::LinkExpired => {
+                "its link was not used in time; revoke it and make another".to_owned()
+            }
+            ViewerStatus::Active => format!(
+                "until {}; {}{}",
+                viewer.expires_at.map_or_else(String::new, |at| at
+                    .with_timezone(zone)
+                    .format("%Y-%m-%d")
+                    .to_string()),
+                viewer.scope,
+                viewer
+                    .last_used_at
+                    .map_or_else(String::new, |at| format!("; used {} ago", age(now - at)))
+            ),
+            ViewerStatus::Expired => "its token has run out; make another viewer".to_owned(),
+            ViewerStatus::Revoked => "revoked; forget it to free its place".to_owned(),
+        };
+        lines.push(format!(
+            "{:8}  {:width$}  {:12}  {detail}",
+            viewer.id,
+            viewer.label,
+            viewer_label(viewer.status)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn viewer_label(status: ViewerStatus) -> &'static str {
+    match status {
+        ViewerStatus::Waiting => "waiting",
+        ViewerStatus::LinkExpired => "link expired",
+        ViewerStatus::Active => "active",
+        ViewerStatus::Expired => "expired",
+        ViewerStatus::Revoked => "revoked",
+    }
+}
+
+/// What to say when a viewer was made: the link, once, and what it will and won't do.
+pub fn viewer_issued<Z: chrono::TimeZone>(
+    issued: &ViewerIssued,
+    now: DateTime<Utc>,
+    zone: &Z,
+) -> String
+where
+    Z::Offset: std::fmt::Display,
+{
+    format!(
+        "Made the viewer {} ({}), who may look at: {}.\n\n\
+         Open this in the browser to sign it in. It works once, and for {} more (until {}), and is not shown again:\n\n  {}\n\n\
+         The part after # never leaves the browser. If it is lost or not used in time, revoke the viewer and make another.",
+        issued.viewer.id,
+        issued.viewer.label,
+        issued.viewer.scope,
+        age(issued.link_expires_at - now),
+        issued.link_expires_at.with_timezone(zone).format("%H:%M"),
+        issued.link
+    )
+}
+
+/// What was done, in a sentence, once a viewer was revoked or forgotten.
+pub fn viewer_changed(entry: &ViewerEntry, forgotten: bool) -> String {
+    if forgotten {
+        format!(
+            "Forgot the viewer {} ({}). Its place is free, and its token, if it had one, no longer works.",
+            entry.id, entry.label
+        )
+    } else {
+        format!(
+            "Revoked the viewer {} ({}). Its link or token stops working now.",
+            entry.id, entry.label
+        )
     }
 }
 

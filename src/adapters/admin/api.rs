@@ -158,6 +158,128 @@ pub struct LayoutEntry {
     pub current: bool,
 }
 
+/// What a viewer is asking of the server to be: the label the owner will know it by, and what it may see.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+pub struct IssueViewer {
+    /// What to call it, from 1 to 40 characters: "kitchen tablet".
+    #[schema(examples("kitchen tablet"))]
+    pub label: String,
+    /// The layouts it may look at, by name. Left out or empty, all of them.
+    #[serde(default)]
+    pub layouts: Vec<String>,
+    /// How long its token lasts once the link is used, from 1 to 3650 days. Left out, 90.
+    #[serde(default)]
+    pub lifetime_days: Option<u32>,
+    /// How long the link works, from 1 to 1440 minutes. Left out, 15.
+    #[serde(default)]
+    pub code_minutes: Option<u32>,
+}
+
+/// Where a viewer stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerStatus {
+    /// Its link has not been used, and still can be.
+    Waiting,
+    /// Its link was not used in time. Revoke it and make another.
+    LinkExpired,
+    /// Signed in, and the token works.
+    Active,
+    /// The token ran out. Make another viewer.
+    Expired,
+    Revoked,
+}
+
+impl From<crate::domain::models::viewer::ViewerStanding> for ViewerStatus {
+    fn from(standing: crate::domain::models::viewer::ViewerStanding) -> Self {
+        use crate::domain::models::viewer::ViewerStanding as S;
+        match standing {
+            S::Waiting => Self::Waiting,
+            S::LinkExpired => Self::LinkExpired,
+            S::Active => Self::Active,
+            S::Expired => Self::Expired,
+            S::Revoked => Self::Revoked,
+        }
+    }
+}
+
+/// A viewer, as the owner sees it. Nothing here can be used to sign in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ViewerEntry {
+    /// What to give `viewer revoke` and `viewer forget`.
+    #[schema(examples("k3x6qa2m"), pattern = "^[a-z2-7]{8}$")]
+    pub id: String,
+    pub label: String,
+    pub status: ViewerStatus,
+    /// What it may look at: `layout:*`, or `layout:NAME` for each layout.
+    #[schema(examples("layout:*"))]
+    pub scope: String,
+    pub created_at: DateTime<Utc>,
+    /// For one waiting, when its link stops working.
+    pub link_expires_at: Option<DateTime<Utc>>,
+    /// Once signed in, when the token runs out.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// When it was last used, to within ten minutes or so.
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+impl ViewerEntry {
+    pub fn of(viewer: &crate::domain::models::viewer::Viewer, now: DateTime<Utc>) -> Self {
+        use crate::domain::models::viewer::ViewerState;
+        let (link_expires_at, expires_at, last_used_at) = match &viewer.state {
+            ViewerState::Pending {
+                code_expires_at, ..
+            } => (Some(*code_expires_at), None, None),
+            ViewerState::Active {
+                expires_at,
+                last_used_at,
+                ..
+            } => (None, Some(*expires_at), *last_used_at),
+            ViewerState::Revoked { .. } => (None, None, None),
+        };
+        Self {
+            id: viewer.id.to_string(),
+            label: viewer.label.to_string(),
+            status: viewer.standing(now).into(),
+            scope: viewer.scope.to_scope_string(),
+            created_at: viewer.created_at,
+            link_expires_at,
+            expires_at,
+            last_used_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ViewerList {
+    /// Oldest first.
+    pub viewers: Vec<ViewerEntry>,
+}
+
+/// A viewer made, with the link to sign it in. The only answer of this API that holds a secret, and it is shown only now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ViewerIssued {
+    pub viewer: ViewerEntry,
+    /// The one-time code, which a browser exchanges for a token. It is in `link`; it is here for a program that builds its
+    /// own.
+    #[schema(examples("hdc1_…"))]
+    pub code: String,
+    /// What to open in the browser to sign it in, once, before `link_expires_at`: the page, with the code after a `#`, which
+    /// a browser keeps to itself and never sends to the server.
+    #[schema(examples("https://display.local:8443/view#code=hdc1_…"))]
+    pub link: String,
+    pub link_expires_at: DateTime<Utc>,
+}
+
+/// The id of a viewer, in the path.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Path)]
+pub struct ViewerPath {
+    /// The viewer's id, as `viewers` lists it.
+    #[param(pattern = "^[a-z2-7]{8}$", example = "k3x6qa2m")]
+    pub id: String,
+}
+
 /// The layout to give a display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ChooseLayout {
@@ -224,6 +346,14 @@ pub enum ErrorCode {
     NotAMember,
     /// No layout of that name exists (or the name could not be one). `GET /v1/layouts` lists them.
     UnknownLayout,
+    /// What a new viewer was asked for is not allowed: the label, how long its token lasts, or how long its link works.
+    InvalidViewer,
+    /// The viewer's id in the path is not an id (eight lower-case letters and digits).
+    InvalidViewerId,
+    /// No viewer has that id.
+    UnknownViewer,
+    /// There are as many viewers as there may be; forget some that are no longer wanted.
+    TooManyViewers,
     /// There is nothing at that path.
     NotFound,
     /// That path exists but not for that method.
@@ -235,13 +365,18 @@ pub enum ErrorCode {
 impl ErrorCode {
     fn status(self) -> StatusCode {
         match self {
-            Self::InvalidRequest | Self::InvalidMinutes | Self::InvalidName | Self::InvalidCode => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::InvalidRequest
+            | Self::InvalidMinutes
+            | Self::InvalidName
+            | Self::InvalidCode
+            | Self::InvalidViewer
+            | Self::InvalidViewerId => StatusCode::BAD_REQUEST,
             Self::WrongCode => StatusCode::FORBIDDEN,
             Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
-            Self::NotFound | Self::UnknownDisplay | Self::UnknownLayout => StatusCode::NOT_FOUND,
-            Self::NotWaiting | Self::NotAMember => StatusCode::CONFLICT,
+            Self::NotFound | Self::UnknownDisplay | Self::UnknownLayout | Self::UnknownViewer => {
+                StatusCode::NOT_FOUND
+            }
+            Self::NotWaiting | Self::NotAMember | Self::TooManyViewers => StatusCode::CONFLICT,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }

@@ -68,11 +68,26 @@ async fn start() -> Server {
         home_display_server::adapters::display_image_generator::chrome_render::Templates::built_in(
         )
         .layouts();
+    let clock: Arc<dyn home_display_server::domain::services::clock::Clock> =
+        Arc::new(SystemClock::new(Tz::UTC));
+    let viewers = Arc::new(home_display_server::application::viewers::Viewers::new(
+        Arc::new(
+            home_display_server::adapters::viewer_registry::FileViewerRegistry::open(
+                directory.path(),
+            )
+            .await
+            .unwrap(),
+        ),
+        clock.clone(),
+        Arc::new(home_display_server::adapters::entropy::OsEntropy),
+    ));
     let app = admin::router(
         enrollment.clone(),
         choices.clone(),
         layouts,
-        Arc::new(SystemClock::new(Tz::UTC)),
+        clock,
+        viewers,
+        "https://display.test:8443".to_owned(),
     );
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -379,4 +394,110 @@ async fn a_display_is_given_a_layout_and_has_it_taken_away_with_the_real_command
     let cleared = ctl(socket, &["layout", "clear", "hall"]).await;
     assert!(cleared.status.success(), "{}", err(&cleared));
     assert!(server.choices.get(&hall_now).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_viewer_is_made_listed_revoked_and_forgotten_with_the_real_command() {
+    let server = start().await;
+    let socket = path(&server.socket);
+
+    let empty = ctl(socket, &["viewer", "list"]).await;
+    assert!(empty.status.success(), "{}", err(&empty));
+    assert!(
+        out(&empty).contains("There are no viewers"),
+        "{}",
+        out(&empty)
+    );
+
+    let made = ctl(
+        socket,
+        &[
+            "viewer",
+            "create",
+            "--label",
+            "kitchen tablet",
+            "--layout",
+            "departures",
+            "--code-minutes",
+            "5",
+        ],
+    )
+    .await;
+    assert!(made.status.success(), "{}", err(&made));
+    let said = out(&made);
+    // The link is on a line of its own, with the code after a `#`.
+    let link = said
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("https://display.test:8443/view#code=hdc1_"))
+        .unwrap_or_else(|| panic!("no link in {said}"));
+    assert!(
+        said.contains("works once") && said.contains("not shown again"),
+        "{said}"
+    );
+
+    // Listed, waiting, and without the code.
+    let listed = ctl(socket, &["viewer", "list"]).await;
+    assert!(
+        out(&listed).contains("kitchen tablet") && out(&listed).contains("waiting"),
+        "{}",
+        out(&listed)
+    );
+    assert!(
+        out(&listed).contains("layout:departures"),
+        "{}",
+        out(&listed)
+    );
+    let code = link.split("code=").nth(1).unwrap();
+    assert!(!out(&listed).contains(code));
+
+    // The id in the list is what revoke and forget take.
+    let id = out(&listed)
+        .lines()
+        .nth(1)
+        .and_then(|line| line.split_whitespace().next())
+        .unwrap()
+        .to_owned();
+    let revoked = ctl(socket, &["viewer", "revoke", &id]).await;
+    assert!(revoked.status.success(), "{}", err(&revoked));
+    assert!(out(&revoked).contains("Revoked"), "{}", out(&revoked));
+    assert!(out(&ctl(socket, &["viewer", "list"]).await).contains("revoked"));
+    let forgotten = ctl(socket, &["viewer", "forget", &id]).await;
+    assert!(out(&forgotten).contains("Forgot"), "{}", out(&forgotten));
+    assert!(out(&ctl(socket, &["viewer", "list"]).await).contains("There are no viewers"));
+}
+
+#[tokio::test]
+async fn a_viewer_asked_for_wrongly_or_not_there_fails_with_a_reason_and_makes_nothing() {
+    let server = start().await;
+    let socket = path(&server.socket);
+
+    for (arguments, expected) in [
+        (vec!["viewer", "create", "--label", ""], "label"),
+        (
+            vec!["viewer", "create", "--label", "x", "--layout", "nonesuch"],
+            "no layout",
+        ),
+        (
+            vec!["viewer", "create", "--label", "x", "--lifetime-days", "0"],
+            "days",
+        ),
+        (
+            vec!["viewer", "create", "--label", "x", "--code-minutes", "5000"],
+            "minutes",
+        ),
+        (vec!["viewer", "revoke", "abcdefgh"], "No viewer"),
+        (vec!["viewer", "forget", "NOT-AN-ID"], "not a viewer id"),
+    ] {
+        let failed = ctl(socket, &arguments).await;
+        assert!(!failed.status.success(), "{arguments:?}");
+        assert!(
+            err(&failed)
+                .to_lowercase()
+                .contains(&expected.to_lowercase()),
+            "{arguments:?}: {}",
+            err(&failed)
+        );
+    }
+    assert!(out(&ctl(socket, &["viewer", "list"]).await).contains("There are no viewers"));
 }

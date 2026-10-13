@@ -157,6 +157,7 @@ async fn main() -> Result<()> {
         status: status.clone(),
         devices: devices.clone(),
         layout_choices: security.as_ref().map(|s| s.layout_choices.clone()),
+        viewers: security.as_ref().map(|s| s.viewers.clone()),
         members: security.as_ref().map(|s| s.enrollment.clone()),
         handshakes: security.as_ref().map(|s| s.handshakes.clone()),
     };

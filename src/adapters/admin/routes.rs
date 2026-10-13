@@ -15,13 +15,16 @@ use utoipa_axum::routes;
 
 use super::api::{
     ApiError, ApproveRequest, BadRequest, ChooseLayout, DisplayEntry, DisplayList, DisplayPath,
-    DisplayState, ErrorBody, ErrorCode, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES, OpenWindow,
-    ServerFailure, WindowState,
+    DisplayState, ErrorBody, ErrorCode, IssueViewer, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES,
+    OpenWindow, ServerFailure, ViewerEntry, ViewerIssued, ViewerList, ViewerPath, ViewerStatus,
+    WindowState,
 };
 use crate::application::enrollment::{ApproveError, Enrollment};
+use crate::application::viewers::{ChangeError, IssueError, IssueRequest, Viewers};
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::layout::Layouts;
 use crate::domain::models::pairing::PairingCode;
+use crate::domain::models::viewer::ViewerId;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::layout_choices::LayoutChoices;
 
@@ -38,6 +41,10 @@ pub(super) struct Admin {
     pub(super) layouts: Layouts,
     /// The time, in the server's zone, which the layout schedule is read in.
     pub(super) clock: Arc<dyn Clock>,
+    /// Who may look at the page for a browser, when that needs a token.
+    pub(super) viewers: Arc<Viewers>,
+    /// Where a browser reaches the HTTPS side, which the link for a new viewer starts with.
+    pub(super) view_base: String,
 }
 
 #[derive(OpenApi)]
@@ -50,11 +57,12 @@ pub(super) struct Admin {
     ),
     // The error body is only reached through `IntoResponses`, which does not collect the schemas it names, so they
     // are listed here or the references to them would point at nothing.
-    components(schemas(ApiError, ErrorBody, ErrorCode, DisplayState)),
+    components(schemas(ApiError, ErrorBody, ErrorCode, DisplayState, ViewerStatus)),
     tags(
         (name = "pairing", description = "Letting displays join."),
         (name = "displays", description = "The displays the server knows, and what the owner decides about them."),
-        (name = "layouts", description = "The ways the picture can be laid out, and which a display is given.")
+        (name = "layouts", description = "The ways the picture can be laid out, and which a display is given."),
+        (name = "viewers", description = "Who may look at the picture in a web browser when the page is not open to everyone.")
     )
 )]
 struct ApiDoc;
@@ -70,6 +78,9 @@ fn routes() -> OpenApiRouter<Arc<Admin>> {
         .routes(routes!(reject_display))
         .routes(routes!(revoke_display))
         .routes(routes!(list_layouts))
+        .routes(routes!(issue_viewer, list_viewers))
+        .routes(routes!(forget_viewer))
+        .routes(routes!(revoke_viewer))
         .routes(routes!(choose_layout, clear_layout))
 }
 
@@ -86,6 +97,8 @@ pub fn router(
     choices: Arc<dyn LayoutChoices>,
     layouts: Layouts,
     clock: Arc<dyn Clock>,
+    viewers: Arc<Viewers>,
+    view_base: String,
 ) -> Router {
     let (router, _) = routes().split_for_parts();
     let description: Arc<str> = openapi_json().into();
@@ -119,6 +132,8 @@ pub fn router(
             choices,
             layouts,
             clock,
+            viewers,
+            view_base,
         }))
 }
 
@@ -560,4 +575,170 @@ async fn clear_layout(
         .await
         .map_err(|e| ApiError::internal("clear the layout chosen", e))?;
     Ok(Json(entry_of(&admin, &device).await?))
+}
+
+fn viewer_id(text: &str) -> Result<ViewerId, ApiError> {
+    ViewerId::parse(text).map_err(|e| ApiError::new(ErrorCode::InvalidViewerId, e.to_string()))
+}
+
+fn unknown_viewer(id: &ViewerId) -> ApiError {
+    ApiError::new(
+        ErrorCode::UnknownViewer,
+        format!("No viewer has the id {id}"),
+    )
+}
+
+fn viewer_change_failed(error: ChangeError) -> ApiError {
+    match error {
+        ChangeError::Unknown(id) => unknown_viewer(&id),
+        ChangeError::Failed(e) => ApiError::internal("change the viewer", e),
+    }
+}
+
+/// Makes a viewer: someone who may look at the picture in a web browser, and the link that signs them in. The link holds a
+/// one-time code, which is shown here and nowhere else, and works once, within the time given.
+#[utoipa::path(
+    post,
+    path = "/v1/viewers",
+    tag = "viewers",
+    request_body(content = IssueViewer, description = "What to call it, and what it may see."),
+    responses(
+        (status = 200, description = "The viewer, and its link. The link is not shown again.", body = ViewerIssued),
+        (status = 400, description = "The label, the time a token lasts or the time the link works is not allowed.", body = ApiError),
+        (status = 404, description = "A layout asked for does not exist.", body = ApiError),
+        (status = 409, description = "There are as many viewers as there may be.", body = ApiError),
+        BadRequest,
+        ServerFailure
+    )
+)]
+async fn issue_viewer(
+    State(admin): State<Arc<Admin>>,
+    body: Result<Json<IssueViewer>, JsonRejection>,
+) -> Result<Json<ViewerIssued>, ApiError> {
+    let Json(asked) = body.map_err(|rejection| {
+        ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!(
+                "The body must be JSON like {{\"label\": \"kitchen tablet\"}} ({})",
+                rejection.body_text()
+            ),
+        )
+    })?;
+    let issued = admin
+        .viewers
+        .issue(
+            IssueRequest {
+                label: asked.label,
+                layouts: asked.layouts,
+                lifetime_days: asked.lifetime_days,
+                code_minutes: asked.code_minutes,
+            },
+            &admin.layouts,
+        )
+        .await
+        .map_err(|e| match e {
+            IssueError::Invalid(_) | IssueError::InvalidLifetime | IssueError::InvalidCodeTime => {
+                ApiError::new(ErrorCode::InvalidViewer, e.to_string())
+            }
+            IssueError::UnknownLayout(_) => ApiError::new(
+                ErrorCode::UnknownLayout,
+                format!("{e}; GET /v1/layouts lists them"),
+            ),
+            IssueError::TooMany => ApiError::new(ErrorCode::TooManyViewers, e.to_string()),
+            IssueError::Failed(e) => ApiError::internal("make the viewer", e),
+        })?;
+    let link_expires_at = match &issued.viewer.state {
+        crate::domain::models::viewer::ViewerState::Pending {
+            code_expires_at, ..
+        } => *code_expires_at,
+        _ => unreachable!("a viewer just made is waiting"),
+    };
+    Ok(Json(ViewerIssued {
+        viewer: ViewerEntry::of(&issued.viewer, admin.viewers.time()),
+        code: issued.code.expose().to_owned(),
+        link: format!(
+            "{}/view#code={}",
+            admin.view_base.trim_end_matches('/'),
+            issued.code.expose()
+        ),
+        link_expires_at,
+    }))
+}
+
+/// Every viewer, oldest first, with where each stands. Nothing here can be used to sign in.
+#[utoipa::path(
+    get,
+    path = "/v1/viewers",
+    tag = "viewers",
+    responses(
+        (status = 200, description = "The viewers.", body = ViewerList),
+        ServerFailure
+    )
+)]
+async fn list_viewers(State(admin): State<Arc<Admin>>) -> Result<Json<ViewerList>, ApiError> {
+    let now = admin.viewers.time();
+    let viewers = admin
+        .viewers
+        .list()
+        .await
+        .map_err(|e| ApiError::internal("list the viewers", e))?;
+    Ok(Json(ViewerList {
+        viewers: viewers
+            .iter()
+            .map(|viewer| ViewerEntry::of(viewer, now))
+            .collect(),
+    }))
+}
+
+/// Ends a viewer's access at once, whatever state it is in: a link not yet used stops working, and a token stops being
+/// accepted at its next request. The viewer stays listed, as revoked, until it is forgotten.
+#[utoipa::path(
+    post,
+    path = "/v1/viewers/{id}/revoke",
+    tag = "viewers",
+    params(ViewerPath),
+    responses(
+        (status = 200, description = "The viewer, revoked.", body = ViewerEntry),
+        (status = 400, description = "Not a viewer's id.", body = ApiError),
+        (status = 404, description = "No viewer has that id.", body = ApiError),
+        ServerFailure
+    )
+)]
+async fn revoke_viewer(
+    State(admin): State<Arc<Admin>>,
+    Path(ViewerPath { id }): Path<ViewerPath>,
+) -> Result<Json<ViewerEntry>, ApiError> {
+    let id = viewer_id(&id)?;
+    let viewer = admin
+        .viewers
+        .revoke(&id)
+        .await
+        .map_err(viewer_change_failed)?;
+    Ok(Json(ViewerEntry::of(&viewer, admin.viewers.time())))
+}
+
+/// Forgets a viewer altogether, which frees its place. Its token, if it had one, stops working.
+#[utoipa::path(
+    delete,
+    path = "/v1/viewers/{id}",
+    tag = "viewers",
+    params(ViewerPath),
+    responses(
+        (status = 200, description = "The viewer as it was, now forgotten.", body = ViewerEntry),
+        (status = 400, description = "Not a viewer's id.", body = ApiError),
+        (status = 404, description = "No viewer has that id.", body = ApiError),
+        ServerFailure
+    )
+)]
+async fn forget_viewer(
+    State(admin): State<Arc<Admin>>,
+    Path(ViewerPath { id }): Path<ViewerPath>,
+) -> Result<Json<ViewerEntry>, ApiError> {
+    let id = viewer_id(&id)?;
+    let viewer = admin
+        .viewers
+        .forget(&id)
+        .await
+        .map_err(viewer_change_failed)?;
+    Ok(Json(ViewerEntry::of(&viewer, admin.viewers.time())))
 }

@@ -135,6 +135,7 @@ pub(super) async fn start_layouts(
     let handles = Handles {
         layouts,
         layout_choices,
+        viewers: None,
         refresh: RefreshControl::new(Duration::from_secs(30)),
         status: Arc::clone(&status),
         devices: DeviceBoard::new(Duration::from_secs(900)),
@@ -159,9 +160,23 @@ pub(super) async fn start_web(
     settings: &super::WebSettings,
     clock: Arc<dyn Clock>,
 ) -> Result<(String, Handles), String> {
+    start_web_for(directory, layouts, settings, clock, None, None).await
+}
+
+/// As `start_web`, with viewers to check tokens against and, if given, the address every request is taken to come from (as
+/// the TLS server tells the routes), which is what failures are counted against.
+pub(super) async fn start_web_for(
+    directory: PathBuf,
+    layouts: Layouts,
+    settings: &super::WebSettings,
+    clock: Arc<dyn Clock>,
+    viewers: Option<Arc<crate::application::viewers::Viewers>>,
+    peer: Option<std::net::SocketAddr>,
+) -> Result<(String, Handles), String> {
     let handles = Handles {
         layouts,
         layout_choices: None,
+        viewers,
         refresh: RefreshControl::new(Duration::from_secs(30)),
         status: StatusBoard::new(chrono::Utc::now().with_timezone(&London)),
         devices: DeviceBoard::new(Duration::from_secs(900)),
@@ -172,7 +187,7 @@ pub(super) async fn start_web(
         wake_delay: Duration::from_secs(30),
         stale_grace: Duration::from_secs(300),
     };
-    let app = super::web_router(
+    let mut app = super::web_router(
         settings,
         Arc::new(DirectoryImages::new(directory)),
         ImageFormat::Bmp,
@@ -181,6 +196,18 @@ pub(super) async fn start_web(
         handles.clone(),
         clock,
     )?;
+    if let Some(peer) = peer {
+        app = app.layer(axum::Extension(crate::adapters::est_server::Connection {
+            peer: Some(peer),
+            binding: None,
+            client: None,
+            handshake: crate::adapters::est_server::HandshakeFacts::new(
+                false,
+                Duration::ZERO,
+                None,
+            ),
+        }));
+    }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await });

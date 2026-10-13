@@ -22,12 +22,15 @@ use chrono::Duration;
 
 use crate::adapters::admin;
 use crate::adapters::certificate_authority::{self, Create, PrivateAuthority};
+use crate::adapters::entropy::OsEntropy;
 use crate::adapters::est_server::{Access, EstServer, EstSettings, guarded};
 use crate::adapters::image_server::{self, SecureOffer, ServerSettings};
 use crate::adapters::layout_choices::FileLayoutChoices;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
+use crate::adapters::viewer_registry::FileViewerRegistry;
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::application::handshakes::Handshakes;
+use crate::application::viewers::Viewers;
 use crate::config::server::{ServerConfig, Transport};
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::{LayoutName, Layouts};
@@ -76,6 +79,8 @@ pub struct Security {
     /// Which layout the owner chose for each display. Kept beside the list of displays, and like the admin interface
     /// that sets it, only there when HTTPS is served.
     pub layout_choices: Arc<dyn LayoutChoices>,
+    /// Who may look at the page for a browser, when it is not open. Kept beside the list of displays.
+    pub viewers: Arc<Viewers>,
     /// The time the server goes by, which the layout schedule is read against.
     pub clock: Arc<dyn Clock>,
 }
@@ -103,6 +108,15 @@ pub async fn open_security(
         enrollment,
         handshakes: Arc::default(),
         layout_choices: Arc::new(layout_choices),
+        viewers: Arc::new(Viewers::new(
+            Arc::new(
+                FileViewerRegistry::open(&config.tls.directory)
+                    .await
+                    .context("Failed to open the viewers of the web page")?,
+            ),
+            clock.clone(),
+            Arc::new(OsEntropy),
+        )),
         clock,
     }))
 }
@@ -120,8 +134,10 @@ pub async fn start(
 ) -> anyhow::Result<Listening> {
     let settings = ServerSettings::from(config);
     log::info!("Displays reach this server by: {}", config.transport.name());
+    // A viewer token is only ever sent over HTTPS, so the page that takes one is not served in plain.
+    let plain_web = web.clone().filter(|_| config.web.open);
     if !config.transport.serves_https() {
-        let app = with_web(app, web);
+        let app = with_web(app, plain_web);
         let http = image_server::bind_http(&settings)?;
         let address = http.local_addr()?;
         return Ok(Listening {
@@ -140,6 +156,7 @@ pub async fn start(
         enrollment,
         handshakes,
         layout_choices,
+        viewers,
         clock,
     } = security.context("HTTPS is served but the authority was not opened")?;
     let est_settings = EstSettings {
@@ -149,7 +166,7 @@ pub async fn start(
         ..EstSettings::default()
     };
 
-    let admin = open_admin(config, &enrollment, layout_choices, layouts, clock).await?;
+    let admin = open_admin(config, &enrollment, layout_choices, layouts, clock, viewers).await?;
     let admin_path = admin.as_ref().map(|admin| admin.path.clone());
     let admin = admin.map(|admin| admin.serving);
 
@@ -160,7 +177,7 @@ pub async fn start(
             guarded(app.clone(), enrollment.clone(), Access::Open),
             web.clone(),
         );
-        let app = with_web(app, web);
+        let app = with_web(app, plain_web);
         let https = EstServer::bind(
             est_settings,
             authority.clone(),
@@ -225,6 +242,18 @@ pub async fn start(
     })
 }
 
+/// Where a browser reaches the HTTPS side: as configured, or the first name of the server's certificate and the HTTPS port.
+fn view_base(config: &ServerConfig) -> String {
+    config.web.public_url.clone().unwrap_or_else(|| {
+        let name = config
+            .certificate_names()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "localhost".to_owned());
+        format!("https://{name}:{}", config.tls.bind.port())
+    })
+}
+
 /// `routes` with the page for a browser beside them, if there is one.
 fn with_web(routes: Router, web: Option<Router>) -> Router {
     match web {
@@ -250,6 +279,7 @@ async fn open_admin(
     layout_choices: Arc<dyn LayoutChoices>,
     layouts: Layouts,
     clock: Arc<dyn Clock>,
+    viewers: Arc<Viewers>,
 ) -> anyhow::Result<Option<AdminListener>> {
     if !config.admin.enabled {
         log::info!("The admin interface is turned off; no display can be paired until it is on");
@@ -257,7 +287,7 @@ async fn open_admin(
     }
     #[cfg(not(unix))]
     {
-        let _ = (enrollment, layout_choices, layouts, clock);
+        let _ = (enrollment, layout_choices, layouts, clock, viewers);
         log::warn!(
             "The admin interface is not available on this platform yet, so the pairing window cannot be opened"
         );
@@ -269,7 +299,14 @@ async fn open_admin(
         let listener = admin::bind(&path).await.with_context(|| {
             "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
         })?;
-        let app = admin::router(enrollment.clone(), layout_choices, layouts, clock);
+        let app = admin::router(
+            enrollment.clone(),
+            layout_choices,
+            layouts,
+            clock,
+            viewers,
+            view_base(config),
+        );
         log::info!("Admin interface on {}", path.display());
         Ok(Some(AdminListener {
             path,
@@ -380,8 +417,9 @@ pub fn web_routes(
     if !web.enabled {
         return Ok(None);
     }
-    web.check().map_err(anyhow::Error::msg)?;
+    config.check().map_err(anyhow::Error::msg)?;
     let settings = image_server::WebSettings {
+        open: web.open,
         layouts: web
             .layouts
             .iter()
@@ -398,14 +436,20 @@ pub fn web_routes(
         clock,
     )
     .map_err(anyhow::Error::msg)?;
-    log::warn!(
-        "The web view at /view is open: anyone who can reach this server can see the picture{}",
-        if config.transport.requires_certificate() {
-            ", with no certificate, which /image still asks for"
-        } else {
-            ""
-        }
-    );
+    if web.open {
+        log::warn!(
+            "The web view at /view is open: anyone who can reach this server can see the picture{}",
+            if config.transport.requires_certificate() {
+                ", with no certificate, which /image still asks for"
+            } else {
+                ""
+            }
+        );
+    } else {
+        log::info!(
+            "The web view at /view is on the HTTPS port only, and needs a viewer token: make one with `displayctl viewer create`"
+        );
+    }
     Ok(Some(router))
 }
 
@@ -439,6 +483,13 @@ mod tests {
             },
             ..ServerConfig::default()
         }
+    }
+
+    /// As `config`, with the page for a browser open to anyone: so it is served in plain too.
+    fn open_config(transport: Transport, pki: &Path) -> ServerConfig {
+        let mut config = config(transport, pki);
+        config.web.open = true;
+        config
     }
 
     /// A start with `--init-pki`, as a first start is.
@@ -609,14 +660,18 @@ mod tests {
     #[tokio::test]
     async fn the_page_for_a_browser_is_served_on_plain_http_only_when_there_is_one() {
         let pki = tempfile::tempdir().unwrap();
-        let without = started_with_web(&config(Transport::Http, pki.path()), true, None)
+        let without = started_with_web(&open_config(Transport::Http, pki.path()), true, None)
             .await
             .unwrap();
         let without_address = without.http.expect("plain HTTP is served");
         let _without_server = tokio::spawn(without.run());
-        let with = started_with_web(&config(Transport::Http, pki.path()), true, Some(a_page()))
-            .await
-            .unwrap();
+        let with = started_with_web(
+            &open_config(Transport::Http, pki.path()),
+            true,
+            Some(a_page()),
+        )
+        .await
+        .unwrap();
         let with_address = with.http.expect("plain HTTP is served");
         let _with_server = tokio::spawn(with.run());
 
@@ -654,7 +709,7 @@ mod tests {
     async fn prefer_https_puts_the_page_on_both_listeners() {
         let pki = tempfile::tempdir().unwrap();
         let listening = started_with_web(
-            &config(Transport::PreferHttps, pki.path()),
+            &open_config(Transport::PreferHttps, pki.path()),
             true,
             Some(a_page()),
         )
@@ -665,6 +720,141 @@ mod tests {
 
         assert_eq!(plain_get(http, "/view").await.0, 200);
         assert_eq!(secure_get(&harness, "/view", None).await.0, 200);
+    }
+
+    #[tokio::test]
+    async fn a_page_that_needs_a_token_is_never_served_in_plain_where_a_token_would_travel_in_the_clear()
+     {
+        let pki = tempfile::tempdir().unwrap();
+        // The default: not open, so a viewer token is needed, and prefer-https has a plain side too.
+        let listening = started_with_web(
+            &config(Transport::PreferHttps, pki.path()),
+            true,
+            Some(a_page()),
+        )
+        .await
+        .unwrap();
+        let http = listening.http.expect("plain HTTP is served");
+        let harness = harness_for(listening, pki);
+
+        assert_eq!(plain_get(http, "/view").await.0, 404, "not in plain");
+        assert_eq!(secure_get(&harness, "/view", None).await.0, 200, "over TLS");
+        // The display routes carry on in plain as ever.
+        assert_eq!(plain_get(http, "/image").await.0, 200);
+    }
+
+    /// The whole way a viewer gets in over HTTPS: made through the admin socket, signed in over TLS with the link's code, and
+    /// then the token that came back is what the page's API asks for, while the display routes stay behind the certificate.
+    #[tokio::test]
+    async fn a_viewer_made_through_the_admin_socket_signs_in_over_tls_and_the_display_routes_stay_shut()
+     {
+        use crate::adapters::admin::{AdminClient, IssueViewer};
+        use crate::adapters::published_images::DirectoryImages;
+        use crate::application::devices::DeviceBoard;
+        use crate::application::refresh::RefreshControl;
+        use crate::application::status::StatusBoard;
+        use crate::domain::models::layout::Layout;
+
+        let pki = tempfile::tempdir().unwrap();
+        let images = tempfile::tempdir().unwrap();
+        let mut config = config(Transport::Https, pki.path());
+        // On, and needing a token (not open).
+        config.web.enabled = true;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let security = open_security(&config, clock.clone(), true)
+            .await
+            .unwrap()
+            .unwrap();
+        let layouts = Layouts::new(vec![Layout::new("dashboard", "Everything")]).unwrap();
+        let handles = Handles {
+            layouts: layouts.clone(),
+            layout_choices: None,
+            viewers: Some(security.viewers.clone()),
+            refresh: RefreshControl::new(std::time::Duration::from_secs(30)),
+            status: StatusBoard::new(clock.now()),
+            devices: DeviceBoard::new(std::time::Duration::from_secs(900)),
+            members: None,
+            handshakes: None,
+        };
+        let web = web_routes(
+            &config,
+            Arc::new(DirectoryImages::new(images.path())),
+            ImageFormat::Bmp,
+            Schedule::parse_every("1h").unwrap(),
+            handles,
+            clock,
+        )
+        .unwrap()
+        .expect("the page is on");
+        let listening = start(
+            &config,
+            stand_in_display(),
+            Some(web),
+            ImageFormat::Bmp,
+            layouts,
+            Some(security),
+        )
+        .await
+        .unwrap();
+        let admin = AdminClient::new(listening.admin.clone().expect("the admin socket is open"));
+        let harness = harness_for(listening, pki);
+
+        let issued = admin
+            .issue_viewer(&IssueViewer {
+                label: "tablet".to_owned(),
+                ..IssueViewer::default()
+            })
+            .await
+            .unwrap();
+
+        // Over TLS, with no certificate (a browser has none): the page is there, the API wants a token, a display's route a
+        // certificate.
+        assert_eq!(secure_get(&harness, "/view", None).await.0, 200);
+        assert_eq!(secure_get(&harness, "/view/api/layouts", None).await.0, 401);
+        assert_eq!(secure_get(&harness, "/image", None).await.0, 403);
+        // The code from the link is traded for a token, over TLS.
+        let tls = client_config(Trust::Anything, None, &[&rustls::version::TLS13]);
+        let mut stream = connect_with(&harness, tls).await.expect("a TLS connection");
+        let code = issued.link.split("code=").nth(1).unwrap();
+        let body = format!(
+            "grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code&pre-authorized_code={code}"
+        );
+        let response = send(
+            &mut stream,
+            "POST",
+            "/view/api/token",
+            Some("application/x-www-form-urlencoded"),
+            body.as_bytes(),
+        )
+        .await;
+        assert_eq!(response.status, 200, "{}", response.text());
+        assert!(
+            response.text().contains("\"access_token\":\"hdv1_"),
+            "{}",
+            response.text()
+        );
+        // The owner sees it signed in, through the same socket.
+        let listed = admin.viewers().await.unwrap().viewers;
+        assert_eq!(
+            listed[0].status,
+            crate::adapters::admin::ViewerStatus::Active
+        );
+        // And the code is spent.
+        let mut again = connect_with(
+            &harness,
+            client_config(Trust::Anything, None, &[&rustls::version::TLS13]),
+        )
+        .await
+        .unwrap();
+        let second = send(
+            &mut again,
+            "POST",
+            "/view/api/token",
+            Some("application/x-www-form-urlencoded"),
+            body.as_bytes(),
+        )
+        .await;
+        assert_eq!(second.status, 400);
     }
 
     #[tokio::test]

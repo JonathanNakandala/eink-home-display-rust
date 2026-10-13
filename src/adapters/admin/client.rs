@@ -12,8 +12,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::api::{
-    ApiError, ApproveRequest, ChooseLayout, DisplayEntry, DisplayList, LayoutList, OpenWindow,
-    WindowState,
+    ApiError, ApproveRequest, ChooseLayout, DisplayEntry, DisplayList, IssueViewer, LayoutList,
+    OpenWindow, ViewerEntry, ViewerIssued, ViewerList, WindowState,
 };
 use super::transport;
 use crate::domain::models::device_id::DeviceId;
@@ -199,6 +199,36 @@ impl AdminClient {
             None::<&()>,
         )
         .await
+    }
+
+    /// Makes a viewer, and gets the link that signs it in (shown only now).
+    pub async fn issue_viewer(&self, request: &IssueViewer) -> Result<ViewerIssued, CallError> {
+        self.call(Method::POST, "/v1/viewers", Some(request)).await
+    }
+
+    pub async fn viewers(&self) -> Result<ViewerList, CallError> {
+        self.call(Method::GET, "/v1/viewers", None::<&()>).await
+    }
+
+    /// The path of a viewer, after checking `id` can be one.
+    fn viewer_path(id: &str, tail: &str) -> Result<String, CallError> {
+        let id = crate::domain::models::viewer::ViewerId::parse(id)
+            .map_err(|e| CallError::Invalid(format!("{id:?} is not a viewer id: {e}")))?;
+        Ok(format!("/v1/viewers/{id}{tail}"))
+    }
+
+    pub async fn revoke_viewer(&self, id: &str) -> Result<ViewerEntry, CallError> {
+        self.call(
+            Method::POST,
+            &Self::viewer_path(id, "/revoke")?,
+            None::<&()>,
+        )
+        .await
+    }
+
+    pub async fn forget_viewer(&self, id: &str) -> Result<ViewerEntry, CallError> {
+        self.call(Method::DELETE, &Self::viewer_path(id, "")?, None::<&()>)
+            .await
     }
 
     pub async fn forget(&self, name: &str) -> Result<DisplayEntry, CallError> {

@@ -26,6 +26,10 @@
   main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; }
   main img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; border: 1px solid var(--edge); }
   #empty { color: var(--muted); }
+  #signin { max-width: 36em; margin: auto; padding: 16px; text-align: left; }
+  #signin h2 { margin-top: 0; font-size: 17px; }
+  #signin code { background: var(--bar); padding: 1px 5px; border-radius: 4px; }
+  #signout { font: inherit; color: var(--muted); background: transparent; border: 0; text-decoration: underline; cursor: pointer; padding: 0; }
   body.kiosk header { display: none; }
   body.kiosk main { padding: 0; cursor: none; }
   body.kiosk main img { width: 100%; height: 100%; border: 0; }
@@ -39,10 +43,15 @@
   <h1>Home display</h1>
   <nav id="layouts" aria-label="Layout"></nav>
   <span id="status" role="status" aria-live="polite">Loading…</span>
+  <button id="signout" type="button" hidden>Sign out</button>
 </header>
 <main>
   <img id="picture" alt="What the display shows" hidden>
   <p id="empty" hidden>Nothing has been drawn yet.</p>
+  <section id="signin" hidden>
+    <h2 id="signin-title">This page needs a link from its owner</h2>
+    <p id="signin-text">Ask for one, then open it in this browser. The owner makes it with <code>displayctl viewer create</code>.</p>
+  </section>
 </main>
 <p id="problem" role="alert"></p>
 <script>
@@ -61,14 +70,101 @@
   var timer = null;
   var failures = 0;
   var objectUrl = null;
+  var signin = document.getElementById('signin');
+  var signout = document.getElementById('signout');
+  var TOKEN_KEY = 'hd.token';
+  var GRANT = 'urn:ietf:params:oauth:grant-type:pre-authorized_code';
+  var memoryToken = null;   // where the token is kept if the browser will not keep it
+  var stopped = false;      // signed out: nothing to ask for until a link is opened
 
   var params = new URLSearchParams(location.search);
   var hash = new URLSearchParams(location.hash.replace(/^#/, ''));
   if (hash.has('kiosk') || params.has('kiosk')) document.body.classList.add('kiosk');
   try { chosen = params.get('layout') || localStorage.getItem('layout') || 'auto'; } catch (e) { chosen = params.get('layout') || 'auto'; }
 
+  function token() {
+    try { return localStorage.getItem(TOKEN_KEY) || memoryToken; } catch (e) { return memoryToken; }
+  }
+
+  function keep(value) {
+    memoryToken = value;
+    try {
+      if (value) localStorage.setItem(TOKEN_KEY, value); else localStorage.removeItem(TOKEN_KEY);
+    } catch (e) { /* kept in memory only; fine */ }
+    signout.hidden = !value;
+  }
+
+  // Every request to the API shows the token, as a bearer token and in no other way (never in an address).
+  function api(path, options) {
+    options = options || {};
+    options.cache = 'no-store';
+    options.headers = Object.assign({}, options.headers);
+    var held = token();
+    if (held) options.headers.Authorization = 'Bearer ' + held;
+    return fetch(API + path, options);
+  }
+
   function get(path) {
-    return fetch(API + path, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    return api(path, { headers: { Accept: 'application/json' } });
+  }
+
+  function needSignIn(title, text) {
+    stopped = true;
+    clearTimeout(timer);
+    picture.hidden = true; empty.hidden = true; nav.textContent = '';
+    document.getElementById('signin-title').textContent = title;
+    document.getElementById('signin-text').textContent = text;
+    signin.hidden = false;
+    say('Not signed in', true);
+    problem.textContent = '';
+  }
+
+  // Trades the one-time code from the link for a token, once, and takes the code out of the address.
+  async function signIn(code) {
+    var rest = new URLSearchParams(location.hash.replace(/^#/, ''));
+    rest.delete('code');
+    var url = new URL(location.href);
+    url.hash = rest.toString();
+    history.replaceState(null, '', url);
+    var body = new URLSearchParams();
+    body.set('grant_type', GRANT);
+    body.set('pre-authorized_code', code);
+    try {
+      var response = await fetch(API + 'token', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body: body.toString()
+      });
+      if (response.ok) {
+        keep((await response.json()).access_token);
+        stopped = false;
+        signin.hidden = true;
+        return true;
+      }
+      if (response.status === 429) {
+        needSignIn('Too many tries', 'Wait a few minutes, then open the link again if it still works.');
+      } else {
+        needSignIn('This link does not work', 'It may have been used already, or have run out. Ask the owner for a new one.');
+      }
+    } catch (e) {
+      needSignIn('Cannot reach the server', 'Check the connection, then open the link again if it has not run out.');
+    }
+    return false;
+  }
+
+  async function leave() {
+    var held = token();
+    keep(null);
+    needSignIn('Signed out', 'This browser no longer has access. Open a new link from the owner to look again.');
+    if (held) {
+      try {
+        await fetch(API + 'revoke', {
+          method: 'POST', cache: 'no-store',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'token=' + encodeURIComponent(held)
+        });
+      } catch (e) { /* the token is gone from here either way */ }
+    }
   }
 
   function say(text, isProblem) {
@@ -124,7 +220,7 @@
   async function showPicture(state) {
     var key = state.layout + ':' + state.version;
     if (shown === key) return;
-    var response = await fetch(API + 'image?layout=' + encodeURIComponent(state.layout), { cache: 'no-store' });
+    var response = await api('image?layout=' + encodeURIComponent(state.layout));
     if (!response.ok) throw new Error('The picture could not be fetched (' + response.status + ')');
     var blob = await response.blob();
     var url = URL.createObjectURL(blob);
@@ -142,10 +238,25 @@
     else { say(text, false); problem.textContent = ''; }
   }
 
+  // A token that is missing or no good ends the asking until the owner's link is opened.
+  function unauthorised(response) {
+    if (response.status !== 401) return false;
+    if (token()) {
+      keep(null);
+      needSignIn('This browser\'s access has ended', 'The owner may have revoked it, or it has run out. Ask for a new link.');
+    } else {
+      needSignIn('This page needs a link from its owner', 'Ask for one, then open it in this browser. The owner makes it with displayctl viewer create.');
+    }
+    return true;
+  }
+
   async function refresh() {
     clearTimeout(timer);
+    if (stopped) return;
     try {
       var listing = await get('layouts');
+      if (unauthorised(listing)) return;
+      if (listing.status === 429) { schedule(Number(listing.headers.get('Retry-After')) || 60); say('Too many requests; waiting', true); return; }
       if (!listing.ok) throw new Error('The layouts could not be listed (' + listing.status + ')');
       var data = await listing.json();
       var before = JSON.stringify(layouts);
@@ -153,6 +264,7 @@
       if (JSON.stringify(layouts) !== before) renderNav();
       if (chosen !== 'auto' && !layouts.some(function (l) { return l.name === chosen; })) chosen = 'auto';
       var response = await get('state?layout=' + encodeURIComponent(chosen));
+      if (unauthorised(response)) return;
       if (response.status === 404) {
         picture.hidden = true; empty.hidden = false; shown = null;
         say('Waiting for the first picture', false); problem.textContent = '';
@@ -195,7 +307,16 @@
     if (Math.abs(dx) > 80) cycle(dx < 0 ? 1 : -1);
   }, { passive: true });
 
-  refresh();
+  signout.addEventListener('click', leave);
+  window.addEventListener('hashchange', function () {
+    var code = new URLSearchParams(location.hash.replace(/^#/, '')).get('code');
+    if (code) signIn(code).then(function (ok) { if (ok) refresh(); });
+  });
+
+  signout.hidden = !token();
+  var code = hash.get('code');
+  if (code) signIn(code).then(function (ok) { if (ok) refresh(); });
+  else refresh();
 })();
 </script>
 </body>
