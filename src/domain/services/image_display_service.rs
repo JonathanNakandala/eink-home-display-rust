@@ -5,7 +5,10 @@ use crate::domain::models::image::ImageData;
 use crate::domain::models::layout::LayoutName;
 
 #[async_trait]
-pub trait ImageDisplayService {
+pub trait ImageDisplayService: Send + Sync {
+    /// What this output is called, to say which of several a layout was drawn for: `waveshare`, `reterminal` or `web`.
+    fn name(&self) -> &'static str;
+
     /// The size and colour depth this display wants images rendered for.
     fn profile(&self) -> DisplayProfile;
 

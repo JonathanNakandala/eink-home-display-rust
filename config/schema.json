@@ -92,7 +92,8 @@
           "enabled": false,
           "layouts": [],
           "open": false,
-          "public_url": null
+          "public_url": null,
+          "screen": null
         }
       }
     },
@@ -512,6 +513,26 @@
         "cron"
       ]
     },
+    "ScreenConfig": {
+      "description": "The screen the page is shown on, for pictures drawn to fit it.",
+      "type": "object",
+      "properties": {
+        "height": {
+          "description": "Height in pixels, from 240 to 2160.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1080,
+          "minimum": 0
+        },
+        "width": {
+          "description": "Width in pixels, from 320 to 3840. The layouts scale with the size they are drawn at, so 1920 by 1080 does for a\nfull-HD tablet or screen; a lower size draws faster and a bigger file downloads slower.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1920,
+          "minimum": 0
+        }
+      }
+    },
     "ServerConfig": {
       "description": "The HTTP server that hands the latest rendered image to displays that fetch it.",
       "type": "object",
@@ -597,7 +618,8 @@
             "enabled": false,
             "layouts": [],
             "open": false,
-            "public_url": null
+            "public_url": null,
+            "screen": null
           }
         }
       }
@@ -783,6 +805,18 @@
           "type": [
             "string",
             "null"
+          ],
+          "default": null
+        },
+        "screen": {
+          "description": "Draw the pictures for the page at the page's own size, in full colour, in place of showing the panel's (which are\n16 greys at the panel's size, and so look it on a colour screen). It is another output, drawn for besides the display\neach time, so it costs a render of every layout more. Left out, the page shows the panel's pictures.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScreenConfig"
+            },
+            {
+              "type": "null"
+            }
           ],
           "default": null
         }

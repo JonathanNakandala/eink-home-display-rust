@@ -32,6 +32,10 @@ pub struct ReTerminalE1003Adapter {
 
 #[async_trait]
 impl ImageDisplayService for ReTerminalE1003Adapter {
+    fn name(&self) -> &'static str {
+        "reterminal"
+    }
+
     fn profile(&self) -> DisplayProfile {
         DisplayProfile {
             width: WIDTH,

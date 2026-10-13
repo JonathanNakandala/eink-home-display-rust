@@ -90,7 +90,21 @@ async fn main() -> Result<()> {
             &schedule,
             now,
         )
-        .await;
+        .await
+        // The page's own pictures too, if it has them: one missing or due is a reason to render.
+        && match bootstrap::web_screen_images(&config.server) {
+            Some(web_images) => {
+                launch::served_images_are_current(
+                    web_images.as_ref(),
+                    &served_layouts,
+                    home_display_server::domain::models::display::ImageFormat::Png,
+                    &schedule,
+                    now,
+                )
+                .await
+            }
+            None => true,
+        };
     let first = launch::first_render_at(
         now,
         args.no_initial_run,
@@ -142,10 +156,10 @@ async fn main() -> Result<()> {
             async move { run.await.map(|_| ()) }
         },
     );
-    if !config.display.kind.fetches_image() {
+    // Served for a display that downloads its image, and for the page for a browser, for as long as the refresh loop runs.
+    if !config.display.kind.fetches_image() && !config.server.web.enabled {
         return periodic.await;
     }
-    // The display downloads its image, so serve it for as long as the refresh loop runs.
     let settings = ServerSettings::from(&config.server);
     let format = config.display.image_format.into();
     // The certificate authority and the list of displays are opened first, so that a missing or unreadable

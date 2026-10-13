@@ -16,6 +16,10 @@ pub struct EinkWaveshareAdapter {
 
 #[async_trait]
 impl ImageDisplayService for EinkWaveshareAdapter {
+    fn name(&self) -> &'static str {
+        "waveshare"
+    }
+
     fn profile(&self) -> DisplayProfile {
         DisplayProfile {
             width: WIDTH,

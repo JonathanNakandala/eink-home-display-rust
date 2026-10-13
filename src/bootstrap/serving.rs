@@ -423,6 +423,18 @@ pub fn web_routes(
         return Ok(None);
     }
     config.check().map_err(anyhow::Error::msg)?;
+    // With a screen of its own the page shows what was drawn for it: PNGs in a folder of their own, and a render's version
+    // is the PNG's date. Without, it shows the panel's.
+    let (images, format) = if web.screen.is_some() {
+        (
+            Arc::new(crate::adapters::published_images::DirectoryImages::new(
+                config.web_images_directory(),
+            )) as Arc<dyn PublishedImages>,
+            ImageFormat::Png,
+        )
+    } else {
+        (images, format)
+    };
     let settings = image_server::WebSettings {
         open: web.open,
         layouts: web
@@ -746,6 +758,105 @@ mod tests {
         assert_eq!(secure_get(&harness, "/view", None).await.0, 200, "over TLS");
         // The display routes carry on in plain as ever.
         assert_eq!(plain_get(http, "/image").await.0, 200);
+    }
+
+    /// The routes of the page for a browser over `config`, with pictures published for the panel and for the page in the
+    /// places they are kept, served on a free port.
+    async fn page_of(config: &ServerConfig, panel: &Path) -> String {
+        use crate::application::devices::DeviceBoard;
+        use crate::application::refresh::RefreshControl;
+        use crate::application::status::StatusBoard;
+        use crate::domain::models::layout::Layout;
+
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let layouts = Layouts::new(vec![Layout::new("dashboard", "Everything")]).unwrap();
+        let handles = Handles {
+            layouts,
+            layout_choices: None,
+            viewers: None,
+            refresh: RefreshControl::new(std::time::Duration::from_secs(30)),
+            status: StatusBoard::new(clock.now()),
+            devices: DeviceBoard::new(std::time::Duration::from_secs(900)),
+            members: None,
+            handshakes: None,
+        };
+        let web = web_routes(
+            config,
+            Arc::new(crate::adapters::published_images::DirectoryImages::new(
+                panel,
+            )),
+            ImageFormat::Bmp,
+            Schedule::parse_every("1h").unwrap(),
+            handles,
+            clock,
+        )
+        .unwrap()
+        .expect("the page is on");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, web).await });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn a_page_with_a_screen_of_its_own_shows_what_was_drawn_for_it_and_one_without_shows_the_panels()
+     {
+        use crate::adapters::published_images::DirectoryImages;
+        use crate::domain::models::layout::LayoutName;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dashboard = LayoutName::parse("dashboard").unwrap();
+        // The panel has a BMP (and a PNG, as the reTerminal publishes both); the page's folder has a PNG of its own.
+        let panel = DirectoryImages::new(tmp.path());
+        panel
+            .publish(&dashboard, ImageFormat::Bmp, b"the panel's bmp")
+            .await
+            .unwrap();
+        panel
+            .publish(&dashboard, ImageFormat::Png, b"the panel's png")
+            .await
+            .unwrap();
+
+        let mut config = ServerConfig {
+            directory: tmp.path().to_path_buf(),
+            ..ServerConfig::default()
+        };
+        config.web.enabled = true;
+        config.web.open = true;
+
+        // No screen: the panel's picture.
+        let without = page_of(&config, tmp.path()).await;
+        let picture = reqwest::get(format!("{without}/view/api/image"))
+            .await
+            .unwrap();
+        assert_eq!(picture.bytes().await.unwrap().as_ref(), b"the panel's png");
+
+        // A screen of its own, and nothing drawn for it yet: not the panel's, so nothing yet.
+        config.web.screen = Some(crate::config::server::ScreenConfig::default());
+        let with = page_of(&config, tmp.path()).await;
+        assert_eq!(
+            reqwest::get(format!("{with}/view/api/state"))
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+        // Drawn for it, it is shown, from the PNG's own date.
+        DirectoryImages::new(config.web_images_directory())
+            .publish(&dashboard, ImageFormat::Png, b"drawn for the page")
+            .await
+            .unwrap();
+        let state = reqwest::get(format!("{with}/view/api/state"))
+            .await
+            .unwrap();
+        assert_eq!(state.status(), 200);
+        let picture = reqwest::get(format!("{with}/view/api/image"))
+            .await
+            .unwrap();
+        assert_eq!(
+            picture.bytes().await.unwrap().as_ref(),
+            b"drawn for the page"
+        );
     }
 
     /// The whole way a viewer gets in over HTTPS: made through the admin socket, signed in over TLS with the link's code, and
