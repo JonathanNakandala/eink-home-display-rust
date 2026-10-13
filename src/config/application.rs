@@ -97,7 +97,7 @@ impl LayoutsConfig {
 
 impl LayoutRuleConfig {
     fn to_rule(&self) -> Result<LayoutRule, String> {
-        let layout = LayoutName::parse(&self.layout)?;
+        let layout = LayoutName::parse(&self.layout).map_err(|e| e.to_string())?;
         let days = self
             .days
             .iter()
@@ -118,6 +118,7 @@ impl LayoutRuleConfig {
             time("from", &self.from)?,
             time("until", &self.until)?,
         )
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -164,10 +165,15 @@ pub struct LimitsConfig {
     /// A source (the weather, or one departures board) that hasn't answered by then counts as failed.
     #[serde(default = "default_source_timeout")]
     pub source_timeout_seconds: u32,
-    /// A whole run, from fetching to the display, is abandoned after this long. Leave room for the
+    /// Fetching the sources and drawing the default layout, which is what makes a run, is abandoned after this long. Leave room for the
     /// sources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.
     #[serde(default = "default_render_deadline")]
     pub render_deadline_seconds: u32,
+    /// Each layout after the default has this long to be drawn and published. A layout that overruns is reported (the
+    /// service is `degraded`) and keeps its last image, and the others carry on. Raise it on a slow host or with many
+    /// layouts.
+    #[serde(default = "default_layout_deadline")]
+    pub layout_deadline_seconds: u32,
 }
 
 fn default_source_timeout() -> u32 {
@@ -178,11 +184,16 @@ fn default_render_deadline() -> u32 {
     120
 }
 
+fn default_layout_deadline() -> u32 {
+    60
+}
+
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
             source_timeout_seconds: default_source_timeout(),
             render_deadline_seconds: default_render_deadline(),
+            layout_deadline_seconds: default_layout_deadline(),
         }
     }
 }
@@ -192,6 +203,7 @@ impl From<&LimitsConfig> for crate::application::RenderLimits {
         Self {
             source_timeout: std::time::Duration::from_secs(config.source_timeout_seconds.into()),
             deadline: std::time::Duration::from_secs(config.render_deadline_seconds.into()),
+            layout_deadline: std::time::Duration::from_secs(config.layout_deadline_seconds.into()),
         }
     }
 }

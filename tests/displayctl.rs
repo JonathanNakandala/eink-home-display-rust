@@ -18,6 +18,7 @@ use home_display_server::config::application::ApplicationConfig;
 use home_display_server::domain::models::device_id::DeviceId;
 use home_display_server::domain::models::pairing::{PairingCode, PublicKey};
 use home_display_server::domain::services::certificate_authority::CertificateAuthority;
+use home_display_server::domain::services::layout_choices::LayoutChoices;
 use rcgen::PublicKeyData;
 use std::os::unix::fs::PermissionsExt;
 
@@ -25,6 +26,7 @@ struct Server {
     directory: tempfile::TempDir,
     socket: PathBuf,
     enrollment: Arc<Enrollment>,
+    choices: Arc<home_display_server::adapters::layout_choices::FileLayoutChoices>,
     authority: Arc<certificate_authority::PrivateAuthority>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -57,11 +59,20 @@ async fn start() -> Server {
     ));
     let socket = admin::default_path(directory.path());
     let listener = admin::bind(&socket).await.unwrap();
-    let app = admin::router(
-        enrollment.clone(),
+    let choices = Arc::new(
+        home_display_server::adapters::layout_choices::FileLayoutChoices::open(directory.path())
+            .await
+            .unwrap(),
+    );
+    let layouts =
         home_display_server::adapters::display_image_generator::chrome_render::Templates::built_in(
         )
-        .layouts(),
+        .layouts();
+    let app = admin::router(
+        enrollment.clone(),
+        choices.clone(),
+        layouts,
+        Arc::new(SystemClock::new(Tz::UTC)),
     );
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -70,6 +81,7 @@ async fn start() -> Server {
         directory,
         socket,
         enrollment,
+        choices,
         authority,
         task,
     }
@@ -335,9 +347,10 @@ async fn a_display_is_given_a_layout_and_has_it_taken_away_with_the_real_command
     // The server it talked to has really kept it.
     assert_eq!(
         server
-            .enrollment
-            .layout_of(&hall_now)
+            .choices
+            .get(&hall_now)
             .await
+            .unwrap()
             .unwrap()
             .as_str(),
         "departures"
@@ -354,9 +367,10 @@ async fn a_display_is_given_a_layout_and_has_it_taken_away_with_the_real_command
     );
     assert_eq!(
         server
-            .enrollment
-            .layout_of(&hall_now)
+            .choices
+            .get(&hall_now)
             .await
+            .unwrap()
             .unwrap()
             .as_str(),
         "departures"
@@ -364,5 +378,5 @@ async fn a_display_is_given_a_layout_and_has_it_taken_away_with_the_real_command
 
     let cleared = ctl(socket, &["layout", "clear", "hall"]).await;
     assert!(cleared.status.success(), "{}", err(&cleared));
-    assert!(server.enrollment.layout_of(&hall_now).await.is_none());
+    assert!(server.choices.get(&hall_now).await.unwrap().is_none());
 }

@@ -72,6 +72,9 @@ pub struct Handles {
     pub status: Arc<StatusBoard>,
     /// What the displays report about themselves, for `/status` and `/metrics`.
     pub devices: Arc<DeviceBoard>,
+    /// Which layout the owner chose for each display, when HTTPS is served (and so there is an admin interface to
+    /// choose with).
+    pub layout_choices: Option<Arc<dyn crate::domain::services::layout_choices::LayoutChoices>>,
     /// Where each display stands in the certificate authority, for `/status` and `/metrics`, when HTTPS
     /// is served.
     pub members: Option<Arc<crate::application::enrollment::Enrollment>>,
@@ -454,6 +457,18 @@ mod api_description {
                     },
                 ),
             ],
+            layouts: vec![
+                crate::domain::models::render_report::LayoutReport {
+                    name: "dashboard".to_owned(),
+                    state: crate::domain::models::render_report::LayoutState::Drawn,
+                },
+                crate::domain::models::render_report::LayoutReport {
+                    name: "departures".to_owned(),
+                    state: crate::domain::models::render_report::LayoutState::Failed {
+                        reason: "timed out".to_owned(),
+                    },
+                },
+            ],
             devices: ImageFormat::ALL
                 .into_iter()
                 .map(|format| DeviceStatus {
@@ -533,6 +548,7 @@ mod api_description {
             last_failure: None,
             consecutive_failures: 0,
             sources: vec![],
+            layouts: vec![],
             devices: vec![],
             members: vec![],
             next_render: None,
@@ -583,6 +599,7 @@ mod api_description {
                         reason: "key rejected".to_owned(),
                     },
                 }],
+                layouts: vec![],
             },
         );
         let response = reqwest::get(format!("{base}/status")).await.unwrap();

@@ -24,6 +24,7 @@ use crate::adapters::admin;
 use crate::adapters::certificate_authority::{self, Create, PrivateAuthority};
 use crate::adapters::est_server::{Access, EstServer, EstSettings, guarded};
 use crate::adapters::image_server::{self, SecureOffer, ServerSettings};
+use crate::adapters::layout_choices::FileLayoutChoices;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::application::handshakes::Handshakes;
@@ -32,6 +33,7 @@ use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::Layouts;
 use crate::domain::services::certificate_authority::CertificateAuthority;
 use crate::domain::services::clock::Clock;
+use crate::domain::services::layout_choices::LayoutChoices;
 
 /// The authority's certificate ending within this long is worth a warning at start-up: nothing yet
 /// carries displays across a change of authority, so every one would have to be paired again.
@@ -68,6 +70,11 @@ pub struct Security {
     pub enrollment: Arc<Enrollment>,
     /// Counted by the HTTPS server, reported by `/metrics`.
     pub handshakes: Arc<Handshakes>,
+    /// Which layout the owner chose for each display. Kept beside the list of displays, and like the admin interface
+    /// that sets it, only there when HTTPS is served.
+    pub layout_choices: Arc<dyn LayoutChoices>,
+    /// The time the server goes by, which the layout schedule is read against.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// Opens the authority and the list of displays if `config.transport` uses them, so they can be given to
@@ -84,11 +91,16 @@ pub async fn open_security(
     if !config.transport.serves_https() {
         return Ok(None);
     }
-    let (authority, enrollment) = open_authority(config, clock, init_pki).await?;
+    let (authority, enrollment) = open_authority(config, clock.clone(), init_pki).await?;
+    let layout_choices = FileLayoutChoices::open(&config.tls.directory)
+        .await
+        .context("Failed to open the layouts chosen for the displays")?;
     Ok(Some(Security {
         authority,
         enrollment,
         handshakes: Arc::default(),
+        layout_choices: Arc::new(layout_choices),
+        clock,
     }))
 }
 
@@ -121,6 +133,8 @@ pub async fn start(
         authority,
         enrollment,
         handshakes,
+        layout_choices,
+        clock,
     } = security.context("HTTPS is served but the authority was not opened")?;
     let est_settings = EstSettings {
         bind: config.tls.bind,
@@ -129,7 +143,7 @@ pub async fn start(
         ..EstSettings::default()
     };
 
-    let admin = open_admin(config, &enrollment, layouts).await?;
+    let admin = open_admin(config, &enrollment, layout_choices, layouts, clock).await?;
     let admin_path = admin.as_ref().map(|admin| admin.path.clone());
     let admin = admin.map(|admin| admin.serving);
 
@@ -215,7 +229,9 @@ struct AdminListener {
 async fn open_admin(
     config: &ServerConfig,
     enrollment: &Arc<Enrollment>,
+    layout_choices: Arc<dyn LayoutChoices>,
     layouts: Layouts,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<Option<AdminListener>> {
     if !config.admin.enabled {
         log::info!("The admin interface is turned off; no display can be paired until it is on");
@@ -223,7 +239,7 @@ async fn open_admin(
     }
     #[cfg(not(unix))]
     {
-        let _ = (enrollment, layouts);
+        let _ = (enrollment, layout_choices, layouts, clock);
         log::warn!(
             "The admin interface is not available on this platform yet, so the pairing window cannot be opened"
         );
@@ -235,7 +251,7 @@ async fn open_admin(
         let listener = admin::bind(&path).await.with_context(|| {
             "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
         })?;
-        let app = admin::router(enrollment.clone(), layouts);
+        let app = admin::router(enrollment.clone(), layout_choices, layouts, clock);
         log::info!("Admin interface on {}", path.display());
         Ok(Some(AdminListener {
             path,

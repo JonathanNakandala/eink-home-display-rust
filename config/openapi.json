@@ -1185,6 +1185,65 @@
           }
         }
       },
+      "LayoutReport": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LayoutState"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "As `/layouts` lists it."
+              }
+            }
+          }
+        ],
+        "description": "One layout and how it was drawn on the last render."
+      },
+      "LayoutState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Drawn and published.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "drawn"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Not drawn this time, so its last image is still being served. `reason` is a few words.",
+            "required": [
+              "reason",
+              "state"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "How drawing a layout went on the last render."
+      },
       "MemberStatus": {
         "type": "object",
         "description": "A display and where it stands in the certificate authority, for the owner to see trouble weeks before it\nis one: a display that stopped renewing shows as a certificate running out.",
@@ -1432,6 +1491,7 @@
           "rendering",
           "consecutive_failures",
           "sources",
+          "layouts",
           "devices",
           "members",
           "schedule",
@@ -1486,6 +1546,13 @@
               "$ref": "#/components/schemas/SourceReport"
             },
             "description": "How each source was on the last successful render."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayoutReport"
+            },
+            "description": "How each layout was drawn on the last successful render. One that failed is still being served from its\nlast image."
           },
           "devices": {
             "type": "array",

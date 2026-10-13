@@ -15,7 +15,7 @@ use chrono_tz::Tz;
 
 use crate::application::plan::render_due;
 use crate::domain::models::display::ImageFormat;
-use crate::domain::models::layout::LayoutName;
+use crate::domain::models::layout::{LayoutName, Layouts};
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
@@ -63,6 +63,24 @@ pub async fn served_image_is_current(
             render_due(now, rendered.with_timezone(&now.timezone()), schedule).ok()
         })
         .is_some_and(|due| !due)
+}
+
+/// Whether every layout's image being served has no render due yet. One layout missing or out of date is enough for a
+/// render at start-up: a layout added since the last run has no image at all, and would otherwise be a 404 until the
+/// next scheduled render.
+pub async fn served_images_are_current(
+    images: &dyn PublishedImages,
+    layouts: &Layouts,
+    format: ImageFormat,
+    schedule: &Schedule,
+    now: DateTime<Tz>,
+) -> bool {
+    for layout in layouts.all() {
+        if !served_image_is_current(images, &layout.name, format, schedule, now).await {
+            return false;
+        }
+    }
+    true
 }
 
 /// Records each render's start in a file (the time, from the clock), for `first_render_at`'s
@@ -225,6 +243,51 @@ mod tests {
             !served_image_is_current(
                 &images,
                 &dashboard(),
+                ImageFormat::Bmp,
+                &schedule,
+                now + chrono::Duration::hours(2)
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn the_images_are_current_only_when_every_layout_has_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let images = DirectoryImages::new(tmp.path());
+        let schedule = Schedule::parse_every("1h").unwrap();
+        let now = chrono::Utc::now().with_timezone(&London);
+        let layouts = Layouts::new(vec![
+            crate::domain::models::layout::Layout::new("dashboard", "First"),
+            crate::domain::models::layout::Layout::new("added", "Added since the last run"),
+        ])
+        .unwrap();
+        let dashboard = LayoutName::parse("dashboard").unwrap();
+        images
+            .publish(&dashboard, ImageFormat::Bmp, b"x")
+            .await
+            .unwrap();
+
+        // The first layout is current, but the one added since has never been drawn.
+        assert!(
+            served_image_is_current(&images, &dashboard, ImageFormat::Bmp, &schedule, now).await
+        );
+        assert!(
+            !served_images_are_current(&images, &layouts, ImageFormat::Bmp, &schedule, now).await
+        );
+
+        images
+            .publish(&LayoutName::parse("added").unwrap(), ImageFormat::Bmp, b"y")
+            .await
+            .unwrap();
+        assert!(
+            served_images_are_current(&images, &layouts, ImageFormat::Bmp, &schedule, now).await
+        );
+        // And one out of date is enough to render again.
+        assert!(
+            !served_images_are_current(
+                &images,
+                &layouts,
                 ImageFormat::Bmp,
                 &schedule,
                 now + chrono::Duration::hours(2)

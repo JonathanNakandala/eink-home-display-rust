@@ -83,9 +83,9 @@ async fn main() -> Result<()> {
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
-        && launch::served_image_is_current(
+        && launch::served_images_are_current(
             images.as_ref(),
-            &served_layouts.default_layout().name,
+            &served_layouts,
             config.display.image_format.into(),
             &schedule,
             now,
@@ -161,6 +161,7 @@ async fn main() -> Result<()> {
             refresh: refresh.clone(),
             status: status.clone(),
             devices: devices.clone(),
+            layout_choices: security.as_ref().map(|s| s.layout_choices.clone()),
             members: security.as_ref().map(|s| s.enrollment.clone()),
             handshakes: security.as_ref().map(|s| s.handshakes.clone()),
         },

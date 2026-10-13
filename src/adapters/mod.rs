@@ -1,6 +1,7 @@
 pub mod admin;
 #[cfg(test)]
 pub(crate) mod api_doc_testing;
+mod atomic_file;
 pub mod authenticated;
 pub mod certificate_authority;
 pub mod clock;
@@ -11,6 +12,7 @@ pub mod http;
 pub mod image_display_service;
 pub mod image_repository;
 pub mod image_server;
+pub mod layout_choices;
 pub mod listen;
 pub mod pairing_store;
 pub mod published_images;

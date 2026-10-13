@@ -15,7 +15,9 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use chrono::Utc;
 
-use super::{LAYOUTS, render_page};
+use handlebars::Handlebars;
+
+use super::{LAYOUTS, registry, render_page, template_name};
 use crate::domain::models::GlanceData;
 use crate::domain::models::layout::{Layout, LayoutName, Layouts};
 
@@ -36,25 +38,42 @@ struct Entry {
 #[derive(Clone)]
 pub struct Templates {
     entries: Vec<Entry>,
+    /// Every template parsed once, so a render doesn't parse them all again.
+    registry: Arc<Handlebars<'static>>,
 }
 
 impl Templates {
     /// The templates built in.
     pub fn built_in() -> Self {
-        Self {
-            entries: LAYOUTS
+        Self::of(
+            LAYOUTS
                 .iter()
                 .map(|(name, description, source)| Entry {
                     layout: Layout::new(name, description),
                     source: Arc::from(*source),
                 })
                 .collect(),
-        }
+        )
+        .expect("the templates built in are valid")
+    }
+
+    /// These templates, parsed, or which one can't be.
+    fn of(entries: Vec<Entry>) -> anyhow::Result<Self> {
+        let registry = registry(
+            entries
+                .iter()
+                .map(|entry| (entry.layout.name.as_str(), &*entry.source)),
+        )?;
+        Ok(Self {
+            entries,
+            registry: Arc::new(registry),
+        })
     }
 
     /// These, with the templates in `directory` replacing the ones of the same name and adding the rest. An error says
     /// which file and what is wrong with it.
-    pub fn with_directory(mut self, directory: &Path) -> anyhow::Result<Self> {
+    pub fn with_directory(self, directory: &Path) -> anyhow::Result<Self> {
+        let mut entries = self.entries;
         let names = std::fs::read_dir(directory).with_context(|| {
             format!(
                 "Failed to read the layouts directory {}",
@@ -105,8 +124,7 @@ impl Templates {
                 layout,
                 source: Arc::from(source),
             };
-            match self
-                .entries
+            match entries
                 .iter_mut()
                 .find(|existing| existing.layout.name == name)
             {
@@ -120,14 +138,14 @@ impl Templates {
                 }
             }
         }
-        self.entries.extend(added);
-        if self.entries.len() > MOST_LAYOUTS {
+        entries.extend(added);
+        if entries.len() > MOST_LAYOUTS {
             bail!(
                 "There are {} layouts, and at most {MOST_LAYOUTS} are drawn: each costs a render on every run",
-                self.entries.len()
+                entries.len()
             );
         }
-        Ok(self)
+        Self::of(entries)
     }
 
     /// The layouts, which are what the rest of the program knows of the templates.
@@ -136,7 +154,21 @@ impl Templates {
             .expect("the names are unique: an entry with a name already there replaces it")
     }
 
+    /// `data` laid out as `layout`.
+    pub fn render(&self, layout: &LayoutName, data: &GlanceData) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            self.entries
+                .iter()
+                .any(|entry| &entry.layout.name == layout),
+            "There is no layout called {layout}"
+        );
+        Ok(self
+            .registry
+            .render(&template_name(layout.as_str()), data)?)
+    }
+
     /// The template of the layout called `name`.
+    #[cfg(test)]
     pub(super) fn source(&self, name: &LayoutName) -> Option<&str> {
         self.entries
             .iter()
@@ -365,5 +397,39 @@ mod tests {
         assert_eq!(description_of("no title"), None);
         let long = format!("<title>{}</title>", "a".repeat(500));
         assert_eq!(description_of(&long).unwrap().len(), LONGEST_DESCRIPTION);
+    }
+
+    #[test]
+    fn a_layout_may_be_called_what_a_partial_is_and_both_still_work() {
+        // `departures` is a built-in layout and a partial; `header` and `style` are partials a layout of that name
+        // would otherwise replace.
+        let directory = directory_with(&[
+            ("header.html", "<body>my header {{> header}}</body>"),
+            ("style.html", "<body>my style {{> style}}</body>"),
+        ]);
+
+        let templates = Templates::built_in()
+            .with_directory(directory.path())
+            .unwrap();
+
+        let data = GlanceData::sample(Utc::now().with_timezone(&chrono_tz::UTC));
+        let page = |layout: &str| {
+            templates
+                .render(&LayoutName::parse(layout).unwrap(), &data)
+                .unwrap()
+        };
+        // The built-in layouts still find their partials, including the one that shares a name with `departures`.
+        for layout in ["dashboard", "departures"] {
+            assert!(page(layout).contains("class=\"header\""), "{layout}");
+            assert!(page(layout).contains("class=\"departures\""), "{layout}");
+        }
+        // And the layouts called after partials are their own pages, which use the real partials.
+        assert!(page("header").contains("my header"));
+        assert!(page("header").contains("class=\"header\""));
+        assert!(page("style").contains("my style"));
+        assert!(page("style").contains("<style>"));
+        // Asking for one there isn't is an error, not an empty page.
+        let none = templates.render(&LayoutName::parse("nonesuch").unwrap(), &data);
+        assert!(none.is_err());
     }
 }

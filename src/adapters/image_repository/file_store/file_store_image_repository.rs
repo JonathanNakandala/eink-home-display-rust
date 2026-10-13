@@ -4,7 +4,7 @@ use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 
 use crate::domain::models::image::ImageData;
-use crate::domain::models::layout::{DEFAULT_LAYOUT, LayoutName};
+use crate::domain::models::layout::LayoutName;
 use crate::domain::services::image_repository::ImageRepository;
 
 #[derive(derive_new::new)]
@@ -12,13 +12,9 @@ pub struct FileStoreImageRepository {
     save_dir: PathBuf,
 }
 
-/// `screenshot.png` for the default layout, as it has always been, and `screenshot-<layout>.png` for the others.
+/// One file for each layout, side by side.
 fn file_name(layout: &LayoutName) -> String {
-    if layout.as_str() == DEFAULT_LAYOUT {
-        "screenshot.png".to_owned()
-    } else {
-        format!("screenshot-{layout}.png")
-    }
+    format!("screenshot-{layout}.png")
 }
 
 #[async_trait::async_trait]
@@ -45,7 +41,7 @@ mod tests {
     use super::*;
 
     fn dashboard() -> LayoutName {
-        LayoutName::parse(DEFAULT_LAYOUT).unwrap()
+        LayoutName::parse("dashboard").unwrap()
     }
 
     #[tokio::test]
@@ -59,13 +55,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            std::fs::read(save_dir.join("screenshot.png")).unwrap(),
+            std::fs::read(save_dir.join("screenshot-dashboard.png")).unwrap(),
             vec![1, 2, 3]
         );
     }
 
     #[tokio::test]
-    async fn another_layout_is_kept_beside_the_first() {
+    async fn each_layout_is_kept_in_a_file_of_its_own() {
         let tmp = tempfile::tempdir().unwrap();
         let repository = FileStoreImageRepository::new(tmp.path().to_path_buf());
         repository
@@ -81,7 +77,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            std::fs::read(tmp.path().join("screenshot.png")).unwrap(),
+            std::fs::read(tmp.path().join("screenshot-dashboard.png")).unwrap(),
             [1]
         );
         assert_eq!(

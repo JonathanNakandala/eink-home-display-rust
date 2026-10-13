@@ -16,7 +16,6 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
-use crate::domain::models::layout::LayoutName;
 use crate::domain::models::profile::DeviceProfile;
 
 /// SHA-256 of a certificate's DER encoding: what is shown to compare two certificates by eye.
@@ -254,8 +253,6 @@ pub struct Pairing {
     pub replacement: Option<Replacement>,
     /// What the display says it is, as of its latest request. Self-asserted: for the owner to see, never to decide with.
     pub profile: Option<DeviceProfile>,
-    /// The layout the owner chose for this display, if they did: what it is sent when it doesn't ask for one.
-    pub layout: Option<LayoutName>,
 }
 
 impl Pairing {
@@ -269,7 +266,6 @@ impl Pairing {
             rollover: None,
             replacement: None,
             profile: None,
-            layout: None,
         }
     }
 }

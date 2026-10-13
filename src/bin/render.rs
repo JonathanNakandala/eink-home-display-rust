@@ -17,7 +17,7 @@ use home_display_server::config::cache::{CacheConfig, CachePaths};
 use home_display_server::domain::models::GlanceData;
 use home_display_server::domain::models::display::{DisplayProfile, Dither, Palette};
 use home_display_server::domain::models::image::ImageData;
-use home_display_server::domain::models::layout::{DEFAULT_LAYOUT, LayoutName};
+use home_display_server::domain::models::layout::LayoutName;
 use home_display_server::domain::models::location::Location;
 use home_display_server::domain::services::display_image_generator::DisplayImageGenerator;
 use home_display_server::domain::services::image_display_service::ImageDisplayService;
@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
 
         // Each layout, the default first; the default keeps the plain file names.
         for layout in layouts.all() {
-            let name = if layout.name.as_str() == DEFAULT_LAYOUT {
+            let name = if layout.name == layouts.default_layout().name {
                 name.to_owned()
             } else {
                 format!("{name}_{}", layout.name)

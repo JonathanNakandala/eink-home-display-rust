@@ -36,6 +36,7 @@
       "description": "How long a render, and each source in it, may take.",
       "$ref": "#/$defs/LimitsConfig",
       "default": {
+        "layout_deadline_seconds": 60,
         "render_deadline_seconds": 120,
         "source_timeout_seconds": 40
       }
@@ -359,8 +360,15 @@
       "description": "Time limits that keep one stuck part from stopping the dashboard updating.",
       "type": "object",
       "properties": {
+        "layout_deadline_seconds": {
+          "description": "Each layout after the default has this long to be drawn and published. A layout that overruns is reported (the\nservice is `degraded`) and keeps its last image, and the others carry on. Raise it on a slow host or with many\nlayouts.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 60,
+          "minimum": 0
+        },
         "render_deadline_seconds": {
-          "description": "A whole run, from fetching to the display, is abandoned after this long. Leave room for the\nsources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.",
+          "description": "Fetching the sources and drawing the default layout, which is what makes a run, is abandoned after this long. Leave room for the\nsources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.",
           "type": "integer",
           "format": "uint32",
           "default": 120,

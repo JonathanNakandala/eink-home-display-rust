@@ -172,7 +172,7 @@ async fn plan_response(
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{publish, set_age, start};
+    use super::super::testing::{FIRST, publish, set_age, start};
     use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
     use crate::domain::models::layout::LayoutName;
@@ -198,7 +198,7 @@ mod tests {
             .unwrap();
         let version = plan["version"].as_u64().unwrap();
         let expected = DirectoryImages::new(tmp.path())
-            .published_at(&LayoutName::parse("dashboard").unwrap(), ImageFormat::Bmp)
+            .published_at(&LayoutName::parse(FIRST).unwrap(), ImageFormat::Bmp)
             .await
             .unwrap()
             .unwrap()
