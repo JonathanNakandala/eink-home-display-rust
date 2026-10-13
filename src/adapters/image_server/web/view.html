@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Home display</title>
+<meta name="theme-color" content="#111111">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Display">
+<link rel="manifest" href="/view/manifest.webmanifest">
+<link rel="icon" href="/view/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/view/icons/180.png">
 <style>
   :root { --bar: #f2f2f2; --ink: #111; --muted: #555; --warn: #8a4b00; --edge: #ccc; }
   @media (prefers-color-scheme: dark) {
@@ -29,6 +36,8 @@
   #signin { max-width: 36em; margin: auto; padding: 16px; text-align: left; }
   #signin h2 { margin-top: 0; font-size: 17px; }
   #signin code { background: var(--bar); padding: 1px 5px; border-radius: 4px; }
+  #awake { font: inherit; color: inherit; background: transparent; border: 1px solid var(--edge); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  #awake[aria-pressed="true"] { background: var(--ink); color: var(--bar); border-color: var(--ink); }
   #signout { font: inherit; color: var(--muted); background: transparent; border: 0; text-decoration: underline; cursor: pointer; padding: 0; }
   body.kiosk header { display: none; }
   body.kiosk main { padding: 0; cursor: none; }
@@ -43,6 +52,7 @@
   <h1>Home display</h1>
   <nav id="layouts" aria-label="Layout"></nav>
   <span id="status" role="status" aria-live="polite">Loading…</span>
+  <button id="awake" type="button" aria-pressed="false" title="Stop the screen from sleeping while this page is showing" hidden>Keep screen on</button>
   <button id="signout" type="button" hidden>Sign out</button>
 </header>
 <main>
@@ -82,7 +92,10 @@
 
   var params = new URLSearchParams(location.search);
   var hash = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if (hash.has('kiosk') || params.has('kiosk')) document.body.classList.add('kiosk');
+  var kiosk = hash.has('kiosk') || params.has('kiosk');
+  // A page that is not to be changed by a touch: no choosing of layouts by button, swipe or key. For a wall.
+  var locked = hash.has('lock') || params.has('lock');
+  if (kiosk) document.body.classList.add('kiosk');
   try { chosen = params.get('layout') || localStorage.getItem('layout') || 'auto'; } catch (e) { chosen = params.get('layout') || 'auto'; }
 
   function stored(key) {
@@ -244,7 +257,7 @@
 
   function renderNav() {
     nav.textContent = '';
-    if (layouts.length < 2) return;
+    if (layouts.length < 2 || locked) return;
     var all = [{ name: 'auto', description: 'Whatever the schedule says now' }].concat(layouts);
     all.forEach(function (layout) {
       var b = document.createElement('button');
@@ -268,7 +281,7 @@
   }
 
   function cycle(step) {
-    if (layouts.length < 2) return;
+    if (layouts.length < 2 || locked) return;
     var names = ['auto'].concat(layouts.map(function (l) { return l.name; }));
     var i = names.indexOf(chosen);
     choose(names[(i + step + names.length) % names.length]);
@@ -276,7 +289,7 @@
 
   function schedule(seconds) {
     clearTimeout(timer);
-    timer = setTimeout(refresh, Math.max(5, Math.min(seconds, 3600)) * 1000);
+    timer = setTimeout(refresh, Math.max(2, Math.min(seconds, 3600)) * 1000);
   }
 
   async function showPicture(state) {
@@ -337,7 +350,13 @@
       await showPicture(state);
       describe(state);
       failures = 0;
-      schedule(state.next_seconds + 3);
+      // Back when the server says the next picture is due (a moment after it is drawn, and every moment until it is, if it is
+      // not there yet); and, on Auto, when the schedule changes the layout, so that the change is on screen when it happens.
+      var next = state.next_seconds + 1;
+      if (chosen === 'auto' && typeof state.auto_changes_in_seconds === 'number') {
+        next = Math.min(next, state.auto_changes_in_seconds + 1);
+      }
+      schedule(next);
     } catch (e) {
       failures += 1;
       var wait = Math.min(300, 10 * Math.pow(2, failures - 1));
@@ -368,6 +387,38 @@
     touchX = null;
     if (Math.abs(dx) > 80) cycle(dx < 0 ? 1 : -1);
   }, { passive: true });
+
+  // Keeping the screen from sleeping, for a page that is to stay on a wall. It needs a secure page (HTTPS, or this very
+  // machine), so where the browser has none of it the button is not offered. The browser lets it go whenever the page is hidden,
+  // so it is asked for again whenever the page is shown.
+  var awakeButton = document.getElementById('awake');
+  var sentinel = null;
+  var wantAwake = false;
+
+  async function holdScreen() {
+    if (!wantAwake || sentinel || document.hidden) return;
+    try {
+      sentinel = await navigator.wakeLock.request('screen');
+      sentinel.addEventListener('release', function () { sentinel = null; });
+    } catch (e) { sentinel = null; /* refused (low battery, say): it is asked for again next time */ }
+  }
+
+  function keepAwake(on, remember) {
+    wantAwake = on;
+    awakeButton.setAttribute('aria-pressed', String(on));
+    if (remember) { try { localStorage.setItem('awake', on ? '1' : '0'); } catch (e) { /* not kept */ } }
+    if (on) holdScreen(); else if (sentinel) { sentinel.release(); sentinel = null; }
+  }
+
+  if ('wakeLock' in navigator) {
+    awakeButton.hidden = false;
+    awakeButton.addEventListener('click', function () { keepAwake(!wantAwake, true); });
+    document.addEventListener('visibilitychange', holdScreen);
+    var remembered = null;
+    try { remembered = localStorage.getItem('awake'); } catch (e) { /* none */ }
+    // A page set up as a kiosk is for a wall: awake, unless it was told not to be.
+    if (remembered === '1' || (kiosk && remembered !== '0')) keepAwake(true, false);
+  }
 
   signout.addEventListener('click', leave);
   window.addEventListener('hashchange', function () {

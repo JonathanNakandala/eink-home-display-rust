@@ -134,12 +134,13 @@ pub fn render(status: &Status) -> String {
         gauge(
             &mut out,
             "home_display_layout_drawn",
-            "1 if the layout was drawn on the last render, 0 if it was not and its last image is being served.",
+            "1 if the layout was drawn for the output on the last render, 0 if it was not and its last image is being served.",
         );
         for layout in &status.layouts {
             let _ = writeln!(
                 out,
-                "home_display_layout_drawn{{layout=\"{}\"}} {}",
+                "home_display_layout_drawn{{output=\"{}\",layout=\"{}\"}} {}",
+                escape(&layout.output),
                 escape(&layout.name),
                 u8::from(layout.state == LayoutState::Drawn)
             );
@@ -525,10 +526,12 @@ mod tests {
             }],
             layouts: vec![
                 LayoutReport {
+                    output: "reterminal".into(),
                     name: "dashboard".into(),
                     state: LayoutState::Drawn,
                 },
                 LayoutReport {
+                    output: "reterminal".into(),
                     name: "departures".into(),
                     state: LayoutState::Failed {
                         reason: "timed out".into(),
@@ -680,8 +683,8 @@ mod tests {
             "home_display_device_battery_state{device=\"kitchen\",state=\"low\"} 1",
             "home_display_device_battery_state{device=\"kitchen\",state=\"empty\"} 0",
             "home_display_source_state{source=\"TURNPIKE \\\"LANE\\\"\",state=\"stale\"} 1",
-            "home_display_layout_drawn{layout=\"dashboard\"} 1",
-            "home_display_layout_drawn{layout=\"departures\"} 0",
+            "home_display_layout_drawn{output=\"reterminal\",layout=\"dashboard\"} 1",
+            "home_display_layout_drawn{output=\"reterminal\",layout=\"departures\"} 0",
             "home_display_info{version=\"1.2.3\"} 1",
         ] {
             assert!(

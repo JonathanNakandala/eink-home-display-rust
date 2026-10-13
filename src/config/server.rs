@@ -99,6 +99,35 @@ fn default_access_token_minutes() -> u32 {
     crate::application::viewers::DEFAULT_ACCESS_MINUTES
 }
 
+/// The screen the page is shown on, for pictures drawn to fit it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScreenConfig {
+    /// Width in pixels, from 320 to 3840. The layouts scale with the size they are drawn at, so 1920 by 1080 does for a
+    /// full-HD tablet or screen; a lower size draws faster and a bigger file downloads slower.
+    #[serde(default = "default_screen_width")]
+    pub width: u32,
+    /// Height in pixels, from 240 to 2160.
+    #[serde(default = "default_screen_height")]
+    pub height: u32,
+}
+
+fn default_screen_width() -> u32 {
+    1920
+}
+
+fn default_screen_height() -> u32 {
+    1080
+}
+
+impl Default for ScreenConfig {
+    fn default() -> Self {
+        Self {
+            width: default_screen_width(),
+            height: default_screen_height(),
+        }
+    }
+}
+
 /// A page that shows the current picture in a web browser and keeps it up to date, at `/view`: for a tablet on the wall, or
 /// a look at what the display shows from a laptop. It shows what `/image` serves, so it is as private as `/image` is.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -124,6 +153,11 @@ pub struct WebConfig {
     /// copied stays good. A viewer made without `--refresh` has one token for its whole life, and this does not apply.
     #[serde(default = "default_access_token_minutes")]
     pub access_token_minutes: u32,
+    /// Draw the pictures for the page at the page's own size, in full colour, in place of showing the panel's (which are
+    /// 16 greys at the panel's size, and so look it on a colour screen). It is another output, drawn for besides the display
+    /// each time, so it costs a render of every layout more. Left out, the page shows the panel's pictures.
+    #[serde(default)]
+    pub screen: Option<ScreenConfig>,
     /// The layouts the page may show, by name as `displayctl layout list` has them. Left empty, all of them.
     #[serde(default)]
     pub layouts: Vec<String>,
@@ -307,6 +341,7 @@ impl Default for WebConfig {
             layouts: Vec::new(),
             public_url: None,
             access_token_minutes: default_access_token_minutes(),
+            screen: None,
         }
     }
 }
@@ -335,6 +370,19 @@ impl WebConfig {
                 ));
             }
         }
+        if let Some(screen) = &self.screen {
+            if !self.enabled {
+                return Err(
+                    "[server.web.screen] is set but the page is off: set [server.web] enabled = true, or take it out".to_owned(),
+                );
+            }
+            if !(320..=3840).contains(&screen.width) || !(240..=2160).contains(&screen.height) {
+                return Err(format!(
+                    "[server.web.screen] is {}x{}; the width must be from 320 to 3840 and the height from 240 to 2160",
+                    screen.width, screen.height
+                ));
+            }
+        }
         for name in &self.layouts {
             crate::domain::models::layout::LayoutName::parse(name)
                 .map_err(|e| format!("[server.web] layouts has {name:?}: {e}"))?;
@@ -344,6 +392,12 @@ impl WebConfig {
 }
 
 impl ServerConfig {
+    /// Where the pictures drawn for the page are kept, when it has a screen of its own: beside the panel's, in a folder whose
+    /// name (it starts with `_`) no layout can have, so that the two never meet.
+    pub fn web_images_directory(&self) -> PathBuf {
+        self.directory.join("_web")
+    }
+
     /// Where the admin socket is: as configured, or `admin.sock` beside the authority.
     pub fn admin_socket(&self) -> PathBuf {
         self.admin
@@ -700,5 +754,46 @@ mod tests {
                 "{bad}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn a_screen_for_the_page_has_defaults_a_range_and_needs_the_page_on() {
+        // Nothing, no screen: the page shows the panel's pictures.
+        assert!(parse("").unwrap().web.screen.is_none());
+
+        let full_hd = parse("[web]\nenabled = true\nopen = true\n[web.screen]").unwrap();
+        let screen = full_hd.web.screen.as_ref().unwrap();
+        assert_eq!((screen.width, screen.height), (1920, 1080));
+        assert!(full_hd.check().is_ok());
+        let own =
+            parse("[web]\nenabled = true\nopen = true\n[web.screen]\nwidth = 1280\nheight = 800")
+                .unwrap();
+        assert_eq!(own.web.screen.as_ref().unwrap().width, 1280);
+        assert!(own.check().is_ok());
+
+        for (width, height) in [(319, 1080), (3841, 1080), (1920, 239), (1920, 2161), (0, 0)] {
+            let bad = parse(&format!(
+                "[web]\nenabled = true\nopen = true\n[web.screen]\nwidth = {width}\nheight = {height}"
+            ))
+            .unwrap();
+            let error = bad.check().unwrap_err();
+            assert!(
+                error.contains("[server.web.screen]") && error.contains("3840"),
+                "{width}x{height}: {error}"
+            );
+        }
+        // A screen with the page off is a mistake worth saying so, not a thing quietly ignored.
+        let off = parse("[web]\nopen = true\n[web.screen]").unwrap();
+        assert!(off.check().unwrap_err().contains("page is off"));
+    }
+
+    #[test]
+    fn the_pages_own_pictures_are_kept_where_no_layout_can_be() {
+        let config = parse("directory = \"/srv/display\"").unwrap();
+        let kept = config.web_images_directory();
+
+        assert_eq!(kept, std::path::PathBuf::from("/srv/display/_web"));
+        // A layout name is lower-case letters, digits and hyphens: it can never be `_web`.
+        assert!(crate::domain::models::layout::LayoutName::parse("_web").is_err());
     }
 }

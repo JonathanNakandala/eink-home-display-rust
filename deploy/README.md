@@ -137,8 +137,47 @@ can't be reached.
   never turns up among the displays) and `/view/api/image?layout=`, which is always the PNG, a fraction of the BMP a display with
   no preference is sent. They are in `config/openapi.json` under `web`.
 - **Security.** The page is a single file with its script and style named by hash in a content security policy that allows nothing
-  else (no inline script, no other origin, no frames). All it can do is talk to this server. The page needs the image server, so
-  it exists only for a display that fetches its image (the reTerminal), not one driven directly.
+  else (no inline script, no other origin, no frames; the manifest and icons are the only other things it may load, both from this
+  server). All it can do is talk to this server.
+
+### A screen of its own
+
+By default the page shows the picture the panel gets, which is 16 greys at the panel's size (1872 by 1404 for the reTerminal), and
+looks it on a colour screen. For a tablet or a monitor, give the page a screen of its own:
+
+```toml
+[server.web.screen]       # another output, like the panel: drawn at this size, in full colour
+width = 1920
+height = 1080
+```
+
+The page is then **another output**, beside whatever display you have (the reTerminal, the Waveshare, or none to speak of): each
+run draws every layout for it too, at its own size, in full colour, with no dithering, and keeps just the PNG in
+`<server.directory>/_web/<layout>/`, so the panel's pictures and the page's never meet. The layouts scale with the size they are
+drawn at. It costs one more render of every layout per run (the one Chrome draws them all, whatever their sizes), and the page's
+pictures are reported in `/status` (`layouts[].output` is `web`) and `/metrics` (`home_display_layout_drawn{output="web",…}`) like
+any other. With a Waveshare panel the server now runs for the page's sake alone, and a layout the page can't be given is reported
+and leaves its last picture, as for any output besides the display.
+
+### For a screen on a wall
+
+- **Coming back at the right time.** The page comes back about two seconds after the next render is due (a display is told to wait
+  thirty, for its radio and panel), and every couple of seconds while it is not there yet, so a new picture is on screen a few
+  seconds after it is drawn. On **Auto** it also looks again exactly when the layout schedule changes the layout, so a change at
+  06:30 is on screen at 06:30 and not at the next render.
+- **Keeping the screen on.** *Keep screen on* in the bar (and automatically in a kiosk, unless you turned it off) asks the browser
+  not to let the screen sleep while the page shows, with the Screen Wake Lock. It needs a secure page: HTTPS, or `localhost`. Over
+  plain HTTP the button isn't offered, and the tablet's own screen timeout applies; set it to never.
+- **Installing it.** The page is a web app: *Add to home screen* (or *Install*) puts it on the tablet and opens it full screen with no
+  address bar, as the kiosk (`/view#kiosk`). The icon and manifest are `/view/icon.svg`, `/view/icons/…` and
+  `/view/manifest.webmanifest`, open to anyone since nothing in them is private. A viewer token is kept by the browser (and by an
+  Android app installed from it); an iPhone or iPad's home-screen app keeps its own storage, so open the sign-in link inside it.
+- **Locking it.** `/view#kiosk&lock` (or `?lock`) takes away the layout buttons and turns off the arrow keys and swipes, so a
+  touched wall tablet stays on the layout it was set to. Pin the layout with `?layout=departures`, or give the viewer only that
+  layout (`displayctl viewer create --layout departures`).
+- **Still to come.** A service worker to show the last picture across a reload with no network, a push of each new picture the
+  instant it is drawn (server-sent events), and signing a tablet in by a short code it shows (RFC 8628), for one that can't scan
+  a QR code.
 
 ## Layouts
 

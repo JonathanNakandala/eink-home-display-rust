@@ -491,10 +491,12 @@ mod api_description {
             ],
             layouts: vec![
                 crate::domain::models::render_report::LayoutReport {
+                    output: "reterminal".into(),
                     name: "dashboard".to_owned(),
                     state: crate::domain::models::render_report::LayoutState::Drawn,
                 },
                 crate::domain::models::render_report::LayoutReport {
+                    output: "reterminal".into(),
                     name: "departures".to_owned(),
                     state: crate::domain::models::render_report::LayoutState::Failed {
                         reason: "timed out".to_owned(),
@@ -694,6 +696,9 @@ mod api_description {
             ("/view/api/revoke", "post"),
             ("/view/api/state", "get"),
             ("/view/api/token", "post"),
+            ("/view/icon.svg", "get"),
+            ("/view/icons/{file}", "get"),
+            ("/view/manifest.webmanifest", "get"),
         ];
         assert_eq!(routes.len(), expected.len(), "{routes:?}");
         for (path, method) in expected {

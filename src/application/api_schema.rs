@@ -103,6 +103,8 @@ impl From<&LayoutState> for LayoutStateSchema {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[schema(as = LayoutReport)]
 pub struct LayoutReportSchema {
+    /// Which output it was drawn for: `waveshare`, `reterminal` or `web`.
+    pub output: String,
     /// As `/layouts` lists it.
     pub name: String,
     #[serde(flatten)]
@@ -112,6 +114,7 @@ pub struct LayoutReportSchema {
 impl From<&LayoutReport> for LayoutReportSchema {
     fn from(report: &LayoutReport) -> Self {
         Self {
+            output: report.output.clone(),
             name: report.name.clone(),
             state: (&report.state).into(),
         }
@@ -154,6 +157,7 @@ mod tests {
             },
         ] {
             let report = LayoutReport {
+                output: "reterminal".into(),
                 name: "departures".to_owned(),
                 state,
             };

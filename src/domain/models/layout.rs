@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Datelike, NaiveTime, Weekday};
+use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Weekday};
 use chrono_tz::Tz;
 use serde::Serialize;
 use thiserror::Error;
@@ -135,6 +135,29 @@ impl LayoutSchedule {
 
     pub fn rules(&self) -> &[LayoutRule] {
         &self.0
+    }
+
+    /// The moments in the next `days` days (and the rest of today) at which a rule starts or ends, soonest first: the only times
+    /// what is wanted can change, so a page that follows the schedule need only look then.
+    pub fn boundaries(&self, now: DateTime<Tz>, days: u32) -> Vec<DateTime<Tz>> {
+        let zone = now.timezone();
+        let mut moments = Vec::new();
+        for offset in 0..=days {
+            let date = now.date_naive() + Duration::days(offset.into());
+            for rule in &self.0 {
+                for time in [rule.from, rule.until] {
+                    // A time that does not exist (the hour clocks go forward) is skipped; one that happens twice is the first.
+                    if let Some(moment) = zone.from_local_datetime(&date.and_time(time)).earliest()
+                        && moment > now
+                    {
+                        moments.push(moment);
+                    }
+                }
+            }
+        }
+        moments.sort();
+        moments.dedup();
+        moments
     }
 
     /// The layout wanted at `now`, if a rule says.
@@ -316,7 +339,6 @@ mod tests {
         );
     }
 
-    use chrono::TimeZone;
     use chrono_tz::Europe::London;
 
     /// 2026-10-12 is a Monday.
@@ -462,5 +484,58 @@ mod tests {
         let commute = rule("departures", &[], time(6, 30), time(9, 30));
         assert!(commute.applies(at(2026, 10, 24, 7, 0)));
         assert!(commute.applies(at(2026, 10, 26, 7, 0)));
+    }
+
+    #[test]
+    fn the_moments_the_schedule_can_change_are_where_a_rule_starts_or_ends_soonest_first() {
+        let schedule = LayoutSchedule::new(vec![
+            rule("departures", &WEEKDAYS, time(6, 30), time(9, 30)),
+            rule("dashboard", &[], time(22, 0), time(6, 0)),
+        ]);
+
+        // Monday 07:00: the morning's start has gone; its end, the evening's start and the end of the overnight rule have not.
+        let moments = schedule.boundaries(at(2026, 10, 12, 7, 0), 1);
+
+        assert_eq!(
+            moments,
+            [
+                at(2026, 10, 12, 9, 30),
+                at(2026, 10, 12, 22, 0),
+                at(2026, 10, 13, 6, 0),
+                at(2026, 10, 13, 6, 30),
+                at(2026, 10, 13, 9, 30),
+                at(2026, 10, 13, 22, 0),
+            ]
+        );
+        // Exactly on one is not "after" it, and no rules is nothing to wait for.
+        assert!(
+            !schedule
+                .boundaries(at(2026, 10, 12, 9, 30), 0)
+                .contains(&at(2026, 10, 12, 9, 30))
+        );
+        assert!(
+            LayoutSchedule::default()
+                .boundaries(at(2026, 10, 12, 7, 0), 7)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_time_that_clocks_skip_is_left_out_and_one_they_repeat_is_the_first() {
+        let schedule = LayoutSchedule::new(vec![rule("departures", &[], time(1, 30), time(2, 30))]);
+
+        // Clocks go back on Sunday 2026-10-25 (02:00 BST to 01:00 GMT): 01:30 happens twice, and is the first.
+        let back = schedule.boundaries(at(2026, 10, 25, 0, 0), 0);
+        assert_eq!(back.len(), 2);
+        assert_eq!(
+            back[0],
+            London
+                .with_ymd_and_hms(2026, 10, 25, 1, 30, 0)
+                .earliest()
+                .unwrap()
+        );
+        // Clocks go forward on Sunday 2027-03-28 (01:00 GMT to 02:00 BST): 01:30 does not exist, so only the end is a moment.
+        let forward = schedule.boundaries(at(2027, 3, 28, 0, 0), 0);
+        assert_eq!(forward, [at(2027, 3, 28, 2, 30)]);
     }
 }

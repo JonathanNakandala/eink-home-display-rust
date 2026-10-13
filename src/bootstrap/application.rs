@@ -6,7 +6,9 @@ use crate::adapters::departures::DeparturesServiceImpl;
 use crate::adapters::display_image_generator::chrome_render::{
     ChromeRenderDisplayImageGenerator, ChromeSource, Templates,
 };
+use crate::adapters::image_display_service::web_screen::WebScreenAdapter;
 use crate::adapters::image_repository::file_store::FileStoreImageRepository;
+use crate::adapters::published_images::DirectoryImages;
 use crate::adapters::weather::WeatherServiceImpl;
 use crate::application::{Application, RenderPolicy};
 use crate::config::application::{ApplicationConfig, LayoutsConfig};
@@ -96,7 +98,7 @@ pub fn from_config(
         impl DeparturesService,
     >,
 > {
-    Ok(assemble(
+    let mut application = assemble(
         config,
         ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source)
             .with_templates(layouts.templates),
@@ -104,7 +106,39 @@ pub fn from_config(
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
         clock,
     )?
-    .with_layouts(layouts.layouts))
+    .with_layouts(layouts.layouts);
+    // The page for a browser is another output, drawn for besides the display, when it has a screen of its own.
+    if let Some(output) = setup_web_screen(&config.server) {
+        application = application.with_output(output);
+    }
+    Ok(application)
+}
+
+/// Where the page's own pictures are kept, if it has a screen of its own.
+pub fn web_screen_images(
+    config: &crate::config::server::ServerConfig,
+) -> Option<Arc<dyn PublishedImages>> {
+    config
+        .web
+        .screen
+        .as_ref()
+        .filter(|_| config.web.enabled)
+        .map(|_| {
+            Arc::new(DirectoryImages::new(config.web_images_directory()))
+                as Arc<dyn PublishedImages>
+        })
+}
+
+/// The page for a browser as an output, if `[server.web]` is on and has a `screen`.
+pub fn setup_web_screen(
+    config: &crate::config::server::ServerConfig,
+) -> Option<Arc<dyn ImageDisplayService>> {
+    let screen = config.web.screen.as_ref().filter(|_| config.web.enabled)?;
+    Some(Arc::new(WebScreenAdapter::new(
+        screen.width,
+        screen.height,
+        Arc::new(DirectoryImages::new(config.web_images_directory())),
+    )))
 }
 
 #[cfg(test)]
@@ -178,5 +212,74 @@ mod tests {
         let error = load_layouts(&config, None).err().unwrap();
 
         assert!(format!("{error:#}").contains("[[layouts.schedule]] number 1"));
+    }
+
+    fn server(toml_text: &str) -> crate::config::server::ServerConfig {
+        toml::from_str(toml_text).unwrap()
+    }
+
+    #[test]
+    fn the_page_is_an_output_only_when_it_is_on_and_has_a_screen_of_its_own() {
+        for off in [
+            "",
+            "[web]\nenabled = true\nopen = true",
+            "[web]\nopen = true",
+        ] {
+            assert!(setup_web_screen(&server(off)).is_none(), "{off}");
+            assert!(web_screen_images(&server(off)).is_none(), "{off}");
+        }
+
+        let on =
+            server("[web]\nenabled = true\nopen = true\n[web.screen]\nwidth = 1280\nheight = 800");
+        let output = setup_web_screen(&on).expect("an output");
+
+        assert_eq!(output.name(), "web");
+        let profile = output.profile();
+        assert_eq!((profile.width, profile.height), (1280, 800));
+        assert!(output.wants_every_layout());
+        assert!(web_screen_images(&on).is_some());
+    }
+
+    #[tokio::test]
+    async fn what_is_drawn_for_the_page_goes_to_its_own_folder_and_not_the_panels() {
+        use crate::domain::models::display::ImageFormat;
+        use crate::domain::models::image::ImageData;
+        use crate::domain::models::layout::LayoutName;
+        use std::io::Cursor;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = server(&format!(
+            "directory = {:?}\n[web]\nenabled = true\nopen = true\n[web.screen]\nwidth = 32\nheight = 16",
+            tmp.path()
+        ));
+        let mut png = Cursor::new(Vec::new());
+        image::RgbImage::new(32, 16)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let layout = LayoutName::parse("dashboard").unwrap();
+
+        setup_web_screen(&config)
+            .unwrap()
+            .display(&layout, &ImageData::new(png.into_inner()))
+            .await
+            .unwrap();
+
+        assert!(
+            tmp.path()
+                .join("_web")
+                .join("dashboard")
+                .join("image.png")
+                .exists()
+        );
+        // Nothing among the panel's own (the layout folders directly under the directory).
+        assert!(!tmp.path().join("dashboard").exists());
+        let panel = DirectoryImages::new(tmp.path());
+        assert!(
+            panel
+                .published_at(&layout, ImageFormat::Png)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

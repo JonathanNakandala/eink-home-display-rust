@@ -1,6 +1,7 @@
 pub mod eink_waveshare;
 pub mod quantise;
 pub mod reterminal_e1003;
+pub mod web_screen;
 
 use async_trait::async_trait;
 
@@ -18,6 +19,13 @@ pub enum DisplayImpl {
 
 #[async_trait]
 impl ImageDisplayService for DisplayImpl {
+    fn name(&self) -> &'static str {
+        match self {
+            DisplayImpl::WaveshareEpd7in5V2(display) => display.name(),
+            DisplayImpl::ReTerminalE1003(display) => display.name(),
+        }
+    }
+
     fn profile(&self) -> DisplayProfile {
         match self {
             DisplayImpl::WaveshareEpd7in5V2(display) => display.profile(),

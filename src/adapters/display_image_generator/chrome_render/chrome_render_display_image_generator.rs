@@ -193,9 +193,11 @@ fn kill_process(pid: u32) {
 
 struct LaunchedBrowser {
     browser: Browser,
-    /// The window it was launched with, so a different display gets a fresh one.
-    window: (u32, u32),
 }
+
+/// The window Chrome is launched with: as large as any output is drawn at, so that the one Chrome serves them all. A tab's
+/// viewport is set to each picture's own size (see `capture_in_tab`), which a window as large as this never limits.
+const WINDOW: (u32, u32) = (3840, 2160);
 
 fn find_system_chrome() -> Option<PathBuf> {
     let path = match default_executable() {
@@ -317,10 +319,9 @@ impl Inner {
         profile: &DisplayProfile,
         abandoned: &AtomicBool,
     ) -> anyhow::Result<Vec<u8>> {
-        let window = (profile.width, profile.height);
         let mut slot = self.browser.lock().unwrap_or_else(|e| e.into_inner());
 
-        if let Some(launched) = slot.as_ref().filter(|l| l.window == window) {
+        if let Some(launched) = slot.as_ref() {
             match capture_in_new_tab(&launched.browser, page, profile) {
                 Ok(png) => return Ok(png),
                 Err(e) => log::warn!("Render with the running Chrome failed ({e:#}); relaunching"),
@@ -334,12 +335,12 @@ impl Inner {
         // Drop the old one first so its process is gone before the next starts.
         *slot = None;
         self.chrome_pid.store(0, Ordering::SeqCst);
-        let browser = self.launch(window)?;
+        let browser = self.launch(WINDOW)?;
         self.chrome_pid
             .store(browser.get_process_id().unwrap_or(0), Ordering::SeqCst);
         match capture_in_new_tab(&browser, page, profile) {
             Ok(png) => {
-                *slot = Some(LaunchedBrowser { browser, window });
+                *slot = Some(LaunchedBrowser { browser });
                 Ok(png)
             }
             Err(e) => {
@@ -720,6 +721,60 @@ mod tests {
     fn kept_pid(generator: &ChromeRenderDisplayImageGenerator) -> Option<u32> {
         let slot = generator.inner.browser.lock().unwrap();
         slot.as_ref().and_then(|l| l.browser.get_process_id())
+    }
+
+    /// Needs a real Chrome, so run with `--ignored`. Several outputs are drawn for in one run, each at its own size, and the
+    /// one Chrome serves them all: neither does a size left over from the last picture limit the next, nor does a change of
+    /// size cost a relaunch.
+    #[tokio::test]
+    #[ignore]
+    async fn one_chrome_draws_pictures_of_different_sizes_each_at_its_own() {
+        let generator = ChromeRenderDisplayImageGenerator::new(
+            std::env::temp_dir().join("home_display_test_chrome"),
+            Duration::from_secs(300),
+            ChromeSource::PreferSystem,
+        );
+        let sizes = [
+            (800, 480),
+            (1920, 1080),
+            (1872, 1404),
+            (800, 480),
+            (3840, 2160),
+        ];
+        let mut pid = None;
+
+        for (width, height) in sizes {
+            let profile = DisplayProfile {
+                width,
+                height,
+                palette: Palette::Rgb,
+            };
+            let image = generator
+                .generate(
+                    // For looking at, the whole sample (boards and weather), and otherwise a little.
+                    if std::env::var("RENDER_SHOTS").is_ok() {
+                        GlanceData::sample(chrono::Utc::now().with_timezone(&London))
+                    } else {
+                        sample_data()
+                    },
+                    &profile,
+                    &dashboard(),
+                )
+                .await
+                .unwrap();
+            let decoded = image::load_from_memory(&image.data).unwrap();
+            assert_eq!((decoded.width(), decoded.height()), (width, height));
+            // For looking at: where RENDER_SHOTS names a folder, each picture as it came out.
+            if let Ok(folder) = std::env::var("RENDER_SHOTS") {
+                std::fs::write(format!("{folder}/{width}x{height}.png"), &image.data).unwrap();
+            }
+            let now = kept_pid(&generator).expect("Chrome is kept");
+            assert_eq!(
+                *pid.get_or_insert(now),
+                now,
+                "{width}x{height} relaunched Chrome"
+            );
+        }
     }
 
     /// Needs a real Chrome, so run with `--ignored`.

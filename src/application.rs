@@ -195,6 +195,9 @@ where
     /// The layouts to draw; see `with_layouts`.
     #[new(default)]
     layouts: Layouts,
+    /// Outputs besides the display: each is drawn for as well, at its own size; see `with_output`.
+    #[new(default)]
+    extra_outputs: Vec<Arc<dyn ImageDisplayService>>,
     #[new(default)]
     last_weather: LastGood<Option<WeatherInformation>>,
     /// Told how each run goes; see `with_observer`.
@@ -215,6 +218,14 @@ where
     /// will go on to read.
     pub fn with_observer(mut self, observer: Arc<dyn RenderObserver>) -> Self {
         self.observers.push(observer);
+        self
+    }
+
+    /// Has `output` drawn for on each run as well as the display, from the same data, at its own size: a web page, say, beside
+    /// an e-ink panel. It is not the display, so one layout that cannot be drawn for it is reported and the run goes on, as
+    /// with any layout besides the default.
+    pub fn with_output(mut self, output: Arc<dyn ImageDisplayService>) -> Self {
+        self.extra_outputs.push(output);
         self
     }
 
@@ -274,53 +285,107 @@ where
             let (glance_data, sources) = self.gather(location, now).await;
             // Without the default there is no picture worth the name, and whatever went wrong would likely go
             // wrong again for the rest, so this failing fails the run.
-            self.show(first, &glance_data, &profile).await?;
+            self.show(
+                &self.image_viewing_service,
+                true,
+                first,
+                &glance_data,
+                &profile,
+            )
+            .await?;
             anyhow::Ok((glance_data, sources))
         };
         let (glance_data, sources) = tokio::time::timeout(deadline, essentials)
             .await
             .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))??;
 
+        let name = self.image_viewing_service.name();
         let mut drawn = vec![LayoutReport {
+            output: name.to_owned(),
             name: first.name.to_string(),
             state: LayoutState::Drawn,
         }];
         for layout in others {
-            // One layout failing must not take the others with it: it is reported, which shows as degraded, and
-            // its last image stays in place.
-            let outcome = tokio::time::timeout(
-                self.policy.limits.layout_deadline,
-                self.show(layout, &glance_data, &profile),
-            )
-            .await;
-            let state = match outcome {
-                Ok(Ok(())) => LayoutState::Drawn,
-                Ok(Err(error)) => {
-                    log::warn!("Failed to draw the {} layout: {error:#}", layout.name);
-                    LayoutState::Failed {
-                        reason: "could not be drawn".to_owned(),
-                    }
-                }
-                Err(_) => {
-                    log::warn!(
-                        "The {} layout took longer than {:?}; its last image stays",
-                        layout.name,
-                        self.policy.limits.layout_deadline
-                    );
-                    LayoutState::Failed {
-                        reason: "timed out".to_owned(),
-                    }
-                }
-            };
             drawn.push(LayoutReport {
+                output: name.to_owned(),
                 name: layout.name.to_string(),
-                state,
+                state: self
+                    .draw(
+                        &self.image_viewing_service,
+                        true,
+                        layout,
+                        &glance_data,
+                        &profile,
+                    )
+                    .await,
             });
+        }
+        for output in &self.extra_outputs {
+            let (profile, layouts) = (output.profile(), self.layouts_for(output.as_ref(), now));
+            for layout in layouts {
+                drawn.push(LayoutReport {
+                    output: output.name().to_owned(),
+                    name: layout.name.to_string(),
+                    state: self
+                        .draw(output.as_ref(), false, layout, &glance_data, &profile)
+                        .await,
+                });
+            }
         }
         Ok(RenderReport {
             sources,
             layouts: drawn,
         })
+    }
+
+    /// The layouts `output` is given: all of them if it serves them to be chosen from, else the one for this time of day.
+    fn layouts_for(&self, output: &dyn ImageDisplayService, now: DateTime<Tz>) -> &[Layout] {
+        if output.wants_every_layout() {
+            self.layouts.all()
+        } else {
+            std::slice::from_ref(self.layouts.current(now))
+        }
+    }
+
+    /// Draws a layout for an output that can do without it: one that fails or is slow is reported and left with its last
+    /// image, which shows as degraded, and must not take the others with it.
+    async fn draw(
+        &self,
+        output: &dyn ImageDisplayService,
+        keep: bool,
+        layout: &Layout,
+        glance_data: &GlanceData,
+        profile: &DisplayProfile,
+    ) -> LayoutState {
+        let outcome = tokio::time::timeout(
+            self.policy.limits.layout_deadline,
+            self.show(output, keep, layout, glance_data, profile),
+        )
+        .await;
+        match outcome {
+            Ok(Ok(())) => LayoutState::Drawn,
+            Ok(Err(error)) => {
+                log::warn!(
+                    "Failed to draw the {} layout for {}: {error:#}",
+                    layout.name,
+                    output.name()
+                );
+                LayoutState::Failed {
+                    reason: "could not be drawn".to_owned(),
+                }
+            }
+            Err(_) => {
+                log::warn!(
+                    "The {} layout for {} took longer than {:?}; its last image stays",
+                    layout.name,
+                    output.name(),
+                    self.policy.limits.layout_deadline
+                );
+                LayoutState::Failed {
+                    reason: "timed out".to_owned(),
+                }
+            }
+        }
     }
 
     /// What the dashboard shows, from the sources, and how each did. A source that fails or is too slow doesn't stop it.
@@ -380,9 +445,11 @@ where
         (glance_data, sources)
     }
 
-    /// Draws one layout, keeps its picture and hands it to the display.
+    /// Draws one layout for `output`, keeps the picture if `keep` and hands it to the output.
     async fn show(
         &self,
+        output: &dyn ImageDisplayService,
+        keep: bool,
         layout: &Layout,
         glance_data: &GlanceData,
         profile: &DisplayProfile,
@@ -391,12 +458,12 @@ where
             .display_image_generator
             .generate(glance_data.clone(), profile, &layout.name)
             .await?;
-        self.image_repository
-            .store(&layout.name, &image_data)
-            .await?;
-        self.image_viewing_service
-            .display(&layout.name, &image_data)
-            .await
+        if keep {
+            self.image_repository
+                .store(&layout.name, &image_data)
+                .await?;
+        }
+        output.display(&layout.name, &image_data).await
     }
 }
 
@@ -490,6 +557,9 @@ mod tests {
     struct Panel;
     #[async_trait]
     impl ImageDisplayService for Panel {
+        fn name(&self) -> &'static str {
+            "panel"
+        }
         fn profile(&self) -> DisplayProfile {
             DisplayProfile {
                 width: 1,
@@ -881,6 +951,8 @@ mod tests {
         failing: Mutex<Option<String>>,
         /// This layout never finishes.
         hanging: Mutex<Option<String>>,
+        /// The layout and width of each picture asked for, which is how big it was drawn.
+        sizes: Mutex<Vec<(String, u32)>>,
         every_layout: bool,
     }
     struct Recording(Arc<Journal>);
@@ -888,9 +960,14 @@ mod tests {
         async fn generate(
             &self,
             _: GlanceData,
-            _: &DisplayProfile,
+            profile: &DisplayProfile,
             layout: &LayoutName,
         ) -> anyhow::Result<ImageData> {
+            self.0
+                .sizes
+                .lock()
+                .unwrap()
+                .push((layout.to_string(), profile.width));
             if self.0.failing.lock().unwrap().as_deref() == Some(layout.as_str()) {
                 anyhow::bail!("Chrome fell over");
             }
@@ -910,6 +987,9 @@ mod tests {
     }
     #[async_trait]
     impl ImageDisplayService for Recording {
+        fn name(&self) -> &'static str {
+            "recording"
+        }
         fn profile(&self) -> DisplayProfile {
             Panel.profile()
         }
@@ -1016,10 +1096,12 @@ mod tests {
             report.layouts,
             [
                 LayoutReport {
+                    output: "recording".to_owned(),
                     name: "first".to_owned(),
                     state: LayoutState::Drawn
                 },
                 LayoutReport {
+                    output: "recording".to_owned(),
                     name: "second".to_owned(),
                     state: LayoutState::Failed {
                         reason: "could not be drawn".to_owned()
@@ -1160,5 +1242,171 @@ mod tests {
 
         // At seven the schedule puts the second layout on the panel; at noon it is the default again.
         assert_eq!(*journal.shown.lock().unwrap(), ["second", "first"]);
+    }
+
+    // --- outputs besides the display ------------------------------------------------------------------------
+
+    /// A second output, like a web page beside an e-ink panel: drawn for at its own size, for the layouts it asks for.
+    struct Screen {
+        journal: Arc<Journal>,
+        every_layout: bool,
+        shown: Mutex<Vec<String>>,
+        fail: bool,
+    }
+    #[async_trait]
+    impl ImageDisplayService for Screen {
+        fn name(&self) -> &'static str {
+            "web"
+        }
+        fn profile(&self) -> DisplayProfile {
+            DisplayProfile {
+                width: 1920,
+                height: 1080,
+                palette: Palette::Rgb,
+            }
+        }
+        fn wants_every_layout(&self) -> bool {
+            self.every_layout
+        }
+        async fn display(&self, layout: &LayoutName, _: &ImageData) -> anyhow::Result<()> {
+            if self.fail {
+                anyhow::bail!("the page's folder is full");
+            }
+            self.shown.lock().unwrap().push(layout.to_string());
+            let _ = &self.journal;
+            Ok(())
+        }
+    }
+
+    fn screen(journal: &Arc<Journal>, every_layout: bool, fail: bool) -> Arc<Screen> {
+        Arc::new(Screen {
+            journal: journal.clone(),
+            every_layout,
+            shown: Mutex::new(Vec::new()),
+            fail,
+        })
+    }
+
+    #[tokio::test]
+    async fn another_output_is_drawn_for_at_its_own_size_from_the_same_data_and_reported_as_its_own()
+     {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        let web = screen(&journal, true, false);
+
+        let report = recording_app(&journal)
+            .with_output(web.clone())
+            .run(Location::new(0.0, 0.0))
+            .await
+            .unwrap();
+
+        // The display got its layouts at its size (1, from the fake panel), and the page its own at 1920.
+        let sizes = journal.sizes.lock().unwrap().clone();
+        assert_eq!(
+            sizes,
+            [
+                ("first".to_owned(), 1),
+                ("second".to_owned(), 1),
+                ("first".to_owned(), 1920),
+                ("second".to_owned(), 1920)
+            ]
+        );
+        assert_eq!(*web.shown.lock().unwrap(), ["first", "second"]);
+        // The picture the display keeps is the display's alone: the page's are not stored as screenshots too.
+        assert_eq!(*journal.stored.lock().unwrap(), ["first", "second"]);
+        let outputs: Vec<_> = report
+            .layouts
+            .iter()
+            .map(|l| (l.output.as_str(), l.name.as_str()))
+            .collect();
+        assert_eq!(
+            outputs,
+            [
+                ("recording", "first"),
+                ("recording", "second"),
+                ("web", "first"),
+                ("web", "second")
+            ]
+        );
+        assert!(!report.is_degraded());
+    }
+
+    #[tokio::test]
+    async fn an_output_that_fails_is_reported_and_the_display_and_the_run_are_untouched() {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        let web = screen(&journal, true, true);
+
+        let report = recording_app(&journal)
+            .with_output(web)
+            .run(Location::new(0.0, 0.0))
+            .await
+            .expect("an output besides the display doesn't fail the run");
+
+        assert_eq!(*journal.shown.lock().unwrap(), ["first", "second"]);
+        assert!(report.is_degraded());
+        let failed: Vec<_> = report
+            .layouts
+            .iter()
+            .filter(|l| l.state != LayoutState::Drawn)
+            .map(|l| (l.output.as_str(), l.name.as_str()))
+            .collect();
+        assert_eq!(failed, [("web", "first"), ("web", "second")]);
+    }
+
+    #[tokio::test]
+    async fn an_output_that_serves_one_layout_gets_the_one_for_the_time_of_day_and_a_slow_one_is_given_up_on()
+     {
+        use crate::domain::models::layout::{LayoutRule, LayoutSchedule};
+        use chrono::{NaiveTime, TimeZone};
+
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        let morning = LayoutRule::new(
+            LayoutName::parse("second").unwrap(),
+            vec![],
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        )
+        .unwrap();
+        let single = screen(&journal, false, false);
+        recording_app_with(
+            &journal,
+            crate::adapters::clock::FixedClock::at(
+                London.with_ymd_and_hms(2026, 10, 12, 7, 0, 0).unwrap(),
+            ),
+        )
+        .with_layouts(
+            two_layouts()
+                .with_schedule(LayoutSchedule::new(vec![morning]))
+                .unwrap(),
+        )
+        .with_output(single.clone())
+        .run(Location::new(0.0, 0.0))
+        .await
+        .unwrap();
+        assert_eq!(*single.shown.lock().unwrap(), ["second"]);
+
+        // Drawing is the generator's, and a layout that never finishes is given up on whichever output it was for.
+        *journal.hanging.lock().unwrap() = Some("second".to_owned());
+        let slow = screen(&journal, true, false);
+        let started = std::time::Instant::now();
+        let report = recording_app(&journal)
+            .with_output(slow.clone())
+            .run(Location::new(0.0, 0.0))
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < StdDuration::from_millis(390),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(report.is_degraded());
     }
 }

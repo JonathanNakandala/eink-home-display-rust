@@ -1197,6 +1197,96 @@
           }
         }
       }
+    },
+    "/view/icon.svg": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The icon, as a vector.",
+        "operationId": "icon_svg",
+        "responses": {
+          "200": {
+            "description": "The page's icon.",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/view/icons/{file}": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The icon, as a PNG of one of its sizes.",
+        "operationId": "icon_png",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "description": "The size in pixels and `.png`: `180.png` (what an Apple device looks for), `192.png` or `512.png`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "192.png"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The page's icon.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no icon of that size.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/view/manifest.webmanifest": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The web app manifest: what makes the page installable, so that a tablet can put it on its home screen and open it full\nscreen, with no address bar, like an app.",
+        "operationId": "manifest",
+        "responses": {
+          "200": {
+            "description": "The web app manifest, as `application/manifest+json`.",
+            "content": {
+              "application/manifest+json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1621,9 +1711,14 @@
           {
             "type": "object",
             "required": [
+              "output",
               "name"
             ],
             "properties": {
+              "output": {
+                "type": "string",
+                "description": "Which output it was drawn for: `waveshare`, `reterminal` or `web`."
+              },
               "name": {
                 "type": "string",
                 "description": "As `/layouts` lists it."
@@ -2196,6 +2291,18 @@
                 "examples": [
                   "dashboard"
                 ]
+              },
+              "auto_changes_in_seconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "For a request that was for `auto` (or for nothing): how many seconds until the layout `auto` means changes, because the\nschedule says so, if it does within a week. Absent for a layout asked for by name. The page looks again then, so that a\nchange of layout at 06:30 is on screen at 06:30 and not whenever it next happens to ask.",
+                "examples": [
+                  3600
+                ],
+                "minimum": 0
               }
             }
           }

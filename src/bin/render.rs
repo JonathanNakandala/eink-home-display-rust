@@ -210,6 +210,10 @@ struct NoDisplay;
 
 #[async_trait::async_trait]
 impl ImageDisplayService for NoDisplay {
+    fn name(&self) -> &'static str {
+        "none"
+    }
+
     fn profile(&self) -> DisplayProfile {
         DisplayProfile {
             width: 0,

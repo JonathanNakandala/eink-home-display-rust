@@ -33,6 +33,8 @@ pub enum LayoutState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LayoutReport {
+    /// Which output it was drawn for: `waveshare`, `reterminal` or `web`.
+    pub output: String,
     pub name: String,
     #[serde(flatten)]
     pub state: LayoutState,
@@ -99,6 +101,7 @@ mod tests {
     #[test]
     fn a_layout_that_could_not_be_drawn_is_degraded() {
         let drawn = |name: &str| LayoutReport {
+            output: "reterminal".into(),
             name: name.to_owned(),
             state: LayoutState::Drawn,
         };
@@ -115,7 +118,7 @@ mod tests {
         assert!(report.is_degraded());
         assert_eq!(
             serde_json::to_value(&report.layouts[1]).unwrap(),
-            serde_json::json!({"name": "departures", "state": "failed", "reason": "timed out"})
+            serde_json::json!({"output": "reterminal", "name": "departures", "state": "failed", "reason": "timed out"})
         );
     }
 

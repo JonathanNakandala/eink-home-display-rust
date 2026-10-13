@@ -21,6 +21,7 @@
 //! These routes make their own decision about who may use them, and so sit outside the gate that the display routes are
 //! behind over HTTPS.
 
+mod icons;
 mod limiter;
 
 use std::net::{IpAddr, Ipv4Addr};
@@ -29,7 +30,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Extension, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -48,7 +49,7 @@ use super::health::image_written_at;
 use super::image::{etag_of, names};
 use super::{Published, server_error};
 use crate::adapters::est_server::Connection;
-use crate::application::plan::{Plan, compute};
+use crate::application::plan::{Plan, PlanTiming, compute};
 use crate::application::viewers::{AuthError, ExchangeError, Viewers};
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::{Layout, LayoutName};
@@ -63,6 +64,10 @@ const REALM: &str = "home-display";
 const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 /// The grant a refresh token is used under (RFC 6749 section 6).
 const REFRESH_GRANT: &str = "refresh_token";
+/// How long after a render is due the page looks again for it, and how often while it is not there yet. A display is told to
+/// come later (`wake_delay`) because it has a radio to start and a panel to refresh; a browser is already awake, so it need
+/// not, and a picture then shows a few seconds after it is drawn and not half a minute.
+const WEB_WAKE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 /// A token request is two short fields.
 const MAX_FORM: usize = 2048;
 
@@ -137,6 +142,8 @@ pub(super) struct WebState {
     allowed: Vec<Layout>,
     /// The content security policy the page is served with.
     policy: HeaderValue,
+    /// The icon in each size it is served in.
+    icons: Vec<(u32, Vec<u8>)>,
     access: Access,
 }
 
@@ -184,6 +191,10 @@ impl WebState {
             allowed,
             policy: HeaderValue::from_str(&content_security_policy(PAGE))
                 .expect("a policy is a header value"),
+            icons: icons::SIZES
+                .iter()
+                .map(|size| (*size, icons::png(*size)))
+                .collect(),
             access,
         }
     }
@@ -198,8 +209,17 @@ impl WebState {
 
     /// The layout a request without one gets: the one for this time of day if it may be shown, else the first that may.
     fn automatic(&self, scope: &LayoutScope) -> Result<&Layout, Refusal> {
+        self.automatic_at(scope, self.published.clock.now())
+    }
+
+    /// What `automatic` is, or will be, at `at`.
+    fn automatic_at(
+        &self,
+        scope: &LayoutScope,
+        at: chrono::DateTime<chrono_tz::Tz>,
+    ) -> Result<&Layout, Refusal> {
         let permitted = self.permitted(scope);
-        let current = self.published.layouts.current(self.published.clock.now());
+        let current = self.published.layouts.current(at);
         permitted
             .iter()
             .find(|layout| layout.name == current.name)
@@ -229,6 +249,22 @@ impl WebState {
                 scope: format!("layout:{}", layout.name),
             })
         }
+    }
+
+    /// How long until `automatic` is another layout than `now`'s, if the schedule has it change within a week.
+    fn automatic_changes_in(&self, scope: &LayoutScope) -> Option<u64> {
+        let now = self.published.clock.now();
+        let current = self.automatic_at(scope, now).ok()?.name.clone();
+        self.published
+            .layouts
+            .schedule()
+            .boundaries(now, 8)
+            .into_iter()
+            .find(|moment| {
+                self.automatic_at(scope, *moment)
+                    .is_ok_and(|layout| layout.name != current)
+            })
+            .map(|moment| u64::try_from((moment - now).num_seconds()).unwrap_or(0))
     }
 
     fn not_found(&self, scope: &LayoutScope) -> Refusal {
@@ -268,8 +304,8 @@ fn hash_source(text: &str) -> String {
 /// talk to this server: nothing else.
 fn content_security_policy(page: &str) -> String {
     format!(
-        "default-src 'none'; script-src {}; style-src {}; img-src blob:; connect-src 'self'; base-uri 'none'; \
-         form-action 'none'; frame-ancestors 'none'",
+        "default-src 'none'; script-src {}; style-src {}; img-src blob: 'self'; connect-src 'self'; manifest-src 'self'; \
+         base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         hash_source(inline_block(page, "script")),
         hash_source(inline_block(page, "style")),
     )
@@ -439,9 +475,14 @@ impl Modify for BearerAuth {
 )]
 struct WebDoc;
 
-/// The page.
+/// The page, and what a browser needs to put it on a home screen. None of it is private, so it is for anyone, and a browser
+/// asks for it without the token.
 fn open_routes() -> OpenApiRouter<Arc<WebState>> {
-    OpenApiRouter::with_openapi(WebDoc::openapi()).routes(routes!(page))
+    OpenApiRouter::with_openapi(WebDoc::openapi())
+        .routes(routes!(page))
+        .routes(routes!(manifest))
+        .routes(routes!(icon_svg))
+        .routes(routes!(icon_png))
 }
 
 /// What gives the picture away: behind `authenticate`.
@@ -504,6 +545,124 @@ async fn page(State(state): State<Arc<WebState>>) -> Response {
         PAGE,
     )
         .into_response()
+}
+
+/// The web app manifest: what makes the page installable, so that a tablet can put it on its home screen and open it full
+/// screen, with no address bar, like an app.
+#[utoipa::path(
+    get,
+    path = "/view/manifest.webmanifest",
+    tag = "web",
+    responses((
+        status = 200,
+        description = "The web app manifest, as `application/manifest+json`.",
+        content_type = "application/manifest+json",
+        body = String
+    ))
+)]
+async fn manifest() -> Response {
+    let icons: Vec<_> = icons::SIZES
+        .iter()
+        .filter(|size| **size != 180)
+        .map(|size| {
+            serde_json::json!({
+                "src": format!("/view/icons/{size}.png"),
+                "sizes": format!("{size}x{size}"),
+                "type": "image/png",
+                "purpose": "any",
+            })
+        })
+        .chain([serde_json::json!({
+            "src": "/view/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+        })])
+        .collect();
+    let manifest = serde_json::json!({
+        "name": "Home display",
+        "short_name": "Display",
+        "description": "What the home display shows, kept up to date",
+        // Opens as the kiosk: the picture alone, filling the screen.
+        "start_url": "/view#kiosk",
+        "scope": "/view",
+        "display": "fullscreen",
+        "display_override": ["fullscreen", "standalone"],
+        "orientation": "any",
+        "background_color": "#ffffff",
+        "theme_color": "#111111",
+        "icons": icons,
+    });
+    (
+        [
+            (header::CONTENT_TYPE, "application/manifest+json"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        manifest.to_string(),
+    )
+        .into_response()
+}
+
+/// The icon, as a vector.
+#[utoipa::path(
+    get,
+    path = "/view/icon.svg",
+    tag = "web",
+    responses((
+        status = 200,
+        description = "The page's icon.",
+        content_type = "image/svg+xml",
+        body = String
+    ))
+)]
+async fn icon_svg() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        icons::SVG,
+    )
+        .into_response()
+}
+
+/// Which size of the icon.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Path)]
+struct IconFile {
+    /// The size in pixels and `.png`: `180.png` (what an Apple device looks for), `192.png` or `512.png`.
+    #[param(example = "192.png")]
+    file: String,
+}
+
+/// The icon, as a PNG of one of its sizes.
+#[utoipa::path(
+    get,
+    path = "/view/icons/{file}",
+    tag = "web",
+    params(IconFile),
+    responses(
+        (status = 200, description = "The page's icon.", content_type = "image/png", body = Vec<u8>),
+        (status = 404, description = "There is no icon of that size.", body = String, content_type = "text/plain")
+    )
+)]
+async fn icon_png(
+    State(state): State<Arc<WebState>>,
+    Path(IconFile { file }): Path<IconFile>,
+) -> Response {
+    let size = file
+        .strip_suffix(".png")
+        .and_then(|size| size.parse::<u32>().ok());
+    match state.icons.iter().find(|(known, _)| Some(*known) == size) {
+        Some((_, png)) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=86400"),
+            ],
+            png.clone(),
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "There is no icon of that size").into_response(),
+    }
 }
 
 /// Which layout a request is about. Optional: without it, or with `auto`, the one for this time of day.
@@ -582,6 +741,12 @@ struct ViewState {
     /// The layout this is the state of: what `auto` came to.
     #[schema(examples("dashboard"))]
     layout: String,
+    /// For a request that was for `auto` (or for nothing): how many seconds until the layout `auto` means changes, because the
+    /// schedule says so, if it does within a week. Absent for a layout asked for by name. The page looks again then, so that a
+    /// change of layout at 06:30 is on screen at 06:30 and not whenever it next happens to ask.
+    #[schema(examples(3600))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_changes_in_seconds: Option<u64>,
     #[serde(flatten)]
     plan: Plan,
 }
@@ -622,10 +787,12 @@ async fn state(
     Query(which): Query<WhichLayout>,
     Query(have): Query<Have>,
 ) -> Response {
-    let layout = match state.resolve(&scope_of(principal), which.layout.as_deref()) {
+    let scope = scope_of(principal);
+    let layout = match state.resolve(&scope, which.layout.as_deref()) {
         Ok(layout) => layout,
         Err(refusal) => return refusal.into_response(),
     };
+    let automatic = which.layout.as_deref().is_none_or(|name| name == "auto");
     let published = &state.published;
     let rendered_at = match image_written_at(published, layout).await {
         Ok(Some(rendered_at)) => rendered_at,
@@ -638,13 +805,21 @@ async fn state(
         published.clock.now(),
         rendered_at,
         &published.schedule,
-        published.timing,
+        PlanTiming {
+            wake_delay: WEB_WAKE_DELAY,
+            ..published.timing
+        },
         have.have,
     ) {
         Ok(plan) => (
             [(header::CACHE_CONTROL, "no-store")],
             Json(ViewState {
                 layout: layout.name.to_string(),
+                auto_changes_in_seconds: if automatic {
+                    state.automatic_changes_in(&scope)
+                } else {
+                    None
+                },
                 plan,
             }),
         )
@@ -2657,6 +2832,271 @@ mod tests {
                 text("localStorage.getItem('hd.refresh')")?.is_empty(),
                 "a refresh token was kept"
             );
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        outcome.unwrap();
+    }
+
+    // --- for a screen on a wall ----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn the_page_looks_again_a_moment_after_a_picture_is_due_not_half_a_minute() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = serve(tmp.path(), &open_all()).await;
+        publish_both(tmp.path(), FIRST, b"a").await;
+        // An hourly schedule, the picture a minute old: it is due in 59 minutes, and the page is to come back two seconds after,
+        // where a display is told to come thirty (its radio, its panel).
+        crate::adapters::image_server::testing::set_age(tmp.path(), 60);
+
+        let state = json(format!("{base}/view/api/state")).await;
+
+        let next = state["next_seconds"].as_u64().unwrap();
+        assert!((3535..=3545).contains(&next), "{next}");
+    }
+
+    #[tokio::test]
+    async fn while_a_render_is_due_but_not_there_the_page_is_told_to_look_again_in_a_couple_of_seconds()
+     {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = serve(tmp.path(), &open_all()).await;
+        publish_both(tmp.path(), FIRST, b"a").await;
+        // An hour and a few seconds on from the render, so the next is due.
+        crate::adapters::image_server::testing::set_age(tmp.path(), 3600 + 5);
+
+        let state = json(format!("{base}/view/api/state")).await;
+
+        assert_eq!(state["pending"], true);
+        let next = state["next_seconds"].as_u64().unwrap();
+        assert!((1..=3).contains(&next), "{next}");
+    }
+
+    #[tokio::test]
+    async fn on_auto_the_page_is_told_when_the_schedule_will_change_what_auto_means() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"all").await;
+        publish_both(tmp.path(), "departures", b"trains").await;
+        let clock = FixedClock::at(at(6, 0));
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            with_a_morning_rule(),
+            &open_all(),
+            clock.clone(),
+        )
+        .await
+        .unwrap();
+        let changes = |query: &'static str| {
+            let url = format!("{base}/view/api/state{query}");
+            async move { json(url).await["auto_changes_in_seconds"].clone() }
+        };
+
+        // At 06:00 the dashboard is the layout, and departures starts at 06:30: in half an hour, then at 09:30 it is back.
+        assert_eq!(changes("").await, 30 * 60);
+        assert_eq!(changes("?layout=auto").await, 30 * 60);
+        clock.set(at(7, 0));
+        assert_eq!(changes("").await, 2 * 3600 + 30 * 60);
+        // Asked for a layout by name there is nothing to follow.
+        assert!(changes("?layout=dashboard").await.is_null());
+        // With no change in the week the field is left out.
+        let still = start_web(tmp.path().to_path_buf(), two_layouts(), &open_all(), clock)
+            .await
+            .unwrap()
+            .0;
+        assert!(
+            json(format!("{still}/view/api/state"))
+                .await
+                .get("auto_changes_in_seconds")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_change_the_viewer_cannot_see_is_not_a_change_for_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"all").await;
+        publish_both(tmp.path(), "departures", b"trains").await;
+        let clock = FixedClock::at(at(6, 0));
+        // This page may show only the dashboard, so the schedule's move to departures never changes what `auto` is for it.
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            with_a_morning_rule(),
+            &only(&[FIRST]),
+            clock,
+        )
+        .await
+        .unwrap();
+
+        let state = json(format!("{base}/view/api/state")).await;
+
+        assert_eq!(state["layout"], FIRST);
+        assert!(state.get("auto_changes_in_seconds").is_none(), "{state}");
+    }
+
+    #[tokio::test]
+    async fn the_page_can_be_put_on_a_home_screen_a_manifest_and_icons_for_anyone() {
+        let g = guarded().await;
+
+        // No token for any of it: nothing in it is private, and a browser fetches it without credentials.
+        let manifest = g.with("/view/manifest.webmanifest", None).await;
+        assert_eq!(manifest.status(), 200);
+        assert_eq!(
+            manifest.headers()["content-type"],
+            "application/manifest+json"
+        );
+        let manifest: serde_json::Value = manifest.json().await.unwrap();
+        assert_eq!(manifest["display"], "fullscreen");
+        assert_eq!(manifest["start_url"], "/view#kiosk");
+        assert_eq!(manifest["scope"], "/view");
+        // Every icon it names is served, as what it says it is.
+        let icons = manifest["icons"].as_array().unwrap();
+        assert!(
+            icons.iter().any(|i| i["sizes"] == "192x192")
+                && icons.iter().any(|i| i["sizes"] == "512x512")
+        );
+        for icon in icons {
+            let response = g.with(icon["src"].as_str().unwrap(), None).await;
+            assert_eq!(response.status(), 200, "{icon}");
+            assert_eq!(
+                response.headers()["content-type"],
+                icon["type"].as_str().unwrap()
+            );
+        }
+        // The one an Apple device looks for, which a manifest does not name, and sizes there are not.
+        assert_eq!(g.with("/view/icons/180.png", None).await.status(), 200);
+        for missing in [
+            "/view/icons/181.png",
+            "/view/icons/192",
+            "/view/icons/x.png",
+        ] {
+            assert_eq!(g.with(missing, None).await.status(), 404, "{missing}");
+        }
+        // The page points at them.
+        let page = g.with("/view", None).await.text().await.unwrap();
+        for link in [
+            "rel=\"manifest\" href=\"/view/manifest.webmanifest\"",
+            "rel=\"apple-touch-icon\" href=\"/view/icons/180.png\"",
+            "rel=\"icon\" href=\"/view/icon.svg\"",
+            "apple-mobile-web-app-capable",
+        ] {
+            assert!(page.contains(link), "{link}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_policy_lets_the_manifest_and_icons_load_and_nothing_more() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = serve(tmp.path(), &open_all()).await;
+
+        let policy = reqwest::get(format!("{base}/view"))
+            .await
+            .unwrap()
+            .headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+
+        assert!(policy.contains("manifest-src 'self'"), "{policy}");
+        assert!(policy.contains("img-src blob: 'self'"), "{policy}");
+        // Still nothing from elsewhere and no running of inline scripts but its own by hash.
+        assert!(
+            policy.contains("default-src 'none'") && policy.contains("connect-src 'self'"),
+            "{policy}"
+        );
+        assert!(
+            !policy.contains("worker-src") && !policy.contains("unsafe"),
+            "{policy}"
+        );
+    }
+
+    #[test]
+    fn the_page_can_keep_the_screen_on_and_be_locked_and_does_so_only_where_the_browser_can() {
+        // The script: asks for a wake lock only if the browser has them, again whenever the page is shown, and lets a kiosk
+        // start it on its own unless told otherwise.
+        assert!(PAGE.contains("'wakeLock' in navigator"));
+        assert!(PAGE.contains("navigator.wakeLock.request('screen')"));
+        assert!(PAGE.contains("kiosk && remembered !== '0'"));
+        // And `lock` stops layouts being changed by a touch.
+        assert!(PAGE.contains("hash.has('lock')"));
+        assert!(PAGE.contains("layouts.length < 2 || locked"));
+        // The button starts hidden, so a browser with no wake lock never shows one that does nothing.
+        assert!(
+            PAGE.contains("id=\"awake\"") && PAGE.contains("title=\"Stop the screen from sleeping")
+        );
+        let button = &PAGE[PAGE.find("id=\"awake\"").unwrap()..];
+        assert!(button[..button.find('>').unwrap()].contains("hidden"));
+    }
+
+    /// Needs a real Chrome, so run with `--ignored`. A page set up as a wall display: the bar is gone, a layout can't be changed
+    /// by key or touch, the screen is asked to stay on, and the manifest is there for the browser under the page's policy.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn a_locked_kiosk_page_keeps_its_layout_and_asks_for_the_screen_in_a_browser() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = serve(tmp.path(), &open_all()).await;
+        publish_picture(tmp.path(), FIRST, 40).await;
+        publish_picture(tmp.path(), "departures", 20).await;
+
+        let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let browser = headless_chrome::Browser::new(
+                headless_chrome::LaunchOptions::default_builder()
+                    .headless(true)
+                    .path(headless_chrome::browser::default_executable().ok())
+                    .build()?,
+            )?;
+            let tab = browser.new_tab()?;
+            let number = |script: &str| -> anyhow::Result<f64> {
+                Ok(tab.evaluate(script, false)?.value.and_then(|v| v.as_f64()).unwrap_or(-1.0))
+            };
+            let text = |script: &str| -> anyhow::Result<String> {
+                Ok(tab.evaluate(script, false)?.value.and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default())
+            };
+            let waits = |script: &str, wanted: f64| -> anyhow::Result<()> {
+                for _ in 0..100 {
+                    if number(script)? >= wanted {
+                        return Ok(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                anyhow::bail!("{script} never reached {wanted}")
+            };
+            let picture_width = "document.getElementById('picture').naturalWidth";
+
+            tab.navigate_to(&format!("{base}/view?layout=dashboard#kiosk&lock"))?.wait_until_navigated()?;
+            waits(picture_width, 40.0)?;
+
+            // Locked: no buttons, and neither the arrow keys nor a swipe move it off its layout.
+            anyhow::ensure!(number("document.querySelectorAll('#layouts button').length")? == 0.0, "buttons in a locked page");
+            tab.evaluate(
+                "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight'}))",
+                false,
+            )?;
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            anyhow::ensure!(number(picture_width)? == 40.0, "an arrow key changed a locked page");
+            // The same page unlocked does change.
+            tab.navigate_to(&format!("{base}/view?layout=dashboard&away=1#kiosk"))?.wait_until_navigated()?;
+            waits(picture_width, 40.0)?;
+            tab.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight'}))", false)?;
+            waits("document.getElementById('picture').naturalWidth == 20 ? 1 : 0", 1.0)?;
+
+            // A kiosk asks for the screen to stay on, where the browser has wake locks (the button shows only then).
+            if number("document.getElementById('awake').hidden ? 0 : 1")? == 1.0 {
+                anyhow::ensure!(
+                    text("document.getElementById('awake').getAttribute('aria-pressed')")? == "true",
+                    "a kiosk did not ask for the screen"
+                );
+            }
+            // The manifest is reachable by the page under its own policy, and says what it should.
+            let manifest = tab
+                .evaluate(
+                    "fetch(document.querySelector('link[rel=manifest]').href).then(r => r.json()).then(j => j.display + ' ' + j.start_url)",
+                    true,
+                )?
+                .value
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            anyhow::ensure!(manifest == "fullscreen /view#kiosk", "the manifest says {manifest:?}");
             Ok(())
         })
         .await
