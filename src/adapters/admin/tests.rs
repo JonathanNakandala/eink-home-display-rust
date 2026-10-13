@@ -1308,6 +1308,36 @@ async fn a_viewer_is_made_with_a_link_that_has_its_code_after_a_hash_and_is_list
 }
 
 #[tokio::test]
+async fn a_refreshing_viewer_is_made_when_asked_and_is_listed_as_one_with_its_session() {
+    let f = start().await;
+
+    let plain = f.client.issue_viewer(&make("plain")).await.unwrap();
+    let refreshing = f
+        .client
+        .issue_viewer(&IssueViewer {
+            refresh: true,
+            lifetime_days: Some(30),
+            ..make("wall tablet")
+        })
+        .await
+        .unwrap();
+
+    assert!(!plain.viewer.refreshing && refreshing.viewer.refreshing);
+    // Signed in, its listed end is the session's, not the (short) access token's.
+    f.viewers.exchange(&refreshing.code).await.unwrap();
+    let listed = f.client.viewers().await.unwrap().viewers;
+    let wall = listed.iter().find(|v| v.label == "wall tablet").unwrap();
+    assert_eq!(wall.status, ViewerStatus::Active);
+    let ends = wall.expires_at.unwrap();
+    assert!(
+        ends > Utc::now() + Duration::days(29) && ends < Utc::now() + Duration::days(31),
+        "{ends}"
+    );
+    let table = describe_viewers(&ViewerList { viewers: listed }, Utc::now(), &Utc);
+    assert!(table.contains("session until"), "{table}");
+}
+
+#[tokio::test]
 async fn what_a_viewer_is_asked_to_be_is_checked_with_a_code_for_each_fault() {
     let f = start().await;
     let code_of_issue = |request: IssueViewer| {
@@ -1456,6 +1486,7 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
         label: "kitchen tablet".into(),
         status: ViewerStatus::Waiting,
         scope: "layout:*".into(),
+        refreshing: false,
         created_at: now,
         link_expires_at: Some(now + Duration::minutes(10)),
         expires_at: None,

@@ -72,6 +72,16 @@ displayctl viewer revoke k3x6qa2m         # ends its access now: its link, or it
 displayctl viewer forget k3x6qa2m         # removes it from the list, which frees its place (at most 64)
 ```
 
+- **Refresh tokens (optional).** `--refresh` gives a viewer short-lived access tokens (an hour; `[server.web] access_token_minutes`,
+  1 to 1440) and a **refresh token** that the page trades, before the access token runs out, for a new pair. A token that is lost
+  or copied is then good for an hour and not for 90 days, and `--lifetime-days` is how long the *session* lasts. The refresh token
+  works **once**: each use gives a new one and the old one is remembered, so if the old one is ever shown again, which only a copy
+  of it could do, the whole session is ended at once (RFC 9700 section 4.14.2) and whoever comes next, the real holder
+  included, needs a new link. A second use within 30 seconds is taken for a retry of a request whose answer was lost on a bad
+  connection and is answered again, since ending a session for that would punish the one who is meant to have it. The page does
+  all of this itself, one tab at a time (it uses the browser's Web Locks, so several tabs open on one viewer don't look like a
+  copy), and renews on its own after a night asleep. `viewer list` shows a refreshing viewer's session end, and `viewer revoke`
+  ends the session and its refresh token together.
 - **What a viewer may see.** `--layout` (repeat it) limits a viewer to those layouts; left out, all the page may show. A token
   can't be used for more than it was made for, and `[server.web] layouts` limits the page for everyone.
 - **How long.** A token lasts 90 days from first use (`--lifetime-days`, 1 to 3650), is revocable at any moment, and `viewer list`
@@ -94,14 +104,15 @@ The exchange and the token follow the OAuth 2.0 standards, so that nothing here 
 | Refusing | `401` with `WWW-Authenticate: Bearer realm="home-display"`, and `error="invalid_token"` if a token was shown (RFC 6750 section 3); `403` with `error="insufficient_scope"` and the `scope` needed for a layout the token doesn't allow; `400` with `invalid_request` for a header that isn't one. |
 | Getting one | `POST /view/api/token`, form-encoded, `grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code` and `pre-authorized_code=…`: the pre-authorized code grant, a code made ahead by the party that decides (you), traded once. The answer is `{"access_token", "token_type":"Bearer", "expires_in", "scope"}` with `Cache-Control: no-store` (RFC 6749 sections 4.1.3 and 5.1), and errors are `invalid_request`, `unsupported_grant_type` and `invalid_grant` (section 5.2), the last for a code that was used, ran out or never was, which are not told apart. |
 | In the link | The code, after a `#`, which a browser never sends to a server (RFC 3986 section 3.5), and which the page removes from the address at once. It is one-time and short-lived, as OAuth's authorization code is, which is the reason it can be in a link and a token can't (RFC 6750 section 5.3, RFC 9700). |
+| Refreshing | `grant_type=refresh_token` and `refresh_token=…` at the same endpoint (RFC 6749 section 6); the answer carries a new access token and a new refresh token. Refresh tokens rotate and are checked for reuse as RFC 9700 section 4.14 asks. They are `hdr1_…`, 256 random bits, kept only as hashes (the current one and the one before it). |
 | Scope | `layout:*` or `layout:NAME` for each layout (RFC 6749 section 3.3), in the token response and in `WWW-Authenticate`. |
 | The secrets | 256 random bits in base64url (RFC 4648 section 5, RFC 6819 section 5.1.4.2.2), `hdv1_` for a token and `hdc1_` for a code so that a scanner for leaked secrets can find one (RFC 8959), kept only as a hash. |
 | Giving one up | `POST /view/api/revoke`, `token=…` (RFC 7009), which answers `200` whatever it is given, so it can't be used to find out which tokens exist. |
 | Described | `config/openapi.json` has a `bearerAuth` scheme (optional on each route, since an open page needs none) and each route's `401`, `403` and `429`. |
 
-Where it differs: RFC 9700 prefers short-lived access tokens renewed with a rotating refresh token. For a read-only page on a
-home network that is a lot of machinery, so a token is one long-lived, revocable, scoped credential. Giving it a lifetime of 1 day
-and a refresh token to match is a change that fits the same endpoint.
+Where it differs, by default: RFC 9700 prefers short-lived access tokens renewed with a rotating refresh token. For a read-only
+page on a home network that is more machinery than most want, so a plain viewer has one long-lived, revocable, scoped token.
+`--refresh` is the standard way, for a viewer that you want to hold to it.
 
 ### Open
 

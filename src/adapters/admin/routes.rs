@@ -632,6 +632,7 @@ async fn issue_viewer(
                 layouts: asked.layouts,
                 lifetime_days: asked.lifetime_days,
                 code_minutes: asked.code_minutes,
+                refreshing: asked.refresh,
             },
             &admin.layouts,
         )

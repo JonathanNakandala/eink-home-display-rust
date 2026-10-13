@@ -578,3 +578,34 @@ async fn the_qr_code_is_printed_on_request_and_scans_to_the_link_that_was_printe
         "the two flags contradict each other"
     );
 }
+
+#[tokio::test]
+async fn a_refreshing_viewer_is_made_with_the_flag_and_listed_with_its_session() {
+    let server = start().await;
+    let socket = path(&server.socket);
+
+    let made = ctl(
+        socket,
+        &[
+            "viewer",
+            "create",
+            "--label",
+            "wall tablet",
+            "--refresh",
+            "--lifetime-days",
+            "30",
+        ],
+    )
+    .await;
+
+    assert!(made.status.success(), "{}", err(&made));
+    assert!(out(&made).contains("#code=hdc1_"), "{}", out(&made));
+    let listed = ctl(socket, &["viewer", "list"]).await;
+    assert!(out(&listed).contains("wall tablet"), "{}", out(&listed));
+    let help = ctl(socket, &["viewer", "create", "--help"]).await;
+    assert!(
+        out(&help).contains("--refresh") && out(&help).contains("refresh token"),
+        "{}",
+        out(&help)
+    );
+}

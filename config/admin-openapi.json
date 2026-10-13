@@ -1399,6 +1399,10 @@
             "format": "int32",
             "description": "How long the link works, from 1 to 1440 minutes. Left out, 15.",
             "minimum": 0
+          },
+          "refresh": {
+            "type": "boolean",
+            "description": "Give it short-lived access tokens (an hour, unless `[server.web] access_token_minutes` says) and a rotating refresh\ntoken to renew them with, in place of one token that lasts `lifetime_days`. A token that is lost is then good for an\nhour and not a quarter of a year, and a refresh token that is copied is noticed, which ends the session. `lifetime_days`\nis then how long the session lasts."
           }
         }
       },
@@ -1531,6 +1535,7 @@
           "label",
           "status",
           "scope",
+          "refreshing",
           "created_at"
         ],
         "properties": {
@@ -1555,6 +1560,10 @@
               "layout:*"
             ]
           },
+          "refreshing": {
+            "type": "boolean",
+            "description": "Whether it has short-lived access tokens and a refresh token, and not one token that lasts."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -1573,7 +1582,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "Once signed in, when the token runs out."
+            "description": "Once signed in, when its access ends: for a plain viewer, when the token runs out, and for a refreshing one, when the\nsession does (its access tokens run out and are renewed all the time)."
           },
           "last_used_at": {
             "type": [

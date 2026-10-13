@@ -237,7 +237,12 @@ where
                 "its link was not used in time; revoke it and make another".to_owned()
             }
             ViewerStatus::Active => format!(
-                "until {}; {}{}",
+                "{} {}; {}{}",
+                if viewer.refreshing {
+                    "session until"
+                } else {
+                    "until"
+                },
                 viewer.expires_at.map_or_else(String::new, |at| at
                     .with_timezone(zone)
                     .format("%Y-%m-%d")

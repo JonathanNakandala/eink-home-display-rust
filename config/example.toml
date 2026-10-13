@@ -94,6 +94,7 @@ enabled = true
 [server.web]
 enabled = false
 open = false
+access_token_minutes = 60
 layouts = []
 
 [schedule]

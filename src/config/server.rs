@@ -95,9 +95,13 @@ impl Default for AdminConfig {
     }
 }
 
+fn default_access_token_minutes() -> u32 {
+    crate::application::viewers::DEFAULT_ACCESS_MINUTES
+}
+
 /// A page that shows the current picture in a web browser and keeps it up to date, at `/view`: for a tablet on the wall, or
 /// a look at what the display shows from a laptop. It shows what `/image` serves, so it is as private as `/image` is.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WebConfig {
     /// Serve the page. Off unless turned on, because it is another way to see the picture.
     #[serde(default)]
@@ -115,6 +119,11 @@ pub struct WebConfig {
     /// the HTTPS port.
     #[serde(default)]
     pub public_url: Option<String>,
+    /// How long an access token lasts for a viewer made with `displayctl viewer create --refresh`, from 1 to 1440 minutes. It
+    /// is renewed with the viewer's refresh token, by the page, before it runs out, so this is how long a token that is lost or
+    /// copied stays good. A viewer made without `--refresh` has one token for its whole life, and this does not apply.
+    #[serde(default = "default_access_token_minutes")]
+    pub access_token_minutes: u32,
     /// The layouts the page may show, by name as `displayctl layout list` has them. Left empty, all of them.
     #[serde(default)]
     pub layouts: Vec<String>,
@@ -290,9 +299,28 @@ impl Default for ServerConfig {
     }
 }
 
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            open: false,
+            layouts: Vec::new(),
+            public_url: None,
+            access_token_minutes: default_access_token_minutes(),
+        }
+    }
+}
+
 impl WebConfig {
     /// Whether the settings make sense, in words for whoever wrote them.
     pub fn check(&self) -> Result<(), String> {
+        let most = crate::application::viewers::MOST_ACCESS_MINUTES;
+        if !(1..=most).contains(&self.access_token_minutes) {
+            return Err(format!(
+                "[server.web] access_token_minutes is {}; it must be from 1 to {most}",
+                self.access_token_minutes
+            ));
+        }
         if let Some(url) = &self.public_url {
             let parsed = url::Url::parse(url)
                 .map_err(|e| format!("[server.web] public_url {url:?} is not an address: {e}"))?;
@@ -655,6 +683,22 @@ mod tests {
             .unwrap();
             let error = config.check().unwrap_err();
             assert!(error.contains("[server.web] layouts"), "{bad}: {error}");
+        }
+    }
+
+    #[test]
+    fn the_access_token_time_for_refreshing_viewers_has_a_default_and_a_range() {
+        assert_eq!(parse("").unwrap().web.access_token_minutes, 60);
+        let set = parse("[web]\naccess_token_minutes = 15").unwrap();
+        assert_eq!(set.web.access_token_minutes, 15);
+        assert!(set.check().is_ok());
+        for bad in [0, 1441] {
+            let config = parse(&format!("[web]\naccess_token_minutes = {bad}")).unwrap();
+            let error = config.check().unwrap_err();
+            assert!(
+                error.contains("access_token_minutes") && error.contains("1440"),
+                "{bad}: {error}"
+            );
         }
     }
 }

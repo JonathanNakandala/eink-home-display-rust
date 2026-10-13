@@ -88,6 +88,7 @@
         "transport": "http",
         "wake_delay_seconds": 30,
         "web": {
+          "access_token_minutes": 60,
           "enabled": false,
           "layouts": [],
           "open": false,
@@ -592,6 +593,7 @@
           "description": "A page for a web browser to look at the picture, at `/view`. See `WebConfig`.",
           "$ref": "#/$defs/WebConfig",
           "default": {
+            "access_token_minutes": 60,
             "enabled": false,
             "layouts": [],
             "open": false,
@@ -751,6 +753,13 @@
       "description": "A page that shows the current picture in a web browser and keeps it up to date, at `/view`: for a tablet on the wall, or\na look at what the display shows from a laptop. It shows what `/image` serves, so it is as private as `/image` is.",
       "type": "object",
       "properties": {
+        "access_token_minutes": {
+          "description": "How long an access token lasts for a viewer made with `displayctl viewer create --refresh`, from 1 to 1440 minutes. It\nis renewed with the viewer's refresh token, by the page, before it runs out, so this is how long a token that is lost or\ncopied stays good. A viewer made without `--refresh` has one token for its whole life, and this does not apply.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 60,
+          "minimum": 0
+        },
         "enabled": {
           "description": "Serve the page. Off unless turned on, because it is another way to see the picture.",
           "type": "boolean",

@@ -61,6 +61,8 @@ const REALM: &str = "home-display";
 /// The grant a code is exchanged under, as the OAuth 2.0 "pre-authorized code" grant OpenID for Verifiable Credential
 /// Issuance names it: a code made ahead of time by the party that decides (here the owner), traded for a token.
 const GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+/// The grant a refresh token is used under (RFC 6749 section 6).
+const REFRESH_GRANT: &str = "refresh_token";
 /// A token request is two short fields.
 const MAX_FORM: usize = 2048;
 
@@ -740,16 +742,20 @@ impl OAuthError {
     }
 }
 
-/// What a token request is: the grant, and the code.
+/// What a token request is: the grant, and the code or the refresh token.
 #[derive(Deserialize, ToSchema)]
 #[allow(dead_code)]
 struct TokenRequest {
-    /// Always `urn:ietf:params:oauth:grant-type:pre-authorized_code`.
+    /// `urn:ietf:params:oauth:grant-type:pre-authorized_code` to trade the code in a link, or `refresh_token` to trade a
+    /// refresh token.
     grant_type: String,
-    /// The one-time code from the link `displayctl viewer create` printed.
+    /// With the code grant: the one-time code from the link `displayctl viewer create` printed.
     #[serde(rename = "pre-authorized_code")]
     #[schema(rename = "pre-authorized_code", examples("hdc1_…"))]
-    pre_authorized_code: String,
+    pre_authorized_code: Option<String>,
+    /// With the refresh grant: the refresh token the last answer gave, which works once.
+    #[schema(examples("hdr1_…"))]
+    refresh_token: Option<String>,
 }
 
 /// A token, as RFC 6749 section 5.1 has it.
@@ -757,6 +763,10 @@ struct TokenRequest {
 struct TokenResponse {
     /// The bearer token, shown here and nowhere else, once.
     access_token: String,
+    /// For a viewer made with `--refresh`: the token to ask for the next access token with. It works once, and each answer
+    /// brings a new one, which replaces it (RFC 6749 section 6, with the rotation of RFC 9700 section 4.14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
     /// Always `Bearer`.
     token_type: &'static str,
     /// Seconds until it runs out.
@@ -798,7 +808,8 @@ fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
-/// Trades the one-time code from the owner's link for a token, once.
+/// Trades the one-time code from the owner's link for a token, once; or, for a viewer made with `--refresh`, trades its
+/// refresh token for a new access token and a new refresh token (which replaces it).
 #[utoipa::path(
     post,
     path = "/view/api/token",
@@ -806,7 +817,7 @@ fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
     request_body(
         content = TokenRequest,
         content_type = "application/x-www-form-urlencoded",
-        description = "An OAuth token request for the pre-authorized code grant."
+        description = "An OAuth token request: the pre-authorized code grant for the code in a link, or the refresh token grant."
     ),
     responses(
         (
@@ -819,7 +830,7 @@ fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
                 ("pragma" = String, description = "Always `no-cache`.")
             )
         ),
-        (status = 400, description = "`invalid_request` (not a form, or a field missing), `unsupported_grant_type`, or `invalid_grant`: the code is not one there is, has been used, or has run out, which are not told apart.", body = OAuthError),
+        (status = 400, description = "`invalid_request` (not a form, or a field missing), `unsupported_grant_type`, or `invalid_grant`: the code or refresh token is not one there is, has been used, or has run out or been revoked, which are not told apart. A refresh token used again after it was replaced ends the session.", body = OAuthError),
         (status = 429, description = "Too many requests that were not good from this source; `Retry-After` says how long to wait.", body = OAuthError),
         (status = 500, description = "The server could not do it.")
     )
@@ -844,13 +855,32 @@ async fn token_endpoint(
             "Send application/x-www-form-urlencoded fields",
         );
     };
-    match field(&fields, "grant_type") {
-        Some(GRANT_TYPE) => {}
+    let exchanged = match field(&fields, "grant_type") {
+        Some(GRANT_TYPE) => {
+            let Some(code) = field(&fields, "pre-authorized_code") else {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "pre-authorized_code is missing",
+                );
+            };
+            viewers.exchange(code).await
+        }
+        Some(REFRESH_GRANT) => {
+            let Some(token) = field(&fields, "refresh_token") else {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "refresh_token is missing",
+                );
+            };
+            viewers.refresh(token).await
+        }
         Some(_) => {
             return oauth_error(
                 StatusCode::BAD_REQUEST,
                 "unsupported_grant_type",
-                "Only the pre-authorized code grant is supported",
+                "Only the pre-authorized code grant and the refresh token grant are supported",
             );
         }
         None => {
@@ -860,15 +890,8 @@ async fn token_endpoint(
                 "grant_type is missing",
             );
         }
-    }
-    let Some(code) = field(&fields, "pre-authorized_code") else {
-        return oauth_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "pre-authorized_code is missing",
-        );
     };
-    match viewers.exchange(code).await {
+    match exchanged {
         Ok(grant) => {
             failures.succeeded(source);
             (
@@ -878,6 +901,7 @@ async fn token_endpoint(
                 ],
                 Json(TokenResponse {
                     access_token: grant.token.expose().to_owned(),
+                    refresh_token: grant.refresh_token.map(|token| token.expose().to_owned()),
                     token_type: "Bearer",
                     expires_in: grant.expires_in.num_seconds(),
                     scope: grant.scope.to_scope_string(),
@@ -890,7 +914,7 @@ async fn token_endpoint(
             oauth_error(
                 StatusCode::BAD_REQUEST,
                 "invalid_grant",
-                "The code is not good: it may have been used, or have run out",
+                "The code or refresh token is not good: it may have been used, or have run out",
             )
         }
         Err(ExchangeError::Failed(e)) => server_error("exchange the code of", e),
@@ -946,7 +970,7 @@ mod tests {
     use super::*;
     use crate::adapters::clock::{FixedClock, SystemClock};
     use crate::domain::models::layout::{LayoutRule, LayoutSchedule, Layouts};
-    use crate::domain::models::viewer::{ExchangeCode, ViewerToken};
+    use crate::domain::models::viewer::{ExchangeCode, RefreshToken, ViewerToken};
 
     fn two_layouts() -> Layouts {
         Layouts::new(vec![
@@ -1543,16 +1567,29 @@ mod tests {
     }
 
     async fn guarded_by(peer: Option<std::net::SocketAddr>, settings: &WebSettings) -> Guarded {
+        guarded_for(peer, settings, None).await
+    }
+
+    /// As `guarded_by`, with the access tokens of refreshing viewers lasting `access` if given.
+    async fn guarded_for(
+        peer: Option<std::net::SocketAddr>,
+        settings: &WebSettings,
+        access: Option<chrono::Duration>,
+    ) -> Guarded {
         let directory = tempfile::tempdir().unwrap();
         publish_both(directory.path(), FIRST, b"all of it").await;
         publish_both(directory.path(), "departures", b"trains").await;
         let kept = tempfile::tempdir().unwrap();
         let clock = FixedClock::at(at(7, 0));
-        let viewers = Arc::new(Viewers::new(
+        let mut made = Viewers::new(
             Arc::new(FileViewerRegistry::open(kept.path()).await.unwrap()),
             clock.clone(),
             Arc::new(OsEntropy),
-        ));
+        );
+        if let Some(access) = access {
+            made = made.with_access_lifetime(access);
+        }
+        let viewers = Arc::new(made);
         let layouts = with_a_morning_rule();
         let (base, handles) = start_web_for(
             directory.path().to_path_buf(),
@@ -1623,6 +1660,41 @@ mod tests {
                 .send()
                 .await
                 .unwrap()
+        }
+
+        /// Signs in a refreshing viewer over HTTP, as a browser does: its access token and its refresh token.
+        async fn pair(&self) -> (String, String) {
+            let issued = self
+                .viewers
+                .issue(
+                    IssueRequest {
+                        label: "refreshing tablet".into(),
+                        refreshing: true,
+                        ..IssueRequest::default()
+                    },
+                    &self.layouts,
+                )
+                .await
+                .unwrap();
+            let body: serde_json::Value = self
+                .exchange(issued.code.expose())
+                .await
+                .json()
+                .await
+                .unwrap();
+            (
+                body["access_token"].as_str().unwrap().to_owned(),
+                body["refresh_token"].as_str().unwrap().to_owned(),
+            )
+        }
+
+        async fn refresh(&self, refresh_token: &str) -> reqwest::Response {
+            self.post(
+                "/view/api/token",
+                "application/x-www-form-urlencoded",
+                format!("grant_type=refresh_token&refresh_token={refresh_token}"),
+            )
+            .await
         }
 
         async fn exchange(&self, code: &str) -> reqwest::Response {
@@ -2283,6 +2355,308 @@ mod tests {
                 "the token was kept"
             );
             let _ = first_id;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        outcome.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refreshing_viewer_is_given_a_refresh_token_and_a_plain_one_is_not() {
+        let g = guarded().await;
+
+        let (access, refresh) = g.pair().await;
+        assert!(refresh.starts_with("hdr1_"));
+        let issued = g
+            .viewers
+            .issue(
+                IssueRequest {
+                    label: "plain".into(),
+                    ..IssueRequest::default()
+                },
+                &g.layouts,
+            )
+            .await
+            .unwrap();
+        let plain: serde_json::Value = g.exchange(issued.code.expose()).await.json().await.unwrap();
+
+        assert!(plain.get("refresh_token").is_none(), "{plain}");
+        assert_eq!(plain["expires_in"], 90 * 24 * 3600);
+        // Its access token works as one does.
+        assert_eq!(g.bearing("/view/api/state", &access).await.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn a_refresh_token_is_traded_for_a_new_pair_in_the_shape_oauth_gives_one_and_the_old_pair_stops()
+     {
+        let g = guarded().await;
+        let (access, refresh) = g.pair().await;
+
+        let response = g.refresh(&refresh).await;
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["token_type"], "Bearer");
+        assert_eq!(body["scope"], "layout:*");
+        assert_eq!(body["expires_in"], 3600);
+        let (new_access, new_refresh) = (
+            body["access_token"].as_str().unwrap(),
+            body["refresh_token"].as_str().unwrap(),
+        );
+        assert!(new_access != access && new_refresh != refresh);
+        // The new pair works and the old access token does not.
+        assert_eq!(g.bearing("/view/api/state", new_access).await.status(), 200);
+        assert_eq!(g.bearing("/view/api/state", &access).await.status(), 401);
+        // A refresh token is not an access token.
+        let as_access = g.bearing("/view/api/state", new_refresh).await;
+        assert_eq!(as_access.status(), 401);
+        assert!(challenge_of(&as_access).contains("invalid_token"));
+        // And it goes on from the new one.
+        assert_eq!(g.refresh(new_refresh).await.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn a_refresh_request_that_is_wrong_is_answered_as_oauth_answers_it() {
+        let g = guarded().await;
+        let (_, refresh) = g.pair().await;
+        let error = |response: reqwest::Response, name: &'static str| async move {
+            assert_eq!(response.status(), 400, "{name}");
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(body["error"], name);
+        };
+
+        // No token with it, a made-up one, a malformed one, and one of another kind: the last three are the same.
+        error(
+            g.post(
+                "/view/api/token",
+                "application/x-www-form-urlencoded",
+                "grant_type=refresh_token".into(),
+            )
+            .await,
+            "invalid_request",
+        )
+        .await;
+        for bad in [
+            RefreshToken::generate([5; 32]).expose().to_owned(),
+            "hdr1_short".to_owned(),
+            ViewerToken::generate([5; 32]).expose().to_owned(),
+        ] {
+            error(g.refresh(&bad).await, "invalid_grant").await;
+        }
+        // A code is not a refresh token, nor the reverse.
+        error(
+            g.refresh(ExchangeCode::generate([5; 32]).expose()).await,
+            "invalid_grant",
+        )
+        .await;
+        error(
+            g.post(
+                "/view/api/token",
+                "application/x-www-form-urlencoded",
+                format!("grant_type={GRANT_TYPE}&pre-authorized_code={refresh}"),
+            )
+            .await,
+            "invalid_grant",
+        )
+        .await;
+        // The one issued is untouched by all of that.
+        assert_eq!(g.refresh(&refresh).await.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn a_refresh_token_used_again_after_it_was_replaced_ends_the_session_for_whoever_holds_it()
+     {
+        let g = guarded().await;
+        let (_, first) = g.pair().await;
+        let second: serde_json::Value = g.refresh(&first).await.json().await.unwrap();
+        let (second_access, second_refresh) = (
+            second["access_token"].as_str().unwrap().to_owned(),
+            second["refresh_token"].as_str().unwrap().to_owned(),
+        );
+        assert_eq!(
+            g.bearing("/view/api/state", &second_access).await.status(),
+            200
+        );
+
+        // A copy of the first one is shown, long after: refused, and the session is over for the real holder too.
+        g.clock.set(at(7, 5));
+        let copied = g.refresh(&first).await;
+        assert_eq!(copied.status(), 400);
+        assert_eq!(
+            copied.json::<serde_json::Value>().await.unwrap()["error"],
+            "invalid_grant"
+        );
+        assert_eq!(
+            g.bearing("/view/api/state", &second_access).await.status(),
+            401
+        );
+        assert_eq!(g.refresh(&second_refresh).await.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn a_refresh_token_that_is_not_good_counts_against_the_source_like_a_bad_code() {
+        let peer = Some("203.0.113.12:5000".parse().unwrap());
+        let g = guarded_by(peer, &needing_a_token()).await;
+
+        for i in 0..10u8 {
+            assert_eq!(
+                g.refresh(RefreshToken::generate([i; 32]).expose())
+                    .await
+                    .status(),
+                400
+            );
+        }
+
+        assert_eq!(
+            g.refresh(RefreshToken::generate([99; 32]).expose())
+                .await
+                .status(),
+            429
+        );
+    }
+
+    #[tokio::test]
+    async fn the_description_has_the_refresh_token_in_a_token_response_and_the_grant_in_a_request()
+    {
+        let (_, api) = routes().split_for_parts();
+        let json = serde_json::to_value(&api).unwrap();
+
+        let response = &json["components"]["schemas"]["TokenResponse"]["properties"];
+        assert!(response.get("refresh_token").is_some());
+        let request = &json["components"]["schemas"]["TokenRequest"]["properties"];
+        assert!(request.get("refresh_token").is_some());
+        assert!(request.get("grant_type").is_some());
+    }
+
+    /// Needs a real Chrome, so run with `--ignored`. A viewer whose access tokens last two seconds: the page renews its
+    /// token with the refresh token by itself, keeps showing the picture, and has a new refresh token each time; two tabs
+    /// asking at once between them renew once, and a viewer revoked while it is signed in is out at its next look.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn a_refreshing_viewers_page_renews_its_token_by_itself_in_a_browser() {
+        let g = guarded_for(None, &needing_a_token(), Some(chrono::Duration::seconds(2))).await;
+        publish_picture(g._directory.path(), FIRST, 40).await;
+        publish_picture(g._directory.path(), "departures", 20).await;
+        let issued = g
+            .viewers
+            .issue(
+                IssueRequest {
+                    label: "wall tablet".into(),
+                    refreshing: true,
+                    ..IssueRequest::default()
+                },
+                &g.layouts,
+            )
+            .await
+            .unwrap();
+        let (base, viewers) = (g.base.clone(), g.viewers.clone());
+        let link = format!("{base}/view#code={}", issued.code.expose());
+        let id = issued.viewer.id.clone();
+
+        let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let browser = headless_chrome::Browser::new(
+                headless_chrome::LaunchOptions::default_builder()
+                    .headless(true)
+                    .path(headless_chrome::browser::default_executable().ok())
+                    .build()?,
+            )?;
+            let tab = browser.new_tab()?;
+            let text = |script: &str| -> anyhow::Result<String> {
+                Ok(tab
+                    .evaluate(script, false)?
+                    .value
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_default())
+            };
+            let number = |script: &str| -> anyhow::Result<f64> {
+                Ok(tab
+                    .evaluate(script, false)?
+                    .value
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(-1.0))
+            };
+            let waits = |script: &str, wanted: f64| -> anyhow::Result<()> {
+                for _ in 0..100 {
+                    if number(script)? >= wanted {
+                        return Ok(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                anyhow::bail!("{script} never reached {wanted}")
+            };
+            let picture_width = "document.getElementById('picture').naturalWidth";
+            let look_again = "document.dispatchEvent(new Event('visibilitychange'))";
+
+            tab.navigate_to(&format!("{base}/view?away"))?
+                .wait_until_navigated()?;
+            tab.navigate_to(&link)?.wait_until_navigated()?;
+            waits(picture_width, 20.0)?;
+            let refresh_at_first = text("localStorage.getItem('hd.refresh')")?;
+            anyhow::ensure!(
+                refresh_at_first.starts_with("hdr1_"),
+                "no refresh token kept"
+            );
+            let access_at_first = text("localStorage.getItem('hd.token')")?;
+
+            // The access token runs out; looking again renews it, and the picture is still there, with no sign-in prompt.
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            tab.evaluate(look_again, false)?;
+            for _ in 0..100 {
+                if text("localStorage.getItem('hd.refresh')")? != refresh_at_first {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            anyhow::ensure!(
+                text("localStorage.getItem('hd.refresh')")? != refresh_at_first,
+                "the refresh token was not replaced"
+            );
+            anyhow::ensure!(
+                text("localStorage.getItem('hd.token')")? != access_at_first,
+                "the access token was not replaced"
+            );
+            anyhow::ensure!(
+                number("document.getElementById('signin').hidden ? 0 : 1")? == 0.0,
+                "the prompt came up"
+            );
+            anyhow::ensure!(number(picture_width)? == 20.0, "the picture went");
+
+            // Many looks at once (as many tabs would make) renew once between them and none is taken for a copy.
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            tab.evaluate(
+                &format!("for (var i = 0; i < 5; i++) {{ {look_again}; }}"),
+                false,
+            )?;
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            anyhow::ensure!(
+                number("document.getElementById('signin').hidden ? 0 : 1")? == 0.0,
+                "a burst of looks ended the session"
+            );
+            anyhow::ensure!(
+                number(picture_width)? == 20.0,
+                "the picture went after a burst"
+            );
+
+            // The owner revokes the viewer: at its next look the page says its access has ended.
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(viewers.revoke(&id))?;
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            tab.evaluate(look_again, false)?;
+            waits("document.getElementById('signin').hidden ? 0 : 1", 1.0)?;
+            let title = text("document.getElementById('signin-title').textContent")?;
+            anyhow::ensure!(
+                title.contains("access has ended"),
+                "after a revoke the page says {title:?}"
+            );
+            anyhow::ensure!(
+                text("localStorage.getItem('hd.refresh')")?.is_empty(),
+                "a refresh token was kept"
+            );
             Ok(())
         })
         .await
