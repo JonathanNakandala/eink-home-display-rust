@@ -164,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
     let listening = start_serving(
         &config,
         display,
+        None,
         ImageFormat::Png,
         home_display_server::domain::models::layout::Layouts::default(),
         Some(security),

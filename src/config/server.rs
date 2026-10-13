@@ -95,6 +95,24 @@ impl Default for AdminConfig {
     }
 }
 
+/// A page that shows the current picture in a web browser and keeps it up to date, at `/view`: for a tablet on the wall, or
+/// a look at what the display shows from a laptop. It shows what `/image` serves, so it is as private as `/image` is.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WebConfig {
+    /// Serve the page. Off unless turned on, because it is another way to see the picture.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Let anyone who can reach the server see it, with no sign-in: as open as `/image` is with `transport = "http"`.
+    /// Keep the server on a network you trust. With `transport = "https"` this is a way round the certificate that
+    /// `/image` asks for, for the page only, so the server says so when it starts. Without it the page would need a
+    /// viewer token, which this version cannot yet issue, so for now `enabled` needs `open`.
+    #[serde(default)]
+    pub open: bool,
+    /// The layouts the page may show, by name as `displayctl layout list` has them. Left empty, all of them.
+    #[serde(default)]
+    pub layouts: Vec<String>,
+}
+
 /// HTTPS and the certificate authority behind it. Used when `transport` is `prefer-https` or `https`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TlsConfig {
@@ -209,6 +227,9 @@ pub struct ServerConfig {
     /// How the owner looks at the running server and changes it. See `AdminConfig`.
     #[serde(default)]
     pub admin: AdminConfig,
+    /// A page for a web browser to look at the picture, at `/view`. See `WebConfig`.
+    #[serde(default)]
+    pub web: WebConfig,
 }
 
 fn default_device_overdue_grace_seconds() -> u32 {
@@ -257,7 +278,25 @@ impl Default for ServerConfig {
             transport: Transport::default(),
             tls: TlsConfig::default(),
             admin: AdminConfig::default(),
+            web: WebConfig::default(),
         }
+    }
+}
+
+impl WebConfig {
+    /// Whether the settings make sense, in words for whoever wrote them.
+    pub fn check(&self) -> Result<(), String> {
+        if self.enabled && !self.open {
+            return Err(
+                "[server.web] enabled = true needs open = true for now: the other way in, a viewer token, is not available yet"
+                    .to_owned(),
+            );
+        }
+        for name in &self.layouts {
+            crate::domain::models::layout::LayoutName::parse(name)
+                .map_err(|e| format!("[server.web] layouts has {name:?}: {e}"))?;
+        }
+        Ok(())
     }
 }
 
@@ -272,6 +311,7 @@ impl ServerConfig {
 
     /// Whether the settings make sense together, in words for whoever wrote them.
     pub fn check(&self) -> Result<(), String> {
+        self.web.check()?;
         if !self.transport.serves_https() {
             return Ok(());
         }
@@ -512,5 +552,35 @@ mod tests {
                 .check()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn the_web_view_is_off_unless_turned_on_and_then_open_for_now() {
+        let config = parse("").unwrap();
+        assert!(!config.web.enabled && !config.web.open && config.web.layouts.is_empty());
+        assert!(config.check().is_ok());
+
+        let open = parse("[web]\nenabled = true\nopen = true\nlayouts = [\"departures\"]").unwrap();
+        assert!(open.check().is_ok());
+
+        // Turned on without a way in: until there are viewer tokens, open is the only one.
+        let closed = parse("[web]\nenabled = true").unwrap();
+        let error = closed.check().unwrap_err();
+        assert!(
+            error.contains("[server.web]") && error.contains("open = true"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_layout_name_in_the_web_settings_that_cannot_be_one_is_refused() {
+        for bad in ["Bad Name", "../etc", ""] {
+            let config = parse(&format!(
+                "[web]\nenabled = true\nopen = true\nlayouts = [{bad:?}]"
+            ))
+            .unwrap();
+            let error = config.check().unwrap_err();
+            assert!(error.contains("[server.web] layouts"), "{bad}: {error}");
+        }
     }
 }

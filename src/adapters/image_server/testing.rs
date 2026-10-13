@@ -151,6 +151,42 @@ pub(super) async fn start_layouts(
     (format!("http://{address}"), status)
 }
 
+/// The routes for a web browser alone, on a free port, over a directory of images. Hands back the handles too, to see what
+/// the page did and did not record.
+pub(super) async fn start_web(
+    directory: PathBuf,
+    layouts: Layouts,
+    settings: &super::WebSettings,
+    clock: Arc<dyn Clock>,
+) -> Result<(String, Handles), String> {
+    let handles = Handles {
+        layouts,
+        layout_choices: None,
+        refresh: RefreshControl::new(Duration::from_secs(30)),
+        status: StatusBoard::new(chrono::Utc::now().with_timezone(&London)),
+        devices: DeviceBoard::new(Duration::from_secs(900)),
+        members: None,
+        handshakes: None,
+    };
+    let timing = PlanTiming {
+        wake_delay: Duration::from_secs(30),
+        stale_grace: Duration::from_secs(300),
+    };
+    let app = super::web_router(
+        settings,
+        Arc::new(DirectoryImages::new(directory)),
+        ImageFormat::Bmp,
+        Schedule::parse_every("1h").unwrap(),
+        timing,
+        handles.clone(),
+        clock,
+    )?;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    Ok((format!("http://{address}"), handles))
+}
+
 pub(super) fn set_age(directory: &Path, seconds: u64) {
     let file = std::fs::File::options()
         .write(true)

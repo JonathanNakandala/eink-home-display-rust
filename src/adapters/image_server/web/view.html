@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Home display</title>
+<style>
+  :root { --bar: #f2f2f2; --ink: #111; --muted: #555; --warn: #8a4b00; --edge: #ccc; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bar: #1c1c1c; --ink: #eee; --muted: #aaa; --warn: #f0b060; --edge: #333; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: Canvas; color: var(--ink); font: 15px/1.4 system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 12px;
+           background: var(--bar); border-bottom: 1px solid var(--edge); }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  nav { display: flex; flex-wrap: wrap; gap: 6px; }
+  nav button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--edge);
+               border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  nav button[aria-pressed="true"] { background: var(--ink); color: var(--bar); border-color: var(--ink); }
+  nav button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  #status { margin-left: auto; color: var(--muted); }
+  #status.problem { color: var(--warn); font-weight: 600; }
+  main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; }
+  main img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; border: 1px solid var(--edge); }
+  #empty { color: var(--muted); }
+  body.kiosk header { display: none; }
+  body.kiosk main { padding: 0; cursor: none; }
+  body.kiosk main img { width: 100%; height: 100%; border: 0; }
+  body.kiosk #problem { position: fixed; left: 0; right: 0; bottom: 0; margin: 0; padding: 4px 10px;
+                        background: var(--bar); color: var(--warn); font-weight: 600; }
+  #problem:empty { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Home display</h1>
+  <nav id="layouts" aria-label="Layout"></nav>
+  <span id="status" role="status" aria-live="polite">Loading…</span>
+</header>
+<main>
+  <img id="picture" alt="What the display shows" hidden>
+  <p id="empty" hidden>Nothing has been drawn yet.</p>
+</main>
+<p id="problem" role="alert"></p>
+<script>
+(function () {
+  'use strict';
+  var API = '/view/api/';
+  var picture = document.getElementById('picture');
+  var empty = document.getElementById('empty');
+  var statusLine = document.getElementById('status');
+  var problem = document.getElementById('problem');
+  var nav = document.getElementById('layouts');
+  var layouts = [];
+  var chosen = 'auto';
+  var shown = null;      // the layout and version the picture is of
+  var shownAt = null;    // when that render was made
+  var timer = null;
+  var failures = 0;
+  var objectUrl = null;
+
+  var params = new URLSearchParams(location.search);
+  var hash = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (hash.has('kiosk') || params.has('kiosk')) document.body.classList.add('kiosk');
+  try { chosen = params.get('layout') || localStorage.getItem('layout') || 'auto'; } catch (e) { chosen = params.get('layout') || 'auto'; }
+
+  function get(path) {
+    return fetch(API + path, { cache: 'no-store', headers: { Accept: 'application/json' } });
+  }
+
+  function say(text, isProblem) {
+    statusLine.textContent = text;
+    statusLine.className = isProblem ? 'problem' : '';
+  }
+
+  function ago(seconds) {
+    if (seconds < 60) return 'less than a minute ago';
+    var m = Math.round(seconds / 60);
+    if (m < 90) return m + ' min ago';
+    var h = Math.round(m / 60);
+    return h + ' h ago';
+  }
+
+  function renderNav() {
+    nav.textContent = '';
+    if (layouts.length < 2) return;
+    var all = [{ name: 'auto', description: 'Whatever the schedule says now' }].concat(layouts);
+    all.forEach(function (layout) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = layout.name === 'auto' ? 'Auto' : layout.name;
+      b.title = layout.description;
+      b.setAttribute('aria-pressed', String(layout.name === chosen));
+      b.addEventListener('click', function () { choose(layout.name); });
+      nav.appendChild(b);
+    });
+  }
+
+  function choose(name) {
+    chosen = name;
+    try { localStorage.setItem('layout', name); } catch (e) { /* not kept; fine */ }
+    var url = new URL(location.href);
+    url.searchParams.set('layout', name);
+    history.replaceState(null, '', url);
+    renderNav();
+    refresh();
+  }
+
+  function cycle(step) {
+    if (layouts.length < 2) return;
+    var names = ['auto'].concat(layouts.map(function (l) { return l.name; }));
+    var i = names.indexOf(chosen);
+    choose(names[(i + step + names.length) % names.length]);
+  }
+
+  function schedule(seconds) {
+    clearTimeout(timer);
+    timer = setTimeout(refresh, Math.max(5, Math.min(seconds, 3600)) * 1000);
+  }
+
+  async function showPicture(state) {
+    var key = state.layout + ':' + state.version;
+    if (shown === key) return;
+    var response = await fetch(API + 'image?layout=' + encodeURIComponent(state.layout), { cache: 'no-store' });
+    if (!response.ok) throw new Error('The picture could not be fetched (' + response.status + ')');
+    var blob = await response.blob();
+    var url = URL.createObjectURL(blob);
+    picture.onload = function () { if (objectUrl && objectUrl !== url) URL.revokeObjectURL(objectUrl); objectUrl = url; };
+    picture.src = url;
+    picture.hidden = false;
+    empty.hidden = true;
+    shown = key;
+  }
+
+  function describe(state) {
+    shownAt = Date.now() - state.age_seconds * 1000;
+    var text = (state.layout ? state.layout + ': ' : '') + 'updated ' + ago(state.age_seconds);
+    if (state.stale) { say(text + ' (the server has not refreshed it when it should)', true); problem.textContent = 'Out of date: ' + ago(state.age_seconds); }
+    else { say(text, false); problem.textContent = ''; }
+  }
+
+  async function refresh() {
+    clearTimeout(timer);
+    try {
+      var listing = await get('layouts');
+      if (!listing.ok) throw new Error('The layouts could not be listed (' + listing.status + ')');
+      var data = await listing.json();
+      var before = JSON.stringify(layouts);
+      layouts = data.layouts;
+      if (JSON.stringify(layouts) !== before) renderNav();
+      if (chosen !== 'auto' && !layouts.some(function (l) { return l.name === chosen; })) chosen = 'auto';
+      var response = await get('state?layout=' + encodeURIComponent(chosen));
+      if (response.status === 404) {
+        picture.hidden = true; empty.hidden = false; shown = null;
+        say('Waiting for the first picture', false); problem.textContent = '';
+        failures = 0; schedule(15); return;
+      }
+      if (!response.ok) throw new Error('The server answered ' + response.status);
+      var state = await response.json();
+      await showPicture(state);
+      describe(state);
+      failures = 0;
+      schedule(state.next_seconds + 3);
+    } catch (e) {
+      failures += 1;
+      var wait = Math.min(300, 10 * Math.pow(2, failures - 1));
+      say('Cannot reach the server; trying again in ' + wait + ' s', true);
+      problem.textContent = '';
+      schedule(wait);
+    }
+  }
+
+  // The age on screen moves on between refreshes.
+  setInterval(function () {
+    if (shownAt === null || statusLine.className === 'problem') return;
+    var text = statusLine.textContent.replace(/updated .*$/, 'updated ' + ago((Date.now() - shownAt) / 1000));
+    if (text !== statusLine.textContent) statusLine.textContent = text;
+  }, 30000);
+
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+  window.addEventListener('online', refresh);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight') cycle(1);
+    else if (e.key === 'ArrowLeft') cycle(-1);
+  });
+  var touchX = null;
+  document.addEventListener('touchstart', function (e) { touchX = e.changedTouches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', function (e) {
+    if (touchX === null) return;
+    var dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 80) cycle(dx < 0 ? 1 : -1);
+  }, { passive: true });
+
+  refresh();
+})();
+</script>
+</body>
+</html>

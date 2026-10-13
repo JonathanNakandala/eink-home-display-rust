@@ -12,6 +12,7 @@ mod plan;
 #[cfg(test)]
 mod testing;
 mod transfer;
+mod web;
 
 use std::sync::Arc;
 
@@ -27,6 +28,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 pub use self::advertise::{Advertisement, SecureOffer, mdns_host_name};
+pub use self::web::{WebSettings, allowed_layouts};
 use crate::adapters::listen::{self, Bound};
 use crate::application::devices::{DeviceBoard, TelemetryLimits, telemetry_limits};
 use crate::application::plan::PlanTiming;
@@ -117,6 +119,8 @@ fn routes() -> OpenApiRouter<Arc<Published>> {
 /// The API description (OpenAPI 3.1), as served at `/openapi.json` and committed as `config/openapi.json`.
 pub fn openapi_json() -> String {
     let (_, mut api) = routes().split_for_parts();
+    let (_, web) = web::routes().split_for_parts();
+    api.merge(web);
     state_telemetry_limits(&mut api, &telemetry_limits());
     api.to_pretty_json()
         .expect("the API description serializes")
@@ -211,6 +215,31 @@ pub fn router(
         handles,
         clock,
     }))
+}
+
+/// The page for a web browser (`/view`) and what it asks for, as routes to serve beside `router`'s. They decide for
+/// themselves who may use them, so over HTTPS they are not put behind the gate the display routes are. `settings` says
+/// which layouts they may show; one that there is not is an error.
+pub fn web_router(
+    settings: &WebSettings,
+    images: Arc<dyn PublishedImages>,
+    format: ImageFormat,
+    schedule: Schedule,
+    timing: PlanTiming,
+    handles: Handles,
+    clock: Arc<dyn Clock>,
+) -> Result<Router, String> {
+    let allowed = web::allowed_layouts(settings, &handles.layouts)?;
+    let published = Arc::new(Published {
+        images,
+        format,
+        layouts: handles.layouts.clone(),
+        schedule,
+        timing,
+        handles,
+        clock,
+    });
+    Ok(web::router(web::WebState::new(published, allowed)))
 }
 
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
@@ -655,6 +684,11 @@ mod api_description {
             ("/plan", "get"),
             ("/refresh", "post"),
             ("/status", "get"),
+            // Served only when [server.web] is on, by `web_router`; the web tests check they are there.
+            ("/view", "get"),
+            ("/view/api/image", "get"),
+            ("/view/api/layouts", "get"),
+            ("/view/api/state", "get"),
         ];
         assert_eq!(routes.len(), expected.len(), "{routes:?}");
         for (path, method) in expected {

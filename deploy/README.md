@@ -35,6 +35,44 @@ image, and the error text can name the failing source, so keep the port on the L
 `/status` keeps its history in memory, so a restart starts it again at `starting`. The sources list is
 from the last render that succeeded.
 
+## Looking at it in a web browser
+
+`[server.web]` turns on a page at `/view` that shows the current picture and keeps it up to date, for a tablet on the wall or a
+look from a laptop:
+
+```toml
+[server.web]
+enabled = true
+open = true
+layouts = ["dashboard", "departures"]   # left out or empty: all of them
+```
+
+Then open `http://<server>:8080/view` (or `https://<server>:8443/view`). It asks the server when to look again and comes back
+then, as a display does (`/plan`'s `next_seconds`), so it isn't polling on a timer of its own; it also refreshes when the tab comes
+back to the front or the network returns, says how old the picture is, and says so plainly if the server has fallen behind or
+can't be reached.
+
+- **Layouts.** The bar lists the layouts the page may show, with **Auto**, which is whatever the layout schedule says now (a layout
+  the page may not show is never chosen: it falls back to the first it may). Click one, press the left and right arrow keys, or
+  swipe. The choice is kept in the address (`/view?layout=departures`, which is safe to bookmark or share: it has no secret in
+  it) and in the browser. `[server.web] layouts` limits what the page may show, in the order it lists them; a layout asked for that
+  it may not show is a 404 that looks the same as one that doesn't exist.
+- **Kiosk.** `/view#kiosk` (or `?kiosk`) hides the bar and fills the screen, with the cursor hidden: for a spare tablet. The
+  "out of date" notice stays.
+- **Who may use it.** For now `open = true` is the only way in, and it is as open as `/image` is with `transport = "http"`: anyone who
+  can reach the server can see the picture. Keep it on a network you trust. With `transport = "https"` it is a way round the certificate
+  `/image` asks for, for the page only, and the server says so when it starts. The page is served on every listener there is. It
+  is off unless turned on. (Viewer tokens, which will be the other way in, are not available yet, so `enabled` without `open` is
+  refused at start-up.)
+- **HTTPS and browsers.** The server's certificate is from your own authority, so a browser warns until the authority's root
+  (`root.pem` in `[server.tls] directory`) is trusted on that device. Over plain HTTP there is no warning.
+- **What it asks for.** `/view/api/layouts`, `/view/api/state?layout=` (the same facts as `/plan`, with nothing recorded: a browser
+  never turns up among the displays) and `/view/api/image?layout=`, which is always the PNG, a fraction of the BMP a display with
+  no preference is sent. They are in `config/openapi.json` under `web`.
+- **Security.** The page is a single file with its script and style named by hash in a content security policy that allows nothing
+  else (no inline script, no other origin, no frames). All it can do is talk to this server. The page needs the image server, so
+  it exists only for a display that fetches its image (the reTerminal), not one driven directly.
+
 ## Layouts
 
 Each render draws every layout from the same data, so a source is fetched once however many layouts there are.
