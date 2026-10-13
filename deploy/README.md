@@ -88,10 +88,39 @@ or is over 512 KB stops the program with the file's name and what is wrong, so a
 first render. Editing a template takes a restart. At most 16 layouts are drawn, since each costs a render on every run.
 Preview one first with `cargo run --bin render -- --templates-dir ./layouts`, which writes every layout, yours included.
 
+### Layouts by time of day
+
+`[[layouts.schedule]]` rules say which layout a display is sent at which time, for example the departures alone on weekday
+mornings and the dashboard the rest of the time:
+
+```toml
+[[layouts.schedule]]
+layout = "departures"
+days = ["mon", "tue", "wed", "thu", "fri"]   # left out: every day
+from = "06:30"                                # inclusive, 24-hour HH:MM in the server's zone
+until = "09:30"                               # exclusive
+
+[[layouts.schedule]]
+layout = "clock"          # a layout of your own
+from = "22:00"
+until = "06:00"           # earlier than `from`: runs overnight (and `days` is the day it starts on)
+```
+
+Rules are tried in order and the first one in force wins; outside all of them the default (the first built-in layout) is
+sent. A rule for a layout that doesn't exist, a time that isn't `HH:MM`, or one that starts and ends together stops the
+program at start-up and says which. The times are the wall clock, so 06:30 is 06:30 either side of a clock change.
+
+The order of precedence for what a display is sent is: `?layout=` in its own request, then the layout chosen for it with
+`displayctl layout set`, then the schedule, then the default. A panel driven directly (the Waveshare) follows the schedule too:
+each render draws the layout wanted at that moment. `/layouts` and `displayctl layout list` mark the layout a display with none
+chosen gets right now (`current`). Every layout is still drawn on every run, so a switch costs nothing: a display gets the new
+one at its first wake after the time, and is told its picture has changed so it redraws. It isn't woken at the boundary; it comes
+when its own refresh says it should.
+
 ### Choosing a layout for a display
 
 A request for a layout gets it: a display pointed at `/image?layout=departures` and `/plan?layout=departures` shows that
-one. Without `layout=`, a display gets the layout the owner chose for it, or the default if they chose none:
+one. Without `layout=`, a display gets the layout the owner chose for it, or the one for the time of day if they chose none:
 
 ```
 displayctl -c config.toml layout list                    # what there is
@@ -109,7 +138,7 @@ A display that is given another layout is told on its next `/plan` that its pict
 new one at once. (The version alone can't say so: it is the render's time in seconds, which two layouts of one run can share.)
 This is judged from what the server last sent that display, so it is forgotten at a restart: a display switched while the
 server was down shows the new layout from the next render. A layout that no longer exists, for a display that was given it,
-is not an error: it is sent the default.
+is not an error: it is sent the one for the time of day.
 
 ## IPv4 and IPv6
 

@@ -302,10 +302,11 @@ where
         );
         let profile = self.image_viewing_service.profile();
         // A panel that is driven directly shows one picture, so the others would be drawn for nothing.
+        // ...and the one it shows is the one for this time of day, when there is a schedule.
         let layouts = if self.image_viewing_service.wants_every_layout() {
             self.layouts.all()
         } else {
-            std::slice::from_ref(self.layouts.default_layout())
+            std::slice::from_ref(self.layouts.current(now))
         };
         for (position, layout) in layouts.iter().enumerate() {
             match self.show(layout, &glance_data, &profile).await {
@@ -874,6 +875,13 @@ mod tests {
     fn recording_app(
         journal: &Arc<Journal>,
     ) -> Application<Weather, Recording, Recording, Recording, Trains> {
+        recording_app_with(journal, Arc::new(SystemClock::new(London)))
+    }
+
+    fn recording_app_with(
+        journal: &Arc<Journal>,
+        clock: Arc<dyn Clock>,
+    ) -> Application<Weather, Recording, Recording, Recording, Trains> {
         Application::new(
             Weather(Flag::default()),
             Recording(journal.clone()),
@@ -885,7 +893,7 @@ mod tests {
                 Trains(Flag::default(), Flag::default()),
             )],
             RenderPolicy::default(),
-            Arc::new(SystemClock::new(London)),
+            clock,
         )
         .with_layouts(two_layouts())
     }
@@ -960,5 +968,38 @@ mod tests {
 
         assert!(format!("{error}").contains("Chrome fell over"), "{error}");
         assert!(journal.shown.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_panel_driven_directly_is_given_the_layout_for_the_time_of_day() {
+        use crate::domain::models::layout::{LayoutRule, LayoutSchedule};
+        use chrono::{NaiveTime, TimeZone};
+
+        let journal = Arc::new(Journal::default());
+        let morning = LayoutRule::new(
+            LayoutName::parse("second").unwrap(),
+            vec![],
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        )
+        .unwrap();
+        let layouts = two_layouts()
+            .with_schedule(LayoutSchedule::new(vec![morning]))
+            .unwrap();
+        let app_at = |hour: u32| {
+            recording_app_with(
+                &journal,
+                crate::adapters::clock::FixedClock::at(
+                    London.with_ymd_and_hms(2026, 10, 12, hour, 0, 0).unwrap(),
+                ),
+            )
+            .with_layouts(layouts.clone())
+        };
+
+        app_at(7).run(Location::new(0.0, 0.0)).await.unwrap();
+        app_at(12).run(Location::new(0.0, 0.0)).await.unwrap();
+
+        // At seven the schedule puts the second layout on the panel; at noon it is the default again.
+        assert_eq!(*journal.shown.lock().unwrap(), ["second", "first"]);
     }
 }

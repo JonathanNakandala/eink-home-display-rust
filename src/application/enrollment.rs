@@ -212,6 +212,11 @@ impl Enrollment {
         self.clock.now().to_utc()
     }
 
+    /// The time the server goes by, in its own zone: what a schedule of layouts is read in.
+    pub fn local_now(&self) -> chrono::DateTime<chrono_tz::Tz> {
+        self.clock.now()
+    }
+
     /// Lets go of requests that have waited longer than `REQUEST_LIFETIME` for the owner: a display's request to
     /// join is forgotten as if it had never asked, and a different key's request for a member's name is dropped
     /// with the member left as it was. Members and approved displays never lapse. The caller holds the lock.

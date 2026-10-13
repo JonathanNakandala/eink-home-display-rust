@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use chrono::{NaiveTime, Weekday};
 use config::{Config, ConfigError, Environment, File};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use crate::config::schedule::ScheduleConfig;
 use crate::config::server::ServerConfig;
 use crate::config::weather::WeatherConfig;
 use crate::domain::models::display::{Dither, ImageFormat};
+use crate::domain::models::layout::{LayoutName, LayoutRule, LayoutSchedule};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ApplicationConfig {
@@ -54,6 +56,69 @@ pub struct LayoutsConfig {
     /// working directory.
     #[serde(default)]
     pub directory: Option<PathBuf>,
+    /// Which layout a display with none chosen for it is sent at which time of day, in the server's zone: for example the
+    /// departures alone on weekday mornings. Rules are tried in order and the first one in force wins; outside every rule
+    /// the display gets the default (the first built-in layout). A layout chosen for a display with `displayctl layout set`,
+    /// or asked for with `?layout=`, is not affected. A rule for a layout that doesn't exist stops the program at start-up.
+    #[serde(default)]
+    pub schedule: Vec<LayoutRuleConfig>,
+}
+
+/// When a layout is wanted.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LayoutRuleConfig {
+    /// The layout, as `displayctl layout list` shows it.
+    pub layout: String,
+    /// The days it applies on, as `mon`, `tue`... (or `monday`...). Every day if left out. For a rule that runs overnight,
+    /// the day it starts on.
+    #[serde(default)]
+    pub days: Vec<String>,
+    /// From this time of day, `HH:MM` on the 24-hour clock, inclusive.
+    pub from: String,
+    /// Until this time, exclusive. Earlier than `from`, the rule runs overnight into the next day.
+    pub until: String,
+}
+
+impl LayoutsConfig {
+    /// The rules as a schedule, or what is wrong with the first that isn't one.
+    pub fn to_schedule(&self) -> Result<LayoutSchedule, String> {
+        let rules = self
+            .schedule
+            .iter()
+            .enumerate()
+            .map(|(i, rule)| {
+                rule.to_rule()
+                    .map_err(|e| format!("[[layouts.schedule]] number {}: {e}", i + 1))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(LayoutSchedule::new(rules))
+    }
+}
+
+impl LayoutRuleConfig {
+    fn to_rule(&self) -> Result<LayoutRule, String> {
+        let layout = LayoutName::parse(&self.layout)?;
+        let days = self
+            .days
+            .iter()
+            .map(|day| {
+                day.parse::<Weekday>().map_err(|_| {
+                    format!("{day:?} is not a day: write mon, tue, wed, thu, fri, sat or sun")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let time = |what: &str, text: &str| {
+            NaiveTime::parse_from_str(text, "%H:%M").map_err(|_| {
+                format!("{what} {text:?} is not a time: write it as HH:MM, like 06:30")
+            })
+        };
+        LayoutRule::new(
+            layout,
+            days,
+            time("from", &self.from)?,
+            time("until", &self.until)?,
+        )
+    }
 }
 
 /// When a source fails, the dashboard shows what it said last time, labelled with its age, until it
@@ -271,5 +336,103 @@ impl ApplicationConfig {
             .add_source(Environment::with_prefix("ink"))
             .build()?;
         s.try_deserialize()
+    }
+}
+
+#[cfg(test)]
+mod layout_schedule_tests {
+    use super::*;
+
+    fn parse(toml_text: &str) -> LayoutsConfig {
+        toml::from_str(toml_text).unwrap()
+    }
+
+    #[test]
+    fn rules_are_read_in_order_with_their_days_and_times() {
+        let schedule = parse(
+            r#"
+            [[schedule]]
+            layout = "departures"
+            days = ["mon", "Tuesday", "WED"]
+            from = "06:30"
+            until = "9:30"
+
+            [[schedule]]
+            layout = "clock"
+            from = "22:00"
+            until = "06:00"
+            "#,
+        )
+        .to_schedule()
+        .unwrap();
+
+        let rules = schedule.rules();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].layout.as_str(), "departures");
+        assert_eq!(rules[0].days, [Weekday::Mon, Weekday::Tue, Weekday::Wed]);
+        assert_eq!(rules[0].until, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+        assert!(rules[1].days.is_empty());
+        assert!(rules[1].from > rules[1].until, "an overnight rule");
+    }
+
+    #[test]
+    fn no_rules_is_no_schedule() {
+        assert!(
+            LayoutsConfig::default()
+                .to_schedule()
+                .unwrap()
+                .rules()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_rule_that_is_wrong_says_which_and_how() {
+        for (rule, expected) in [
+            (
+                r#"layout = "Bad Name"
+                from = "06:00"
+                until = "07:00""#,
+                "number 1",
+            ),
+            (
+                r#"layout = "x"
+                days = ["funday"]
+                from = "06:00"
+                until = "07:00""#,
+                "funday",
+            ),
+            (
+                r#"layout = "x"
+                from = "6am"
+                until = "07:00""#,
+                "HH:MM",
+            ),
+            (
+                r#"layout = "x"
+                from = "06:00"
+                until = "25:00""#,
+                "until",
+            ),
+            (
+                r#"layout = "x"
+                from = "06:00"
+                until = "06:00""#,
+                "starts and ends",
+            ),
+        ] {
+            let config = parse(&format!("[[schedule]]\n{rule}"));
+            let error = config.to_schedule().unwrap_err();
+            assert!(error.contains(expected), "{rule}: {error}");
+            assert!(error.contains("[[layouts.schedule]] number 1"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_rule_missing_a_time_is_not_read_at_all() {
+        assert!(
+            toml::from_str::<LayoutsConfig>("[[schedule]]\nlayout = \"x\"\nfrom = \"06:00\"")
+                .is_err()
+        );
     }
 }

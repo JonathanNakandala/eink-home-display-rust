@@ -34,7 +34,7 @@ impl Wanted {
         caller: Option<&DeviceId>,
     ) -> Result<&'a Layout, (StatusCode, String)> {
         let Some(name) = self.layout.as_deref() else {
-            return Ok(chosen_or_default(published, caller).await);
+            return Ok(chosen_or_current(published, caller).await);
         };
         published.layouts.find(name).ok_or_else(|| {
             let known: Vec<_> = published
@@ -52,9 +52,9 @@ impl Wanted {
     }
 }
 
-/// The layout the owner chose for `caller`, or the default if they chose none, or `caller` is not named, or what they
-/// chose has since gone.
-async fn chosen_or_default<'a>(published: &'a Published, caller: Option<&DeviceId>) -> &'a Layout {
+/// The layout the owner chose for `caller`, or the one for this time of day (the default, unless the schedule says
+/// another) if they chose none, or `caller` is not named, or what they chose has since gone.
+async fn chosen_or_current<'a>(published: &'a Published, caller: Option<&DeviceId>) -> &'a Layout {
     let chosen = match (caller, &published.handles.members) {
         (Some(device), Some(members)) => members.layout_of(device).await,
         _ => None,
@@ -62,12 +62,12 @@ async fn chosen_or_default<'a>(published: &'a Published, caller: Option<&DeviceI
     match chosen {
         Some(name) => published.layouts.find(name.as_str()).unwrap_or_else(|| {
             log::warn!(
-                "The layout chosen for {} is {name}, which there is no longer; sending the default",
+                "The layout chosen for {} is {name}, which there is no longer; sending the one for now",
                 caller.map(|device| device.to_string()).unwrap_or_default()
             );
-            published.layouts.default_layout()
+            published.layouts.current(published.clock.now())
         }),
-        None => published.layouts.default_layout(),
+        None => published.layouts.current(published.clock.now()),
     }
 }
 
@@ -80,8 +80,11 @@ pub(super) struct LayoutEntry {
     /// What the layout shows.
     #[schema(examples("Departures with the weather beside them"))]
     description: String,
-    /// Whether this is the layout a request without `layout` gets.
+    /// Whether this is the first layout, the one a display is sent when nothing else says.
     default: bool,
+    /// Whether a display with no layout of its own is sent this one now: the default, unless the layout schedule
+    /// puts another in its place for this time of day.
+    current: bool,
     /// The version `/plan` reports for this layout's image, or absent before it has been rendered.
     #[schema(examples(1791463200))]
     version: Option<u32>,
@@ -110,7 +113,7 @@ pub(super) struct LayoutList {
 )]
 pub(super) async fn layouts(State(published): State<Arc<Published>>) -> Response {
     let mut entries = Vec::new();
-    for summary in published.layouts.summaries() {
+    for summary in published.layouts.summaries(published.clock.now()) {
         let version = match published.layouts.find(&summary.name) {
             Some(layout) => match version_of_layout(&published, layout).await {
                 Ok(version) => version,
@@ -123,6 +126,7 @@ pub(super) async fn layouts(State(published): State<Arc<Published>>) -> Response
             description: summary.description,
             default: summary.default,
             version,
+            current: summary.current,
         });
     }
     (
@@ -279,6 +283,20 @@ mod tests {
 
     /// A server with two layouts, in which `kitchen` is a member, and its enrollment to choose layouts with.
     async fn with_a_member(directory: &std::path::Path) -> (String, Arc<Enrollment>) {
+        let layouts = Layouts::new(vec![
+            Layout::new(DEFAULT_LAYOUT, "Everything"),
+            Layout::new("departures", "Just the trains"),
+        ])
+        .unwrap();
+        with_a_member_at(directory, layouts, Arc::new(SystemClock::new(London))).await
+    }
+
+    /// The same, with these layouts (and so their schedule) and this clock.
+    async fn with_a_member_at(
+        directory: &std::path::Path,
+        layouts: Layouts,
+        clock: Arc<dyn crate::domain::services::clock::Clock>,
+    ) -> (String, Arc<Enrollment>) {
         let pki = tempfile::tempdir().unwrap();
         let authority =
             Arc::new(certificate_authority::open(pki.path(), Create::IfMissing).unwrap());
@@ -310,15 +328,10 @@ mod tests {
                 require_channel_binding: false,
             },
         ));
-        let layouts = Layouts::new(vec![
-            Layout::new(DEFAULT_LAYOUT, "Everything"),
-            Layout::new("departures", "Just the trains"),
-        ])
-        .unwrap();
         let (base, _) = start_layouts(
             Arc::new(DirectoryImages::new(directory.to_path_buf())),
             ImageFormat::Bmp,
-            Arc::new(SystemClock::new(London)),
+            clock,
             Some(enrollment.clone()),
             layouts,
         )
@@ -451,5 +464,134 @@ mod tests {
 
         // Nothing is known of what it shows, so the version is all there is to go on.
         assert_eq!(again["changed"], false);
+    }
+
+    use crate::adapters::clock::FixedClock;
+    use crate::domain::models::layout::{LayoutRule, LayoutSchedule};
+    use chrono::{NaiveTime, TimeZone};
+
+    /// Two layouts, with `departures` wanted from 06:30 to 09:30 on any day.
+    fn with_a_morning_rule() -> Layouts {
+        let morning = LayoutRule::new(
+            LayoutName::parse("departures").unwrap(),
+            vec![],
+            NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
+            NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+        )
+        .unwrap();
+        Layouts::new(vec![
+            Layout::new(DEFAULT_LAYOUT, "Everything"),
+            Layout::new("departures", "Just the trains"),
+        ])
+        .unwrap()
+        .with_schedule(LayoutSchedule::new(vec![morning]))
+        .unwrap()
+    }
+
+    fn at(hour: u32, minute: u32) -> chrono::DateTime<chrono_tz::Tz> {
+        London
+            .with_ymd_and_hms(2026, 10, 12, hour, minute, 0)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_display_with_no_choice_is_sent_the_layout_for_the_time_of_day() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FixedClock::at(at(7, 0));
+        let (base, _) = with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        publish_both(tmp.path()).await;
+        let image = |query: &'static str| {
+            let url = format!("{base}/image{query}");
+            async move { body(url).await.1 }
+        };
+
+        // In the morning window: the scheduled layout, for a named display and an unnamed one.
+        assert_eq!(image("").await, "trains");
+        assert_eq!(image("?device=kitchen").await, "trains");
+        // What the display itself asks for still wins.
+        assert_eq!(image("?layout=dashboard").await, "all of it");
+
+        clock.set(at(12, 0));
+        assert_eq!(image("").await, "all of it");
+        assert_eq!(image("?device=kitchen").await, "all of it");
+    }
+
+    #[tokio::test]
+    async fn the_layout_the_owner_chose_beats_the_schedule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FixedClock::at(at(7, 0));
+        let (base, enrollment) =
+            with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        publish_both(tmp.path()).await;
+        // The kitchen is to have the dashboard whatever the time; the schedule would give it the trains now.
+        choose(&enrollment, Some("dashboard")).await;
+
+        assert_eq!(
+            body(format!("{base}/image?device=kitchen")).await.1,
+            "all of it"
+        );
+        assert_eq!(body(format!("{base}/image?device=hall")).await.1, "trains");
+    }
+
+    #[tokio::test]
+    async fn the_listing_marks_the_layout_for_now_and_follows_the_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FixedClock::at(at(7, 0));
+        let (base, _) = with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        let current = || async {
+            let list: serde_json::Value =
+                serde_json::from_str(&body(format!("{base}/layouts")).await.1).unwrap();
+            list["layouts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|layout| layout["current"] == true)
+                .map(|layout| layout["name"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(current().await, ["departures"]);
+        clock.set(at(9, 30));
+        assert_eq!(current().await, ["dashboard"]);
+    }
+
+    #[tokio::test]
+    async fn a_display_is_told_to_redraw_when_the_schedule_changes_its_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clock = FixedClock::at(at(9, 0));
+        let (base, _) = with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        publish_both(tmp.path()).await;
+        let moment = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        for folder in [DEFAULT_LAYOUT, "departures"] {
+            std::fs::File::options()
+                .write(true)
+                .open(tmp.path().join(folder).join("image.bmp"))
+                .unwrap()
+                .set_modified(moment)
+                .unwrap();
+        }
+        let plan = || async {
+            serde_json::from_str::<serde_json::Value>(
+                &body(format!("{base}/plan?device=kitchen")).await.1,
+            )
+            .unwrap()
+        };
+        let version = plan().await["version"].as_u64().unwrap();
+        let have = |version: u64| format!("{base}/plan?device=kitchen&have={version}");
+
+        // In the window it fetches the trains, and is up to date.
+        assert_eq!(
+            body(format!("{base}/image?device=kitchen")).await.1,
+            "trains"
+        );
+        let current: serde_json::Value =
+            serde_json::from_str(&body(have(version)).await.1).unwrap();
+        assert_eq!(current["changed"], false);
+
+        // The window ends: same render, same version, but it should now be showing the dashboard.
+        clock.set(at(9, 30));
+        let after: serde_json::Value = serde_json::from_str(&body(have(version)).await.1).unwrap();
+        assert_eq!(after["version"].as_u64().unwrap(), version);
+        assert_eq!(after["changed"], true);
     }
 }
