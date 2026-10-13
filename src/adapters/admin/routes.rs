@@ -22,6 +22,8 @@ use crate::application::enrollment::{ApproveError, Enrollment};
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::layout::Layouts;
 use crate::domain::models::pairing::PairingCode;
+use crate::domain::services::clock::Clock;
+use crate::domain::services::layout_choices::LayoutChoices;
 
 /// More than any request here needs.
 const MAX_BODY: usize = 4096;
@@ -30,8 +32,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) struct Admin {
     pub(super) enrollment: Arc<Enrollment>,
+    /// Which layout the owner chose for each display.
+    pub(super) choices: Arc<dyn LayoutChoices>,
     /// The layouts a display can be given.
     pub(super) layouts: Layouts,
+    /// The time, in the server's zone, which the layout schedule is read in.
+    pub(super) clock: Arc<dyn Clock>,
 }
 
 #[derive(OpenApi)]
@@ -75,7 +81,12 @@ pub fn openapi_json() -> String {
         + "\n"
 }
 
-pub fn router(enrollment: Arc<Enrollment>, layouts: Layouts) -> Router {
+pub fn router(
+    enrollment: Arc<Enrollment>,
+    choices: Arc<dyn LayoutChoices>,
+    layouts: Layouts,
+    clock: Arc<dyn Clock>,
+) -> Router {
     let (router, _) = routes().split_for_parts();
     let description: Arc<str> = openapi_json().into();
     router
@@ -105,7 +116,9 @@ pub fn router(enrollment: Arc<Enrollment>, layouts: Layouts) -> Router {
         ))
         .with_state(Arc::new(Admin {
             enrollment,
+            choices,
             layouts,
+            clock,
         }))
 }
 
@@ -241,11 +254,19 @@ fn refused(error: ApproveError, revoking: bool) -> ApiError {
 /// `device` as it stands now.
 async fn entry_of(admin: &Admin, device: &DeviceId) -> Result<DisplayEntry, ApiError> {
     match admin.enrollment.pairing(device).await {
-        Ok(Some(pairing)) => Ok(DisplayEntry::of(
-            &pairing,
-            admin.enrollment.now(),
-            admin.enrollment.certificate_lifetime(),
-        )),
+        Ok(Some(pairing)) => {
+            let layout = admin
+                .choices
+                .get(device)
+                .await
+                .map_err(|e| ApiError::internal("look up the layout chosen", e))?;
+            Ok(DisplayEntry::of(
+                &pairing,
+                admin.enrollment.now(),
+                admin.enrollment.certificate_lifetime(),
+            )
+            .with_layout(layout.as_ref()))
+        }
         Ok(None) => Err(unknown(device)),
         Err(e) => Err(ApiError::internal("look the display up", e)),
     }
@@ -267,11 +288,19 @@ async fn list_displays(State(admin): State<Arc<Admin>>) -> Result<Json<DisplayLi
         .pairings()
         .await
         .map_err(|e| ApiError::internal("list the displays", e))?;
+    let chosen = admin
+        .choices
+        .all()
+        .await
+        .map_err(|e| ApiError::internal("look up the layouts chosen", e))?;
     let now = admin.enrollment.now();
     Ok(Json(DisplayList {
         displays: pairings
             .iter()
-            .map(|pairing| DisplayEntry::of(pairing, now, admin.enrollment.certificate_lifetime()))
+            .map(|pairing| {
+                DisplayEntry::of(pairing, now, admin.enrollment.certificate_lifetime())
+                    .with_layout(chosen.get(&pairing.device))
+            })
             .collect(),
     }))
 }
@@ -321,6 +350,13 @@ async fn forget_display(
         .forget(&device)
         .await
         .map_err(|e| ApiError::internal("forget the display", e))?;
+    // A display forgotten is as if it had never asked, so what was chosen for its name doesn't wait for the next
+    // display that takes it.
+    admin
+        .choices
+        .clear(&device)
+        .await
+        .map_err(|e| ApiError::internal("forget the layout chosen", e))?;
     Ok(Json(before))
 }
 
@@ -436,7 +472,7 @@ async fn list_layouts(State(admin): State<Arc<Admin>>) -> Json<LayoutList> {
     Json(LayoutList {
         layouts: admin
             .layouts
-            .summaries(admin.enrollment.local_now())
+            .summaries(admin.clock.now())
             .into_iter()
             .map(|layout| LayoutEntry {
                 name: layout.name,
@@ -489,11 +525,13 @@ async fn choose_layout(
         })?
         .name
         .clone();
+    // Only a display the server knows: a choice for a name nobody has asked with would be one nothing could show.
+    entry_of(&admin, &device).await?;
     admin
-        .enrollment
-        .set_layout(&device, Some(layout))
+        .choices
+        .set(&device, layout)
         .await
-        .map_err(|e| refused(e, false))?;
+        .map_err(|e| ApiError::internal("keep the layout chosen", e))?;
     Ok(Json(entry_of(&admin, &device).await?))
 }
 
@@ -515,10 +553,11 @@ async fn clear_layout(
     Path(DisplayPath { name }): Path<DisplayPath>,
 ) -> Result<Json<DisplayEntry>, ApiError> {
     let device = device_id(&name)?;
+    entry_of(&admin, &device).await?;
     admin
-        .enrollment
-        .set_layout(&device, None)
+        .choices
+        .clear(&device)
         .await
-        .map_err(|e| refused(e, false))?;
+        .map_err(|e| ApiError::internal("clear the layout chosen", e))?;
     Ok(Json(entry_of(&admin, &device).await?))
 }

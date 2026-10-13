@@ -13,13 +13,14 @@ use chrono_tz::Tz;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::api_schema::SourceReportSchema;
+use super::api_schema::{LayoutReportSchema, SourceReportSchema};
 use super::devices::DeviceStatus;
 use super::plan::{PlanTiming, is_stale, version_of};
 use crate::domain::models::freshness::format_age;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 use crate::domain::models::profile::DeviceProfile;
-use crate::domain::models::render_report::{RenderReport, SourceReport};
+use crate::domain::models::render_report::{LayoutReport, RenderReport, SourceReport};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::render_observer::RenderObserver;
 
@@ -53,6 +54,10 @@ pub struct Status {
     /// How each source was on the last successful render.
     #[schema(value_type = Vec<SourceReportSchema>)]
     pub sources: Vec<SourceReport>,
+    /// How each layout was drawn on the last successful render. One that failed is still being served from its
+    /// last image.
+    #[schema(value_type = Vec<LayoutReportSchema>)]
+    pub layouts: Vec<LayoutReport>,
     /// The displays that have checked in, with their battery and whether any has gone quiet.
     pub devices: Vec<DeviceStatus>,
     /// Where each display stands in the certificate authority. Empty over plain HTTP.
@@ -148,6 +153,12 @@ pub struct MemberStatus {
 }
 
 impl MemberStatus {
+    /// This display with the layout chosen for it, if one was (which is kept apart from the pairing).
+    pub fn with_layout(mut self, layout: Option<&LayoutName>) -> Self {
+        self.layout = layout.map(ToString::to_string);
+        self
+    }
+
     /// `lifetime` is how long the certificates this server issues last.
     pub fn of(pairing: &Pairing, now: DateTime<Tz>, lifetime: chrono::Duration) -> Self {
         let (state, ends) = match &pairing.state {
@@ -171,7 +182,7 @@ impl MemberStatus {
                 .as_ref()
                 .and_then(|replacement| replacement.profile.as_ref())
                 .map(ProfileStatus::from),
-            layout: pairing.layout.as_ref().map(ToString::to_string),
+            layout: None,
         }
     }
 }
@@ -306,6 +317,11 @@ impl StatusBoard {
                 .as_ref()
                 .map(|s| s.report.sources.clone())
                 .unwrap_or_default(),
+            layouts: record
+                .last_success
+                .as_ref()
+                .map(|s| s.report.layouts.clone())
+                .unwrap_or_default(),
             devices: Vec::new(),
             members: Vec::new(),
             next_render: schedule.next_after(now).ok(),
@@ -388,6 +404,7 @@ mod tests {
                 name: "weather".into(),
                 state,
             }],
+            layouts: vec![],
         }
     }
 

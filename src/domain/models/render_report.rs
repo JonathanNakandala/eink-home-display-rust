@@ -21,17 +21,41 @@ pub struct SourceReport {
     pub state: SourceState,
 }
 
+/// How drawing one layout went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum LayoutState {
+    /// Drawn and published just now.
+    Drawn,
+    /// Not drawn this time (it failed, or took too long), so its last image stays in place. `reason` is a few words.
+    Failed { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LayoutReport {
+    pub name: String,
+    #[serde(flatten)]
+    pub state: LayoutState,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct RenderReport {
     pub sources: Vec<SourceReport>,
+    /// The layouts drawn on this run, the default first. Only the default failing fails the run, so any listed here
+    /// as failed is one whose last image is still being served.
+    pub layouts: Vec<LayoutReport>,
 }
 
 impl RenderReport {
-    /// Whether any source was shown from old data or left off.
+    /// Whether any source was shown from old data or left off, or any layout could not be drawn.
     pub fn is_degraded(&self) -> bool {
         self.sources
             .iter()
             .any(|source| source.state != SourceState::Fresh)
+            || self
+                .layouts
+                .iter()
+                .any(|layout| layout.state != LayoutState::Drawn)
     }
 }
 
@@ -41,6 +65,7 @@ mod tests {
 
     fn report(states: Vec<SourceState>) -> RenderReport {
         RenderReport {
+            layouts: vec![],
             sources: states
                 .into_iter()
                 .enumerate()
@@ -68,6 +93,29 @@ mod tests {
                 reason: "timed out".into()
             }])
             .is_degraded()
+        );
+    }
+
+    #[test]
+    fn a_layout_that_could_not_be_drawn_is_degraded() {
+        let drawn = |name: &str| LayoutReport {
+            name: name.to_owned(),
+            state: LayoutState::Drawn,
+        };
+        let mut report = RenderReport {
+            sources: vec![],
+            layouts: vec![drawn("dashboard"), drawn("departures")],
+        };
+        assert!(!report.is_degraded());
+
+        report.layouts[1].state = LayoutState::Failed {
+            reason: "timed out".to_owned(),
+        };
+
+        assert!(report.is_degraded());
+        assert_eq!(
+            serde_json::to_value(&report.layouts[1]).unwrap(),
+            serde_json::json!({"name": "departures", "state": "failed", "reason": "timed out"})
         );
     }
 

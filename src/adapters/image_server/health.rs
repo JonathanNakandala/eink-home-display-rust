@@ -122,11 +122,18 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
         }
     }
     if let Some(enrollment) = &published.handles.members {
+        let chosen = match &published.handles.layout_choices {
+            Some(choices) => choices.all().await?,
+            None => Default::default(),
+        };
         status.members = enrollment
             .pairings()
             .await?
             .iter()
-            .map(|pairing| MemberStatus::of(pairing, now, enrollment.certificate_lifetime()))
+            .map(|pairing| {
+                MemberStatus::of(pairing, now, enrollment.certificate_lifetime())
+                    .with_layout(chosen.get(&pairing.device))
+            })
             .collect();
     }
     Ok(status)
@@ -243,6 +250,7 @@ mod tests {
                         reason: "key rejected".into(),
                     },
                 }],
+                layouts: vec![],
             },
         );
 
@@ -355,49 +363,11 @@ mod tests {
 
     #[tokio::test]
     async fn status_lists_where_each_display_stands_in_the_authority() {
-        use crate::adapters::certificate_authority::{self, Create};
-        use crate::adapters::pairing_store::{FilePairingStore, Missing};
-        use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
-        use crate::domain::models::device_id::DeviceId;
-        use crate::domain::models::pairing::{Pairing, PairingState, PublicKey};
-        use crate::domain::services::pairing_store::PairingStore;
+        use super::super::testing::{enrolled, members};
+        use crate::domain::models::pairing::PairingState;
 
-        let pki = tempfile::tempdir().unwrap();
-        let authority =
-            Arc::new(certificate_authority::open(pki.path(), Create::IfMissing).unwrap());
-        let store = Arc::new(
-            FilePairingStore::open(pki.path(), Missing::StartEmpty)
-                .await
-                .unwrap(),
-        );
-        let now = chrono::Utc::now();
-        for (name, state) in [
-            (
-                "kitchen",
-                PairingState::Enrolled {
-                    serial: "01".to_owned(),
-                    not_after: now + chrono::Duration::days(20),
-                },
-            ),
-            ("hall", PairingState::Pending),
-        ] {
-            let device = DeviceId::parse(name).unwrap();
-            let key = PublicKey::from_der(name.as_bytes().repeat(8));
-            store
-                .put(&Pairing::new(device, key, state, now))
-                .await
-                .unwrap();
-        }
-        let enrollment = Arc::new(Enrollment::new(
-            authority,
-            store,
-            Arc::new(SystemClock::new(London)),
-            EnrollmentPolicy {
-                certificate_lifetime: chrono::Duration::days(90),
-                retry_after: chrono::Duration::minutes(5),
-                require_channel_binding: false,
-            },
-        ));
+        let known = members(&[("kitchen", enrolled()), ("hall", PairingState::Pending)]).await;
+        let enrollment = known.enrollment.clone();
         let tmp = tempfile::tempdir().unwrap();
         let (base, _) = start_full(
             Arc::new(DirectoryImages::new(tmp.path().to_path_buf())),

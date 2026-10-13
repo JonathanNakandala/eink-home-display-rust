@@ -25,7 +25,9 @@ use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::freshness::{Fetched, LastGood};
 use crate::domain::models::layout::{Layout, Layouts};
 use crate::domain::models::location::Location;
-use crate::domain::models::render_report::{RenderReport, SourceReport, SourceState};
+use crate::domain::models::render_report::{
+    LayoutReport, LayoutState, RenderReport, SourceReport, SourceState,
+};
 use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::WeatherInformation;
 use crate::domain::models::{DateInfo, DepartureBoardData, GlanceData};
@@ -60,9 +62,13 @@ pub struct RenderLimits {
     /// For one source (the weather, or one board) to answer. A source that is too slow counts as
     /// failed, so it is shown from its last good data or as unavailable instead of holding up the rest.
     pub source_timeout: StdDuration,
-    /// For the whole run, from fetching to the display. Whatever is still going then is abandoned,
-    /// so a stuck render can't stop the next one or a waiting button press.
+    /// For fetching the sources and drawing the default layout, which is what makes a run. Whatever is
+    /// still going then is abandoned, so a stuck render can't stop the next one or a waiting button press.
     pub deadline: StdDuration,
+    /// For each layout after the default to be drawn and published. Each has its own allowance, so that more
+    /// layouts don't squeeze the run's, and one that is too slow is reported and left with its last image
+    /// while the rest carry on.
+    pub layout_deadline: StdDuration,
 }
 
 impl Default for RenderLimits {
@@ -70,6 +76,7 @@ impl Default for RenderLimits {
         Self {
             source_timeout: StdDuration::from_secs(40),
             deadline: StdDuration::from_secs(120),
+            layout_deadline: StdDuration::from_secs(60),
         }
     }
 }
@@ -218,7 +225,8 @@ where
 
     /// Renders and shows the dashboard. A source that fails or is too slow doesn't stop it: that part
     /// is shown from its last good data if recent enough (labelled with the age), or as unavailable.
-    /// The whole run is abandoned, with an error, if it takes longer than `limits.deadline`.
+    /// Fetching and drawing the default layout is abandoned, with an error, if it takes longer than `limits.deadline`;
+    /// each other layout has `limits.layout_deadline` and, if it overruns, is reported and left as it was.
     /// On success, says how healthy each source was. The observers hear of the outcome either way.
     ///
     /// A panic in a source, the renderer or the display is caught and reported as a failed run, like
@@ -227,13 +235,8 @@ where
         for observer in &self.observers {
             observer.render_started();
         }
-        let deadline = self.policy.limits.deadline;
-        let result = match AssertUnwindSafe(tokio::time::timeout(deadline, self.render(location)))
-            .catch_unwind()
-            .await
-        {
-            Ok(Ok(rendered)) => rendered,
-            Ok(Err(_)) => Err(anyhow!("The render didn't answer within {deadline:?}")),
+        let result = match AssertUnwindSafe(self.render(location)).catch_unwind().await {
+            Ok(rendered) => rendered,
             Err(panic) => Err(anyhow!(
                 "The render panicked: {}",
                 panic_message(panic.as_ref())
@@ -249,9 +252,82 @@ where
         result
     }
 
+    /// Fetches the sources, then draws the default layout, within `limits.deadline` together.
     async fn render(&self, location: Location) -> anyhow::Result<RenderReport> {
         // One instant for the whole frame, so the clock and the countdowns agree.
         let now = self.clock.now();
+        let profile = self.image_viewing_service.profile();
+        // A panel that is driven directly shows one picture, so the others would be drawn for nothing.
+        // ...and the one it shows is the one for this time of day, when there is a schedule.
+        let layouts = if self.image_viewing_service.wants_every_layout() {
+            self.layouts.all()
+        } else {
+            std::slice::from_ref(self.layouts.current(now))
+        };
+        let (first, others) = layouts
+            .split_first()
+            .expect("there is always at least one layout");
+
+        let deadline = self.policy.limits.deadline;
+        let essentials = async {
+            let (glance_data, sources) = self.gather(location, now).await;
+            // Without the default there is no picture worth the name, and whatever went wrong would likely go
+            // wrong again for the rest, so this failing fails the run.
+            self.show(first, &glance_data, &profile).await?;
+            anyhow::Ok((glance_data, sources))
+        };
+        let (glance_data, sources) = tokio::time::timeout(deadline, essentials)
+            .await
+            .map_err(|_| anyhow!("The render didn't answer within {deadline:?}"))??;
+
+        let mut drawn = vec![LayoutReport {
+            name: first.name.to_string(),
+            state: LayoutState::Drawn,
+        }];
+        for layout in others {
+            // One layout failing must not take the others with it: it is reported, which shows as degraded, and
+            // its last image stays in place.
+            let outcome = tokio::time::timeout(
+                self.policy.limits.layout_deadline,
+                self.show(layout, &glance_data, &profile),
+            )
+            .await;
+            let state = match outcome {
+                Ok(Ok(())) => LayoutState::Drawn,
+                Ok(Err(error)) => {
+                    log::warn!("Failed to draw the {} layout: {error:#}", layout.name);
+                    LayoutState::Failed {
+                        reason: "could not be drawn".to_owned(),
+                    }
+                }
+                Err(_) => {
+                    log::warn!(
+                        "The {} layout took longer than {:?}; its last image stays",
+                        layout.name,
+                        self.policy.limits.layout_deadline
+                    );
+                    LayoutState::Failed {
+                        reason: "timed out".to_owned(),
+                    }
+                }
+            };
+            drawn.push(LayoutReport {
+                name: layout.name.to_string(),
+                state,
+            });
+        }
+        Ok(RenderReport {
+            sources,
+            layouts: drawn,
+        })
+    }
+
+    /// What the dashboard shows, from the sources, and how each did. A source that fails or is too slow doesn't stop it.
+    async fn gather(
+        &self,
+        location: Location,
+        now: DateTime<Tz>,
+    ) -> (GlanceData, Vec<SourceReport>) {
         let (weather, boards) = tokio::join!(
             async {
                 let result = within(
@@ -300,34 +376,7 @@ where
                 state,
             }),
         );
-        let profile = self.image_viewing_service.profile();
-        // A panel that is driven directly shows one picture, so the others would be drawn for nothing.
-        // ...and the one it shows is the one for this time of day, when there is a schedule.
-        let layouts = if self.image_viewing_service.wants_every_layout() {
-            self.layouts.all()
-        } else {
-            std::slice::from_ref(self.layouts.current(now))
-        };
-        for (position, layout) in layouts.iter().enumerate() {
-            match self.show(layout, &glance_data, &profile).await {
-                Ok(()) => {}
-                // Without the default there is no picture worth the name, and whatever went wrong would
-                // likely go wrong again for the rest.
-                Err(error) if position == 0 => return Err(error),
-                // One layout failing must not take the others with it. It is reported as a source that is
-                // down, so it shows as degraded, and the layout's last image stays in place.
-                Err(error) => {
-                    log::warn!("Failed to draw the {} layout: {error:#}", layout.name);
-                    sources.push(SourceReport {
-                        name: format!("layout {}", layout.name),
-                        state: SourceState::Unavailable {
-                            reason: "could not be drawn".to_owned(),
-                        },
-                    });
-                }
-            }
-        }
-        Ok(RenderReport { sources })
+        (glance_data, sources)
     }
 
     /// Draws one layout, keeps its picture and hands it to the display.
@@ -487,6 +536,7 @@ mod tests {
                 limits: RenderLimits {
                     source_timeout: StdDuration::from_millis(100),
                     deadline: StdDuration::from_millis(400),
+                    layout_deadline: StdDuration::from_millis(100),
                 },
                 ..RenderPolicy::default()
             },
@@ -747,6 +797,7 @@ mod tests {
                 limits: RenderLimits {
                     source_timeout: StdDuration::from_millis(100),
                     deadline: StdDuration::from_millis(400),
+                    layout_deadline: StdDuration::from_millis(100),
                 },
                 ..RenderPolicy::default()
             },
@@ -795,6 +846,7 @@ mod tests {
                 limits: RenderLimits {
                     source_timeout: StdDuration::from_millis(100),
                     deadline: StdDuration::from_millis(400),
+                    layout_deadline: StdDuration::from_millis(100),
                 },
                 ..RenderPolicy::default()
             },
@@ -826,6 +878,8 @@ mod tests {
         stored: Mutex<Vec<String>>,
         shown: Mutex<Vec<String>>,
         failing: Mutex<Option<String>>,
+        /// This layout never finishes.
+        hanging: Mutex<Option<String>>,
         every_layout: bool,
     }
     struct Recording(Arc<Journal>);
@@ -838,6 +892,9 @@ mod tests {
         ) -> anyhow::Result<ImageData> {
             if self.0.failing.lock().unwrap().as_deref() == Some(layout.as_str()) {
                 anyhow::bail!("Chrome fell over");
+            }
+            if self.0.hanging.lock().unwrap().as_deref() == Some(layout.as_str()) {
+                std::future::pending::<()>().await;
             }
             self.0.generated.lock().unwrap().push(layout.to_string());
             Ok(ImageData::new(vec![]))
@@ -892,7 +949,14 @@ mod tests {
                 4,
                 Trains(Flag::default(), Flag::default()),
             )],
-            RenderPolicy::default(),
+            RenderPolicy {
+                limits: RenderLimits {
+                    source_timeout: StdDuration::from_millis(100),
+                    deadline: StdDuration::from_millis(400),
+                    layout_deadline: StdDuration::from_millis(100),
+                },
+                ..RenderPolicy::default()
+            },
             clock,
         )
         .with_layouts(two_layouts())
@@ -945,12 +1009,106 @@ mod tests {
 
         assert_eq!(*journal.shown.lock().unwrap(), ["first"]);
         assert!(report.is_degraded());
-        let down = report
-            .sources
-            .iter()
-            .find(|source| source.name == "layout second")
-            .unwrap();
-        assert!(matches!(down.state, SourceState::Unavailable { .. }));
+        // The sources were fine; it is the layout that is reported.
+        assert!(report.sources.iter().all(|s| s.state == SourceState::Fresh));
+        assert_eq!(
+            report.layouts,
+            [
+                LayoutReport {
+                    name: "first".to_owned(),
+                    state: LayoutState::Drawn
+                },
+                LayoutReport {
+                    name: "second".to_owned(),
+                    state: LayoutState::Failed {
+                        reason: "could not be drawn".to_owned()
+                    }
+                }
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_layout_that_hangs_is_given_up_on_alone_and_the_others_carry_on() {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        *journal.hanging.lock().unwrap() = Some("second".to_owned());
+        let started = std::time::Instant::now();
+
+        let report = recording_app(&journal)
+            .run(Location::new(0.0, 0.0))
+            .await
+            .expect("one layout overrunning doesn't fail the run");
+
+        // It took the layout's allowance (100 ms here), not the run's (400 ms) or forever.
+        assert!(
+            started.elapsed() < StdDuration::from_millis(390),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(*journal.shown.lock().unwrap(), ["first"]);
+        assert_eq!(
+            report.layouts[1].state,
+            LayoutState::Failed {
+                reason: "timed out".to_owned()
+            }
+        );
+        assert!(report.is_degraded());
+    }
+
+    #[tokio::test]
+    async fn each_layout_has_its_own_allowance_so_more_layouts_do_not_shorten_the_runs() {
+        // Three layouts that each take 70 ms: more than the run's whole allowance (400 ms) would hold if it were
+        // shared by seven, and more than one layout's (100 ms) in total, but each is within its own.
+        struct Slow(Arc<Journal>);
+        impl DisplayImageGenerator for Slow {
+            async fn generate(
+                &self,
+                _: GlanceData,
+                _: &DisplayProfile,
+                layout: &LayoutName,
+            ) -> anyhow::Result<ImageData> {
+                tokio::time::sleep(StdDuration::from_millis(70)).await;
+                self.0.generated.lock().unwrap().push(layout.to_string());
+                Ok(ImageData::new(vec![]))
+            }
+        }
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        let layouts = Layouts::new(
+            ["a", "b", "c", "d", "e", "f"]
+                .iter()
+                .map(|name| Layout::new(name, "A layout"))
+                .collect(),
+        )
+        .unwrap();
+        let app = Application::<_, _, _, _, Trains>::new(
+            Weather(Flag::default()),
+            Slow(journal.clone()),
+            Recording(journal.clone()),
+            Recording(journal.clone()),
+            vec![],
+            RenderPolicy {
+                limits: RenderLimits {
+                    source_timeout: StdDuration::from_millis(100),
+                    deadline: StdDuration::from_millis(400),
+                    layout_deadline: StdDuration::from_millis(100),
+                },
+                ..RenderPolicy::default()
+            },
+            Arc::new(SystemClock::new(London)),
+        )
+        .with_layouts(layouts);
+
+        let report = app.run(Location::new(0.0, 0.0)).await.unwrap();
+
+        // Six layouts of 70 ms is 420 ms, past the run's 400 ms, and every one was drawn.
+        assert_eq!(journal.generated.lock().unwrap().len(), 6);
+        assert!(!report.is_degraded());
     }
 
     #[tokio::test]

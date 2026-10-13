@@ -48,10 +48,19 @@ curl --silent 'http://localhost:8080/plan?layout=departures'
 ```
 
 `/image`, `/plan` and `/refresh` take `layout=`; without it they answer for the default, as before. A name nothing
-has is a 404 that lists the ones there are. Each layout has its own images (`<server.directory>/<layout>/image.<ext>`),
+has is a 404 that lists the ones there are. Each layout has its own images (`<server.directory>/<layout>/image.<ext>`, and the saved screenshot `screenshot-<layout>.png`),
 its own version and its own ETag. `/status` and `/healthz` judge the default layout, and a layout that fails to draw
-shows as a source called `layout NAME` and makes the service `degraded`, while the others still update. A display
+is listed in `/status` under `layouts` (and as `home_display_layout_drawn` in `/metrics`) and makes the service `degraded`, while
+the others still update and it keeps its last image. A display
 driven directly (the Waveshare) shows the default layout only, so the others are not drawn for it.
+
+### How long drawing may take
+
+Fetching the sources and drawing the default layout have `[limits] render_deadline_seconds` (120) between them. Each other
+layout has `[limits] layout_deadline_seconds` (60) of its own to be drawn and published, so more layouts don't squeeze the
+run's allowance, and one that overruns is reported (the service is `degraded`) and keeps its last image while the others carry
+on. Each layout is a Chrome render and an encode of every format, so on a slow host or with many layouts watch how long a run takes
+(`rendering` and the log's timings) and raise the layout allowance if layouts are being given up on.
 
 ### Layouts of your own
 
@@ -86,6 +95,9 @@ The folder is read once, when the program starts, and every template is drawn wi
 sources down, and nothing to show). A template that isn't valid Handlebars, names a partial that doesn't exist, is not UTF-8
 or is over 512 KB stops the program with the file's name and what is wrong, so a mistake shows when you restart, not at the
 first render. Editing a template takes a restart. At most 16 layouts are drawn, since each costs a render on every run.
+
+A template is code: it is drawn by Chrome from a local file, and can do anything a web page can, including reading local
+files with `file://` addresses. That is fine for a folder only you can write to, which is the only kind to point this at.
 Preview one first with `cargo run --bin render -- --templates-dir ./layouts`, which writes every layout, yours included.
 
 ### Layouts by time of day
@@ -129,10 +141,13 @@ displayctl -c config.toml layout clear kitchen           # back to the default
 displayctl -c config.toml displays show kitchen          # says "layout departures"
 ```
 
-The choice is kept with the display's pairing (so it survives a restart) and is shown in `displays list`, in `/status`
-(`members[].layout`, and `devices[].last_image.layout` for the one it was last sent). It can be set for a display that is
-still waiting to be approved. Like everything `displayctl` does it needs the admin socket, which the server offers when it
-serves HTTPS, so a display on plain HTTP can only be pointed at a layout by its URL.
+The choice is kept in `layout-choices.json` beside the list of displays (in `[server.tls] directory`), so it survives a
+restart, and is shown in `displays list`, in `/status` (`members[].layout`, and `devices[].last_image.layout` for the one it was
+last sent). It can be set for a display that is still waiting to be approved, and forgetting a display forgets its choice.
+Like everything `displayctl` does it needs the admin socket, which the server offers when it serves HTTPS, so a display on plain
+HTTP can only be pointed at a layout by its URL. (Over plain HTTP a display's name is whatever it says it is: any host on the
+network can send `?device=kitchen`, and so can make the server think the kitchen display has fetched a layout it hasn't. Over
+HTTPS the name is the one on the certificate, and can't be claimed.)
 
 A display that is given another layout is told on its next `/plan` that its picture has changed, so it fetches and draws the
 new one at once. (The version alone can't say so: it is the render's time in seconds, which two layouts of one run can share.)

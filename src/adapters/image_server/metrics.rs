@@ -11,7 +11,7 @@ use std::fmt::Write;
 
 use crate::application::devices::{BatteryState, FailureReason};
 use crate::application::status::{Health, Status};
-use crate::domain::models::render_report::SourceState;
+use crate::domain::models::render_report::{LayoutState, SourceState};
 
 pub const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
@@ -127,6 +127,22 @@ pub fn render(status: &Status) -> String {
                     u8::from(state == current)
                 );
             }
+        }
+    }
+
+    if !status.layouts.is_empty() {
+        gauge(
+            &mut out,
+            "home_display_layout_drawn",
+            "1 if the layout was drawn on the last render, 0 if it was not and its last image is being served.",
+        );
+        for layout in &status.layouts {
+            let _ = writeln!(
+                out,
+                "home_display_layout_drawn{{layout=\"{}\"}} {}",
+                escape(&layout.name),
+                u8::from(layout.state == LayoutState::Drawn)
+            );
         }
     }
 
@@ -471,6 +487,7 @@ mod tests {
     use crate::application::devices::DeviceStatus;
     use crate::application::status::ImageStatus;
     use crate::application::status::MemberStatus;
+    use crate::domain::models::render_report::LayoutReport;
     use crate::domain::models::render_report::SourceReport;
 
     #[test]
@@ -506,6 +523,18 @@ mod tests {
                 name: "TURNPIKE \"LANE\"".into(),
                 state: SourceState::Stale { age_seconds: 300 },
             }],
+            layouts: vec![
+                LayoutReport {
+                    name: "dashboard".into(),
+                    state: LayoutState::Drawn,
+                },
+                LayoutReport {
+                    name: "departures".into(),
+                    state: LayoutState::Failed {
+                        reason: "timed out".into(),
+                    },
+                },
+            ],
             devices: vec![DeviceStatus {
                 name: "kitchen".parse().unwrap(),
                 last_seen: at(),
@@ -651,6 +680,8 @@ mod tests {
             "home_display_device_battery_state{device=\"kitchen\",state=\"low\"} 1",
             "home_display_device_battery_state{device=\"kitchen\",state=\"empty\"} 0",
             "home_display_source_state{source=\"TURNPIKE \\\"LANE\\\"\",state=\"stale\"} 1",
+            "home_display_layout_drawn{layout=\"dashboard\"} 1",
+            "home_display_layout_drawn{layout=\"departures\"} 0",
             "home_display_info{version=\"1.2.3\"} 1",
         ] {
             assert!(
@@ -680,9 +711,11 @@ mod tests {
         bare.image = None;
         bare.devices.clear();
         bare.sources.clear();
+        bare.layouts.clear();
         let text = render(&bare);
         assert!(!text.contains("home_display_image_age_seconds"));
         assert!(!text.contains("home_display_device"));
         assert!(!text.contains("home_display_source_state"));
+        assert!(!text.contains("home_display_layout_drawn"));
     }
 }

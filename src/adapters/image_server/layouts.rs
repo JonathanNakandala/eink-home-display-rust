@@ -55,8 +55,11 @@ impl Wanted {
 /// The layout the owner chose for `caller`, or the one for this time of day (the default, unless the schedule says
 /// another) if they chose none, or `caller` is not named, or what they chose has since gone.
 async fn chosen_or_current<'a>(published: &'a Published, caller: Option<&DeviceId>) -> &'a Layout {
-    let chosen = match (caller, &published.handles.members) {
-        (Some(device), Some(members)) => members.layout_of(device).await,
+    let chosen = match (caller, &published.handles.layout_choices) {
+        (Some(device), Some(choices)) => choices.get(device).await.unwrap_or_else(|e| {
+            log::warn!("Could not look up the layout chosen for {device}: {e:#}");
+            None
+        }),
         _ => None,
     };
     match chosen {
@@ -138,7 +141,7 @@ pub(super) async fn layouts(State(published): State<Arc<Published>>) -> Response
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{publish, publish_layout, start, start_with_two_layouts};
+    use super::super::testing::{FIRST, publish, publish_layout, start, start_with_two_layouts};
     use crate::domain::models::display::ImageFormat;
 
     async fn body(url: String) -> (u16, String) {
@@ -269,22 +272,18 @@ mod tests {
 
     use std::sync::Arc;
 
-    use super::super::testing::start_layouts;
-    use crate::adapters::certificate_authority::{self, Create};
+    use super::super::testing::{Members, enrolled, members, start_layouts};
     use crate::adapters::clock::SystemClock;
-    use crate::adapters::pairing_store::{FilePairingStore, Missing};
     use crate::adapters::published_images::DirectoryImages;
-    use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
     use crate::domain::models::device_id::DeviceId;
-    use crate::domain::models::layout::{DEFAULT_LAYOUT, Layout, LayoutName, Layouts};
-    use crate::domain::models::pairing::{Pairing, PairingState, PublicKey};
-    use crate::domain::services::pairing_store::PairingStore;
+    use crate::domain::models::layout::{Layout, LayoutName, Layouts};
+    use crate::domain::services::layout_choices::LayoutChoices;
     use chrono_tz::Europe::London;
 
-    /// A server with two layouts, in which `kitchen` is a member, and its enrollment to choose layouts with.
-    async fn with_a_member(directory: &std::path::Path) -> (String, Arc<Enrollment>) {
+    /// A server with two layouts, in which `kitchen` is a member, and what is needed to choose layouts for it.
+    async fn with_a_member(directory: &std::path::Path) -> (String, Members) {
         let layouts = Layouts::new(vec![
-            Layout::new(DEFAULT_LAYOUT, "Everything"),
+            Layout::new(FIRST, "Everything"),
             Layout::new("departures", "Just the trains"),
         ])
         .unwrap();
@@ -296,59 +295,30 @@ mod tests {
         directory: &std::path::Path,
         layouts: Layouts,
         clock: Arc<dyn crate::domain::services::clock::Clock>,
-    ) -> (String, Arc<Enrollment>) {
-        let pki = tempfile::tempdir().unwrap();
-        let authority =
-            Arc::new(certificate_authority::open(pki.path(), Create::IfMissing).unwrap());
-        let store = Arc::new(
-            FilePairingStore::open(pki.path(), Missing::StartEmpty)
-                .await
-                .unwrap(),
-        );
-        let now = chrono::Utc::now();
-        store
-            .put(&Pairing::new(
-                DeviceId::parse("kitchen").unwrap(),
-                PublicKey::from_der(vec![1; 91]),
-                PairingState::Enrolled {
-                    serial: "01".to_owned(),
-                    not_after: now + chrono::Duration::days(20),
-                },
-                now,
-            ))
-            .await
-            .unwrap();
-        let enrollment = Arc::new(Enrollment::new(
-            authority,
-            store,
-            Arc::new(SystemClock::new(London)),
-            EnrollmentPolicy {
-                certificate_lifetime: chrono::Duration::days(90),
-                retry_after: chrono::Duration::minutes(5),
-                require_channel_binding: false,
-            },
-        ));
+    ) -> (String, Members) {
+        let known = members(&[("kitchen", enrolled())]).await;
         let (base, _) = start_layouts(
             Arc::new(DirectoryImages::new(directory.to_path_buf())),
             ImageFormat::Bmp,
             clock,
-            Some(enrollment.clone()),
+            Some(known.enrollment.clone()),
+            Some(known.choices.clone()),
             layouts,
         )
         .await;
-        // The authority's directory has to outlive the test.
-        std::mem::forget(pki);
-        (base, enrollment)
+        (base, known)
     }
 
-    async fn choose(enrollment: &Enrollment, layout: Option<&str>) {
-        enrollment
-            .set_layout(
-                &DeviceId::parse("kitchen").unwrap(),
-                layout.map(|name| LayoutName::parse(name).unwrap()),
-            )
-            .await
-            .unwrap();
+    async fn choose(known: &Members, layout: Option<&str>) {
+        let kitchen = DeviceId::parse("kitchen").unwrap();
+        match layout {
+            Some(name) => known
+                .choices
+                .set(&kitchen, LayoutName::parse(name).unwrap())
+                .await
+                .unwrap(),
+            None => known.choices.clear(&kitchen).await.unwrap(),
+        }
     }
 
     async fn publish_both(directory: &std::path::Path) {
@@ -363,7 +333,7 @@ mod tests {
     #[tokio::test]
     async fn a_display_is_sent_the_layout_the_owner_chose_for_it_unless_it_asks_for_another() {
         let tmp = tempfile::tempdir().unwrap();
-        let (base, enrollment) = with_a_member(tmp.path()).await;
+        let (base, known) = with_a_member(tmp.path()).await;
         publish_both(tmp.path()).await;
         let image = |query: &'static str| {
             let url = format!("{base}/image{query}");
@@ -371,7 +341,7 @@ mod tests {
         };
 
         assert_eq!(image("?device=kitchen").await, "all of it");
-        choose(&enrollment, Some("departures")).await;
+        choose(&known, Some("departures")).await;
 
         assert_eq!(image("?device=kitchen").await, "trains");
         // What the display itself asks for wins, and a display nobody chose for gets the default.
@@ -379,23 +349,17 @@ mod tests {
         assert_eq!(image("").await, "all of it");
         assert_eq!(image("?device=hall").await, "all of it");
 
-        choose(&enrollment, None).await;
+        choose(&known, None).await;
         assert_eq!(image("?device=kitchen").await, "all of it");
     }
 
     #[tokio::test]
     async fn a_layout_that_has_since_gone_is_not_a_reason_to_send_nothing() {
         let tmp = tempfile::tempdir().unwrap();
-        let (base, enrollment) = with_a_member(tmp.path()).await;
+        let (base, known) = with_a_member(tmp.path()).await;
         publish_both(tmp.path()).await;
         // The file of displays outlives a configuration that no longer has the layout.
-        enrollment
-            .set_layout(
-                &DeviceId::parse("kitchen").unwrap(),
-                Some(LayoutName::parse("retired").unwrap()),
-            )
-            .await
-            .unwrap();
+        choose(&known, Some("retired")).await;
 
         assert_eq!(
             body(format!("{base}/image?device=kitchen")).await.1,
@@ -407,19 +371,17 @@ mod tests {
     #[tokio::test]
     async fn a_display_given_another_layout_is_told_its_picture_changed_even_at_the_same_version() {
         let tmp = tempfile::tempdir().unwrap();
-        let (base, enrollment) = with_a_member(tmp.path()).await;
+        let (base, known) = with_a_member(tmp.path()).await;
         publish_both(tmp.path()).await;
         // Rendered in the same second, as two layouts of one run can be: the same version.
         let moment = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
-        for file in ["image.bmp"] {
-            for folder in [DEFAULT_LAYOUT, "departures"] {
-                std::fs::File::options()
-                    .write(true)
-                    .open(tmp.path().join(folder).join(file))
-                    .unwrap()
-                    .set_modified(moment)
-                    .unwrap();
-            }
+        for folder in [FIRST, "departures"] {
+            std::fs::File::options()
+                .write(true)
+                .open(tmp.path().join(folder).join("image.bmp"))
+                .unwrap()
+                .set_modified(moment)
+                .unwrap();
         }
         let plan = |query: String| {
             let url = format!("{base}/plan?device=kitchen{query}");
@@ -432,7 +394,7 @@ mod tests {
         assert_eq!(plan(format!("&have={version}")).await["changed"], false);
 
         // The owner gives it the other layout. Same version, but not the picture it shows.
-        choose(&enrollment, Some("departures")).await;
+        choose(&known, Some("departures")).await;
         let told = plan(format!("&have={version}")).await;
         assert_eq!(told["version"].as_u64().unwrap(), version);
         assert_eq!(told["changed"], true);
@@ -448,9 +410,9 @@ mod tests {
     #[tokio::test]
     async fn a_display_that_has_not_fetched_anything_is_not_told_its_picture_changed() {
         let tmp = tempfile::tempdir().unwrap();
-        let (base, enrollment) = with_a_member(tmp.path()).await;
+        let (base, known) = with_a_member(tmp.path()).await;
         publish_both(tmp.path()).await;
-        choose(&enrollment, Some("departures")).await;
+        choose(&known, Some("departures")).await;
         let first: serde_json::Value =
             serde_json::from_str(&body(format!("{base}/plan?device=kitchen")).await.1).unwrap();
         let version = first["version"].as_u64().unwrap();
@@ -480,7 +442,7 @@ mod tests {
         )
         .unwrap();
         Layouts::new(vec![
-            Layout::new(DEFAULT_LAYOUT, "Everything"),
+            Layout::new(FIRST, "Everything"),
             Layout::new("departures", "Just the trains"),
         ])
         .unwrap()
@@ -498,7 +460,8 @@ mod tests {
     async fn a_display_with_no_choice_is_sent_the_layout_for_the_time_of_day() {
         let tmp = tempfile::tempdir().unwrap();
         let clock = FixedClock::at(at(7, 0));
-        let (base, _) = with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        let (base, _known) =
+            with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
         publish_both(tmp.path()).await;
         let image = |query: &'static str| {
             let url = format!("{base}/image{query}");
@@ -520,11 +483,11 @@ mod tests {
     async fn the_layout_the_owner_chose_beats_the_schedule() {
         let tmp = tempfile::tempdir().unwrap();
         let clock = FixedClock::at(at(7, 0));
-        let (base, enrollment) =
+        let (base, known) =
             with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
         publish_both(tmp.path()).await;
         // The kitchen is to have the dashboard whatever the time; the schedule would give it the trains now.
-        choose(&enrollment, Some("dashboard")).await;
+        choose(&known, Some("dashboard")).await;
 
         assert_eq!(
             body(format!("{base}/image?device=kitchen")).await.1,
@@ -537,7 +500,8 @@ mod tests {
     async fn the_listing_marks_the_layout_for_now_and_follows_the_clock() {
         let tmp = tempfile::tempdir().unwrap();
         let clock = FixedClock::at(at(7, 0));
-        let (base, _) = with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        let (base, _known) =
+            with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
         let current = || async {
             let list: serde_json::Value =
                 serde_json::from_str(&body(format!("{base}/layouts")).await.1).unwrap();
@@ -559,10 +523,11 @@ mod tests {
     async fn a_display_is_told_to_redraw_when_the_schedule_changes_its_layout() {
         let tmp = tempfile::tempdir().unwrap();
         let clock = FixedClock::at(at(9, 0));
-        let (base, _) = with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
+        let (base, _known) =
+            with_a_member_at(tmp.path(), with_a_morning_rule(), clock.clone()).await;
         publish_both(tmp.path()).await;
         let moment = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
-        for folder in [DEFAULT_LAYOUT, "departures"] {
+        for folder in [FIRST, "departures"] {
             std::fs::File::options()
                 .write(true)
                 .open(tmp.path().join(folder).join("image.bmp"))

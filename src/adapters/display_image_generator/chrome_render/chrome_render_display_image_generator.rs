@@ -16,7 +16,7 @@ use super::Templates;
 use crate::domain::models::GlanceData;
 use crate::domain::models::display::DisplayProfile;
 use crate::domain::models::image::ImageData;
-use crate::domain::models::layout::{DEFAULT_LAYOUT, LayoutName};
+use crate::domain::models::layout::LayoutName;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -25,10 +25,13 @@ const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 /// something longer than the gap between renders, or every render relaunches.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The first layout built in, which is the default unless a schedule or a choice says otherwise.
+pub const DASHBOARD: &str = "dashboard";
+
 /// The layouts there are, the default first: what each is called, what it shows, and its template.
 pub(super) const LAYOUTS: &[(&str, &str, &str)] = &[
     (
-        DEFAULT_LAYOUT,
+        DASHBOARD,
         "Departures with the weather beside them",
         include_str!("../../../../templates/dashboard.html"),
     ),
@@ -254,11 +257,7 @@ impl ChromeRenderDisplayImageGenerator {
         layout: &LayoutName,
         glance_data: &GlanceData,
     ) -> anyhow::Result<String> {
-        let template = self
-            .templates
-            .source(layout)
-            .with_context(|| format!("There is no layout called {layout}"))?;
-        render_page(template, glance_data)
+        self.templates.render(layout, glance_data)
     }
 
     /// Writes the HTML and its assets to `dir`, returning the HTML file's path.
@@ -274,8 +273,10 @@ impl ChromeRenderDisplayImageGenerator {
     }
 }
 
-/// `template` drawn with `glance_data`, with the partials every layout can use.
-pub(super) fn render_page(template: &str, glance_data: &GlanceData) -> anyhow::Result<String> {
+/// A registry holding the partials every layout can use, and `templates` (a name and its source each) to draw.
+pub(super) fn registry<'a>(
+    templates: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> anyhow::Result<Handlebars<'static>> {
     let mut handlebars = Handlebars::new();
     for (name, part) in PARTS {
         handlebars.register_partial(name, part)?;
@@ -285,8 +286,24 @@ pub(super) fn render_page(template: &str, glance_data: &GlanceData) -> anyhow::R
         let svg = &svg[svg.find("<svg").unwrap_or(0)..];
         handlebars.register_partial(name, svg)?;
     }
-    handlebars.register_template_string("page", template)?;
-    Ok(handlebars.render("page", glance_data)?)
+    for (name, source) in templates {
+        // Under a name of their own: partials and templates share a namespace, and a layout may well be called
+        // `departures` or `header`.
+        handlebars
+            .register_template_string(&template_name(name), source)
+            .with_context(|| format!("The layout {name} is not valid"))?;
+    }
+    Ok(handlebars)
+}
+
+/// What a layout's template is registered as, apart from the partials.
+pub(super) fn template_name(layout: &str) -> String {
+    format!("layout/{layout}")
+}
+
+/// `template` drawn once with `glance_data`: for trying a template, not for drawing every run.
+pub(super) fn render_page(template: &str, glance_data: &GlanceData) -> anyhow::Result<String> {
+    Ok(registry([("page", template)])?.render(&template_name("page"), glance_data)?)
 }
 
 impl Inner {
@@ -464,7 +481,7 @@ mod tests {
             ChromeSource::PreferSystem,
         );
         generator
-            .render_html(&LayoutName::parse(DEFAULT_LAYOUT).unwrap(), data)
+            .render_html(&LayoutName::parse(DASHBOARD).unwrap(), data)
             .unwrap()
     }
 
@@ -524,7 +541,7 @@ mod tests {
     #[test]
     fn the_dashboard_is_the_default_layout_and_every_layout_renders_its_own_page() {
         let layouts = Templates::built_in().layouts();
-        assert_eq!(layouts.default_layout().name.as_str(), DEFAULT_LAYOUT);
+        assert_eq!(layouts.default_layout().name.as_str(), DASHBOARD);
         let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
 
         for layout in layouts.all() {
@@ -541,7 +558,7 @@ mod tests {
     fn the_departures_layout_leaves_the_weather_out() {
         let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
 
-        let dashboard = page_of(DEFAULT_LAYOUT, &data);
+        let dashboard = page_of(DASHBOARD, &data);
         let departures = page_of("departures", &data);
 
         assert!(dashboard.contains("class=\"weather\""));
@@ -688,7 +705,7 @@ mod tests {
     }
 
     fn dashboard() -> LayoutName {
-        LayoutName::parse(DEFAULT_LAYOUT).unwrap()
+        LayoutName::parse(DASHBOARD).unwrap()
     }
 
     fn sample_data() -> GlanceData {

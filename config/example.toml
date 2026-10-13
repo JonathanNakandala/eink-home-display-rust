@@ -66,6 +66,7 @@ weather_max_age_minutes = 180
 [limits]
 source_timeout_seconds = 40
 render_deadline_seconds = 120
+layout_deadline_seconds = 60
 
 [server]
 bind = "[::]:8080"

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, IntoResponses, ToSchema};
 
 use crate::application::status::ProfileStatus;
+use crate::domain::models::layout::LayoutName;
 use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 
 /// The longest a pairing window can be opened for. Long enough for a display that wakes rarely; short enough
@@ -96,6 +97,12 @@ pub struct DisplayEntry {
 }
 
 impl DisplayEntry {
+    /// This display with the layout chosen for it, if one was (which is kept apart from the pairing).
+    pub fn with_layout(mut self, layout: Option<&LayoutName>) -> Self {
+        self.layout = layout.map(ToString::to_string);
+        self
+    }
+
     /// `lifetime` is how long the certificates this server issues last.
     pub fn of(pairing: &Pairing, now: DateTime<Utc>, lifetime: chrono::Duration) -> Self {
         let (state, ends) = match &pairing.state {
@@ -125,7 +132,7 @@ impl DisplayEntry {
                 .as_ref()
                 .and_then(|replacement| replacement.profile.as_ref())
                 .map(ProfileStatus::from),
-            layout: pairing.layout.as_ref().map(ToString::to_string),
+            layout: None,
         }
     }
 }

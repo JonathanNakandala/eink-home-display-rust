@@ -6,6 +6,26 @@ use std::fmt;
 use chrono::{DateTime, Datelike, NaiveTime, Weekday};
 use chrono_tz::Tz;
 use serde::Serialize;
+use thiserror::Error;
+
+/// Why layouts, or the rules for choosing between them, can't be what they were given as.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum LayoutError {
+    #[error(
+        "A layout name is up to {LONGEST} lower-case letters, digits and hyphens, starting with a letter"
+    )]
+    InvalidName,
+    #[error("There must be at least one layout")]
+    NoLayouts,
+    #[error("There are two layouts called {0}")]
+    Duplicate(LayoutName),
+    #[error(
+        "The rule for {layout} starts and ends at {at}: give it a start before its end, or an end before its start to run overnight"
+    )]
+    EmptyRule { layout: LayoutName, at: String },
+    #[error("The schedule names the layout {layout}, which there is not (there are: {known})")]
+    UnknownLayout { layout: LayoutName, known: String },
+}
 
 /// What a layout is called: lower-case letters, digits and hyphens, starting with a letter, so it is safe in a
 /// file name and a query string as it stands.
@@ -16,14 +36,12 @@ const LONGEST: usize = 32;
 
 impl LayoutName {
     /// The name, or why it isn't one.
-    pub fn parse(name: &str) -> Result<Self, String> {
+    pub fn parse(name: &str) -> Result<Self, LayoutError> {
         let mut chars = name.chars();
         let starts_well = chars.next().is_some_and(|c| c.is_ascii_lowercase());
         let rest_well = chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !starts_well || !rest_well || name.len() > LONGEST {
-            return Err(format!(
-                "A layout name is up to {LONGEST} lower-case letters, digits and hyphens, starting with a letter"
-            ));
+            return Err(LayoutError::InvalidName);
         }
         Ok(Self(name.to_owned()))
     }
@@ -74,12 +92,12 @@ impl LayoutRule {
         days: Vec<Weekday>,
         from: NaiveTime,
         until: NaiveTime,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LayoutError> {
         if from == until {
-            return Err(format!(
-                "The rule for {layout} starts and ends at {}: give it a start before its end, or an end before its start to run overnight",
-                from.format("%H:%M")
-            ));
+            return Err(LayoutError::EmptyRule {
+                layout,
+                at: from.format("%H:%M").to_string(),
+            });
         }
         Ok(Self {
             layout,
@@ -138,13 +156,13 @@ pub struct Layouts {
 
 impl Layouts {
     /// `layouts` in order, the first the default, or why they can't be: none, or two with a name.
-    pub fn new(layouts: Vec<Layout>) -> Result<Self, String> {
+    pub fn new(layouts: Vec<Layout>) -> Result<Self, LayoutError> {
         if layouts.is_empty() {
-            return Err("There must be at least one layout".to_owned());
+            return Err(LayoutError::NoLayouts);
         }
         for (i, layout) in layouts.iter().enumerate() {
             if layouts[..i].iter().any(|other| other.name == layout.name) {
-                return Err(format!("There are two layouts called {}", layout.name));
+                return Err(LayoutError::Duplicate(layout.name.clone()));
             }
         }
         Ok(Self {
@@ -155,18 +173,18 @@ impl Layouts {
 
     /// These layouts, with `schedule` deciding the default by the time of day. A rule for a layout there isn't is an
     /// error, since it could never be shown.
-    pub fn with_schedule(mut self, schedule: LayoutSchedule) -> Result<Self, String> {
+    pub fn with_schedule(mut self, schedule: LayoutSchedule) -> Result<Self, LayoutError> {
         for rule in schedule.rules() {
             if self.find(rule.layout.as_str()).is_none() {
-                return Err(format!(
-                    "The schedule names the layout {}, which there is not (there are: {})",
-                    rule.layout,
-                    self.layouts
+                return Err(LayoutError::UnknownLayout {
+                    layout: rule.layout.clone(),
+                    known: self
+                        .layouts
                         .iter()
                         .map(|layout| layout.name.as_str())
                         .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+                        .join(", "),
+                });
             }
         }
         self.schedule = schedule;
@@ -203,14 +221,12 @@ impl Layouts {
     }
 }
 
-/// The name the one layout of a program with no others goes by.
-pub const DEFAULT_LAYOUT: &str = "dashboard";
-
 impl Default for Layouts {
-    /// Just the dashboard.
+    /// One layout and no schedule: for a program that draws a single picture and never names it. What the layouts are
+    /// really called, and what they show, is for whoever draws them to say (see the renderer's own list).
     fn default() -> Self {
         Self {
-            layouts: vec![Layout::new(DEFAULT_LAYOUT, "Weather and departures")],
+            layouts: vec![Layout::new("default", "The only layout")],
             schedule: LayoutSchedule::default(),
         }
     }
@@ -264,7 +280,11 @@ mod tests {
             "é",
             &"a".repeat(33),
         ] {
-            assert!(LayoutName::parse(bad).is_err(), "{bad:?}");
+            assert_eq!(
+                LayoutName::parse(bad),
+                Err(LayoutError::InvalidName),
+                "{bad:?}"
+            );
         }
         assert!(LayoutName::parse(&"a".repeat(32)).is_ok());
     }
@@ -289,8 +309,11 @@ mod tests {
             [true, false]
         );
 
-        assert!(Layouts::new(vec![]).is_err());
-        assert!(Layouts::new(vec![Layout::new("one", "a"), Layout::new("one", "b")]).is_err());
+        assert_eq!(Layouts::new(vec![]), Err(LayoutError::NoLayouts));
+        assert_eq!(
+            Layouts::new(vec![Layout::new("one", "a"), Layout::new("one", "b")]),
+            Err(LayoutError::Duplicate(LayoutName::parse("one").unwrap()))
+        );
     }
 
     use chrono::TimeZone;
@@ -371,9 +394,11 @@ mod tests {
             time(8, 0),
         )
         .unwrap_err();
+        assert!(matches!(&error, LayoutError::EmptyRule { at, .. } if at == "08:00"));
+        let said = error.to_string();
         assert!(
-            error.contains("departures") && error.contains("08:00"),
-            "{error}"
+            said.contains("departures") && said.contains("08:00"),
+            "{said}"
         );
     }
 
@@ -423,9 +448,11 @@ mod tests {
                 time(7, 0),
             )]))
             .unwrap_err();
+        assert!(matches!(&error, LayoutError::UnknownLayout { .. }));
+        let said = error.to_string();
         assert!(
-            error.contains("nonesuch") && error.contains("dashboard, departures"),
-            "{error}"
+            said.contains("nonesuch") && said.contains("dashboard, departures"),
+            "{said}"
         );
     }
 

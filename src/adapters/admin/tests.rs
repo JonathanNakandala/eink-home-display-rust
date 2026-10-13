@@ -17,9 +17,11 @@ use tokio::task::JoinHandle;
 use super::*;
 use crate::adapters::api_doc_testing as doc;
 use crate::adapters::certificate_authority::{self, Create};
+use crate::adapters::layout_choices::FileLayoutChoices;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::domain::models::layout::{Layout, Layouts};
+use crate::domain::services::layout_choices::LayoutChoices;
 
 /// A temporary directory only its owner can use, as the PKI directory is: the admin socket refuses to live in
 /// any other (this system's temporary directories are open to others).
@@ -52,6 +54,7 @@ struct Fixture {
     _directory: TempDir,
     socket: PathBuf,
     enrollment: Arc<Enrollment>,
+    choices: Arc<FileLayoutChoices>,
     authority: Arc<certificate_authority::PrivateAuthority>,
     clock: Arc<TestClock>,
     client: AdminClient,
@@ -101,7 +104,8 @@ async fn start() -> Fixture {
         Layout::new("departures", "Just the trains"),
     ])
     .unwrap();
-    let app = router(enrollment.clone(), layouts);
+    let choices = Arc::new(FileLayoutChoices::open(directory.path()).await.unwrap());
+    let app = router(enrollment.clone(), choices.clone(), layouts, clock.clone());
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -110,6 +114,7 @@ async fn start() -> Fixture {
         _directory: directory,
         socket,
         enrollment,
+        choices,
         authority,
         clock,
         server,
@@ -561,8 +566,9 @@ mod socket {
         assert!(path.exists());
         let listener = bind(&path).await.unwrap();
         // And it works.
-        let (enrollment, _, _) = enrollment_in(directory.path()).await;
-        let app = router(enrollment, Layouts::default());
+        let (enrollment, _, clock) = enrollment_in(directory.path()).await;
+        let choices = Arc::new(FileLayoutChoices::open(directory.path()).await.unwrap());
+        let app = router(enrollment, choices, Layouts::default(), clock);
         let server = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -1119,7 +1125,7 @@ async fn a_display_can_be_given_a_layout_and_have_it_taken_away() {
     member(&f, "kitchen").await;
     let kitchen = DeviceId::parse("kitchen").unwrap();
     assert_eq!(f.client.display("kitchen").await.unwrap().layout, None);
-    assert!(f.enrollment.layout_of(&kitchen).await.is_none());
+    assert!(f.choices.get(&kitchen).await.unwrap().is_none());
 
     let chosen = f
         .client
@@ -1139,7 +1145,7 @@ async fn a_display_can_be_given_a_layout_and_have_it_taken_away() {
         Some("departures")
     );
     assert_eq!(
-        f.enrollment.layout_of(&kitchen).await.unwrap().as_str(),
+        f.choices.get(&kitchen).await.unwrap().unwrap().as_str(),
         "departures"
     );
     // Its membership is as it was.
@@ -1147,7 +1153,7 @@ async fn a_display_can_be_given_a_layout_and_have_it_taken_away() {
 
     let cleared = f.client.clear_layout("kitchen").await.unwrap();
     assert_eq!(cleared.layout, None);
-    assert!(f.enrollment.layout_of(&kitchen).await.is_none());
+    assert!(f.choices.get(&kitchen).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -1175,6 +1181,26 @@ async fn a_layout_that_does_not_exist_or_a_display_that_does_not_is_refused_and_
         code_of(f.client.clear_layout("attic").await.unwrap_err()),
         ErrorCode::UnknownDisplay
     );
+    assert_eq!(f.client.display("kitchen").await.unwrap().layout, None);
+}
+
+#[tokio::test]
+async fn forgetting_a_display_forgets_the_layout_chosen_for_it() {
+    use crate::domain::models::device_id::DeviceId;
+    let f = start().await;
+    member(&f, "kitchen").await;
+    f.client
+        .choose_layout("kitchen", "departures")
+        .await
+        .unwrap();
+    let kitchen = DeviceId::parse("kitchen").unwrap();
+    assert!(f.choices.get(&kitchen).await.unwrap().is_some());
+
+    f.client.forget("kitchen").await.unwrap();
+
+    // Gone with it, so the next display to take the name doesn't inherit it.
+    assert!(f.choices.get(&kitchen).await.unwrap().is_none());
+    member(&f, "kitchen").await;
     assert_eq!(f.client.display("kitchen").await.unwrap().layout, None);
 }
 

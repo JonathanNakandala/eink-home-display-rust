@@ -10,7 +10,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::domain::models::display::ImageFormat;
-use crate::domain::models::render_report::{SourceReport, SourceState};
+use crate::domain::models::render_report::{LayoutReport, LayoutState, SourceReport, SourceState};
 
 /// A file format the server can send an image in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -77,6 +77,47 @@ impl From<&SourceReport> for SourceReportSchema {
     }
 }
 
+/// How drawing a layout went on the last render.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[schema(as = LayoutState)]
+pub enum LayoutStateSchema {
+    /// Drawn and published.
+    Drawn,
+    /// Not drawn this time, so its last image is still being served. `reason` is a few words.
+    Failed { reason: String },
+}
+
+impl From<&LayoutState> for LayoutStateSchema {
+    fn from(state: &LayoutState) -> Self {
+        match state {
+            LayoutState::Drawn => Self::Drawn,
+            LayoutState::Failed { reason } => Self::Failed {
+                reason: reason.clone(),
+            },
+        }
+    }
+}
+
+/// One layout and how it was drawn on the last render.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[schema(as = LayoutReport)]
+pub struct LayoutReportSchema {
+    /// As `/layouts` lists it.
+    pub name: String,
+    #[serde(flatten)]
+    pub state: LayoutStateSchema,
+}
+
+impl From<&LayoutReport> for LayoutReportSchema {
+    fn from(report: &LayoutReport) -> Self {
+        Self {
+            name: report.name.clone(),
+            state: (&report.state).into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +144,22 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(&report).unwrap(),
                 serde_json::to_value(SourceReportSchema::from(&report)).unwrap(),
+                "{report:?}"
+            );
+        }
+        for state in [
+            LayoutState::Drawn,
+            LayoutState::Failed {
+                reason: "timed out".to_owned(),
+            },
+        ] {
+            let report = LayoutReport {
+                name: "departures".to_owned(),
+                state,
+            };
+            assert_eq!(
+                serde_json::to_value(&report).unwrap(),
+                serde_json::to_value(LayoutReportSchema::from(&report)).unwrap(),
                 "{report:?}"
             );
         }
