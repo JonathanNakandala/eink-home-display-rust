@@ -104,10 +104,17 @@ pub struct WebConfig {
     pub enabled: bool,
     /// Let anyone who can reach the server see it, with no sign-in: as open as `/image` is with `transport = "http"`.
     /// Keep the server on a network you trust. With `transport = "https"` this is a way round the certificate that
-    /// `/image` asks for, for the page only, so the server says so when it starts. Without it the page would need a
-    /// viewer token, which this version cannot yet issue, so for now `enabled` needs `open`.
+    /// `/image` asks for, for the page only, so the server says so when it starts. Without it (the default) a browser needs
+    /// a viewer token, which `displayctl viewer create` gives a link for. Tokens are only ever sent over HTTPS, so this
+    /// needs `transport` to be `"prefer-https"` or `"https"`, and `[server.admin]` to be on; the page is then served on the
+    /// HTTPS port only.
     #[serde(default)]
     pub open: bool,
+    /// The address a browser reaches the HTTPS side at, as the link `displayctl viewer create` prints should have it,
+    /// such as `https://display.example.home:8443`. Left out, it is the first name of the server's certificate and
+    /// the HTTPS port.
+    #[serde(default)]
+    pub public_url: Option<String>,
     /// The layouts the page may show, by name as `displayctl layout list` has them. Left empty, all of them.
     #[serde(default)]
     pub layouts: Vec<String>,
@@ -286,11 +293,19 @@ impl Default for ServerConfig {
 impl WebConfig {
     /// Whether the settings make sense, in words for whoever wrote them.
     pub fn check(&self) -> Result<(), String> {
-        if self.enabled && !self.open {
-            return Err(
-                "[server.web] enabled = true needs open = true for now: the other way in, a viewer token, is not available yet"
-                    .to_owned(),
-            );
+        if let Some(url) = &self.public_url {
+            let parsed = url::Url::parse(url)
+                .map_err(|e| format!("[server.web] public_url {url:?} is not an address: {e}"))?;
+            if parsed.scheme() != "https"
+                || parsed.host_str().is_none()
+                || parsed.path() != "/"
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+            {
+                return Err(format!(
+                    "[server.web] public_url {url:?} must be an https address with just a host and a port, like https://display.example.home:8443"
+                ));
+            }
         }
         for name in &self.layouts {
             crate::domain::models::layout::LayoutName::parse(name)
@@ -312,6 +327,20 @@ impl ServerConfig {
     /// Whether the settings make sense together, in words for whoever wrote them.
     pub fn check(&self) -> Result<(), String> {
         self.web.check()?;
+        if self.web.enabled && !self.web.open {
+            if !self.transport.serves_https() {
+                return Err(
+                    "[server.web] needs open = true with transport = \"http\": a viewer token is only ever sent over HTTPS, so there is no way to use one"
+                        .to_owned(),
+                );
+            }
+            if !self.admin.enabled {
+                return Err(
+                    "[server.web] without open = true needs viewer tokens, which are issued through the admin interface, which is turned off ([server.admin] enabled = false)"
+                        .to_owned(),
+                );
+            }
+        }
         if !self.transport.serves_https() {
             return Ok(());
         }
@@ -555,21 +584,66 @@ mod tests {
     }
 
     #[test]
-    fn the_web_view_is_off_unless_turned_on_and_then_open_for_now() {
+    fn the_web_view_is_off_unless_turned_on_and_then_needs_a_token_unless_open() {
         let config = parse("").unwrap();
         assert!(!config.web.enabled && !config.web.open && config.web.layouts.is_empty());
         assert!(config.check().is_ok());
 
         let open = parse("[web]\nenabled = true\nopen = true\nlayouts = [\"departures\"]").unwrap();
-        assert!(open.check().is_ok());
+        assert!(open.check().is_ok(), "open works over plain http");
 
-        // Turned on without a way in: until there are viewer tokens, open is the only one.
-        let closed = parse("[web]\nenabled = true").unwrap();
-        let error = closed.check().unwrap_err();
+        // Tokens travel only over HTTPS, so they need it, and the admin interface to be issued.
+        let plain = parse("[web]\nenabled = true").unwrap();
+        let error = plain.check().unwrap_err();
         assert!(
-            error.contains("[server.web]") && error.contains("open = true"),
+            error.contains("[server.web]") && error.contains("HTTPS"),
             "{error}"
         );
+        for transport in ["prefer-https", "https"] {
+            let tokens = parse(&format!(
+                "transport = \"{transport}\"\n[web]\nenabled = true"
+            ))
+            .unwrap();
+            assert!(tokens.check().is_ok(), "{transport}");
+            let no_admin = parse(&format!(
+                "transport = \"{transport}\"\n[web]\nenabled = true\n[admin]\nenabled = false"
+            ))
+            .unwrap();
+            let error = no_admin.check().unwrap_err();
+            assert!(error.contains("admin"), "{transport}: {error}");
+            // Open needs neither.
+            let open_no_admin = parse(&format!(
+                "transport = \"{transport}\"\n[web]\nenabled = true\nopen = true\n[admin]\nenabled = false"
+            ))
+            .unwrap();
+            assert!(open_no_admin.check().is_ok(), "{transport}");
+        }
+        // Off, none of it matters.
+        assert!(parse("[admin]\nenabled = false").unwrap().check().is_ok());
+    }
+
+    #[test]
+    fn a_public_url_is_an_https_address_with_nothing_after_the_host_and_port() {
+        for good in [
+            "https://display.local:8443",
+            "https://display.local",
+            "https://192.168.1.5:8443/",
+        ] {
+            let config = parse(&format!("[web]\npublic_url = {good:?}")).unwrap();
+            assert!(config.check().is_ok(), "{good}");
+        }
+        for bad in [
+            "http://display.local:8443",
+            "display.local",
+            "https://display.local/view",
+            "https://display.local/?x=1",
+            "https://display.local/#frag",
+            "",
+        ] {
+            let config = parse(&format!("[web]\npublic_url = {bad:?}")).unwrap();
+            let error = config.check().unwrap_err();
+            assert!(error.contains("public_url"), "{bad}: {error}");
+        }
     }
 
     #[test]

@@ -38,34 +38,87 @@ from the last render that succeeded.
 ## Looking at it in a web browser
 
 `[server.web]` turns on a page at `/view` that shows the current picture and keeps it up to date, for a tablet on the wall or a
-look from a laptop:
+look from a laptop. It can be **open** to anyone who can reach the server, or need a **viewer token**, which you hand out with
+`displayctl`.
 
 ```toml
+[server]
+transport = "prefer-https"        # tokens need HTTPS (and so the admin interface, which makes them)
+
 [server.web]
 enabled = true
-open = true
+# open = true                     # no sign-in at all (see below); the default is a token
 layouts = ["dashboard", "departures"]   # left out or empty: all of them
+# public_url = "https://display.example.home:8443"   # what the link below starts with
 ```
 
-Then open `http://<server>:8080/view` (or `https://<server>:8443/view`). It asks the server when to look again and comes back
+### With a token (the default)
+
+```
+displayctl -c config.toml viewer create --label "kitchen tablet" --layout departures --layout dashboard
+```
+
+prints a link like `https://display.local:8443/view#code=hdc1_…`. Open it once, in the browser that is to look: the page trades
+the code in it for a token the browser keeps, takes the code out of the address, and shows the picture; after that no link is
+needed, on reload or tomorrow. The link works **once** and for 15 minutes (`--code-minutes`); it is not shown again. If it is
+lost or not used in time, revoke the viewer and make another.
+
+```
+displayctl viewer list                    # who, where each stands (waiting, active, expired, revoked), what they may see
+displayctl viewer revoke k3x6qa2m         # ends its access now: its link, or its token at its very next request
+displayctl viewer forget k3x6qa2m         # removes it from the list, which frees its place (at most 64)
+```
+
+- **What a viewer may see.** `--layout` (repeat it) limits a viewer to those layouts; left out, all the page may show. A token
+  can't be used for more than it was made for, and `[server.web] layouts` limits the page for everyone.
+- **How long.** A token lasts 90 days from first use (`--lifetime-days`, 1 to 3650), is revocable at any moment, and `viewer list`
+  says when each was last used (to within ten minutes).
+- **HTTPS only.** A token is a secret sent with every request, so it is only ever sent over HTTPS: the page that takes one is
+  served on the HTTPS port and not on the plain one (even with `transport = "prefer-https"`), and a configuration that wants tokens
+  without HTTPS, or without the admin interface to make them, is refused at start-up. Browsers warn until your authority's root
+  (`root.pem` in `[server.tls] directory`) is trusted on the device.
+- **What is kept.** `viewers.json` beside the list of displays holds a SHA-256 hash of each code and token, never the secret
+  (both are 256 random bits, so a hash is all that is needed to recognise one and no use to anyone who reads the file).
+- **Guessing.** After ten attempts from one source that were not good (a wrong code, a token that isn't one) it is told to wait
+  ten minutes (`429`, with `Retry-After`); a good request clears the count. This is for noise: a 256-bit token can't be guessed.
+- **Signing out.** The page's *Sign out* gives the token up (it is revoked, not only forgotten by the browser).
+
+The exchange and the token follow the OAuth 2.0 standards, so that nothing here is invented where one exists:
+
+| | |
+|---|---|
+| Sending the token | Only as `Authorization: Bearer …` (RFC 6750 section 2.1): never in an address, a form or a cookie, so there is nothing to leak into a history, a log or a referrer, and nothing for another site to make the browser send. |
+| Refusing | `401` with `WWW-Authenticate: Bearer realm="home-display"`, and `error="invalid_token"` if a token was shown (RFC 6750 section 3); `403` with `error="insufficient_scope"` and the `scope` needed for a layout the token doesn't allow; `400` with `invalid_request` for a header that isn't one. |
+| Getting one | `POST /view/api/token`, form-encoded, `grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code` and `pre-authorized_code=…`: the pre-authorized code grant, a code made ahead by the party that decides (you), traded once. The answer is `{"access_token", "token_type":"Bearer", "expires_in", "scope"}` with `Cache-Control: no-store` (RFC 6749 sections 4.1.3 and 5.1), and errors are `invalid_request`, `unsupported_grant_type` and `invalid_grant` (section 5.2), the last for a code that was used, ran out or never was, which are not told apart. |
+| In the link | The code, after a `#`, which a browser never sends to a server (RFC 3986 section 3.5), and which the page removes from the address at once. It is one-time and short-lived, as OAuth's authorization code is, which is the reason it can be in a link and a token can't (RFC 6750 section 5.3, RFC 9700). |
+| Scope | `layout:*` or `layout:NAME` for each layout (RFC 6749 section 3.3), in the token response and in `WWW-Authenticate`. |
+| The secrets | 256 random bits in base64url (RFC 4648 section 5, RFC 6819 section 5.1.4.2.2), `hdv1_` for a token and `hdc1_` for a code so that a scanner for leaked secrets can find one (RFC 8959), kept only as a hash. |
+| Giving one up | `POST /view/api/revoke`, `token=…` (RFC 7009), which answers `200` whatever it is given, so it can't be used to find out which tokens exist. |
+| Described | `config/openapi.json` has a `bearerAuth` scheme (optional on each route, since an open page needs none) and each route's `401`, `403` and `429`. |
+
+Where it differs: RFC 9700 prefers short-lived access tokens renewed with a rotating refresh token. For a read-only page on a
+home network that is a lot of machinery, so a token is one long-lived, revocable, scoped credential. Giving it a lifetime of 1 day
+and a refresh token to match is a change that fits the same endpoint.
+
+### Open
+
+With `open = true` there is no sign-in: anyone who can reach the server can see the picture, as with `/image` over plain HTTP. Keep
+it on a network you trust. It is served on every listener, and with `transport = "https"` it is a way round the certificate
+`/image` asks for, for the page only, so the server says so when it starts. A token is ignored.
+
+### The page
+
+Open `https://<server>:8443/view` (or `http://<server>:8080/view` when open). It asks the server when to look again and comes back
 then, as a display does (`/plan`'s `next_seconds`), so it isn't polling on a timer of its own; it also refreshes when the tab comes
 back to the front or the network returns, says how old the picture is, and says so plainly if the server has fallen behind or
 can't be reached.
 
-- **Layouts.** The bar lists the layouts the page may show, with **Auto**, which is whatever the layout schedule says now (a layout
-  the page may not show is never chosen: it falls back to the first it may). Click one, press the left and right arrow keys, or
+- **Layouts.** The bar lists the layouts the viewer may see, with **Auto**, which is whatever the layout schedule says now (a layout
+  the viewer may not see is never chosen: it falls back to the first it may). Click one, press the left and right arrow keys, or
   swipe. The choice is kept in the address (`/view?layout=departures`, which is safe to bookmark or share: it has no secret in
-  it) and in the browser. `[server.web] layouts` limits what the page may show, in the order it lists them; a layout asked for that
-  it may not show is a 404 that looks the same as one that doesn't exist.
+  it) and in the browser.
 - **Kiosk.** `/view#kiosk` (or `?kiosk`) hides the bar and fills the screen, with the cursor hidden: for a spare tablet. The
   "out of date" notice stays.
-- **Who may use it.** For now `open = true` is the only way in, and it is as open as `/image` is with `transport = "http"`: anyone who
-  can reach the server can see the picture. Keep it on a network you trust. With `transport = "https"` it is a way round the certificate
-  `/image` asks for, for the page only, and the server says so when it starts. The page is served on every listener there is. It
-  is off unless turned on. (Viewer tokens, which will be the other way in, are not available yet, so `enabled` without `open` is
-  refused at start-up.)
-- **HTTPS and browsers.** The server's certificate is from your own authority, so a browser warns until the authority's root
-  (`root.pem` in `[server.tls] directory`) is trusted on that device. Over plain HTTP there is no warning.
 - **What it asks for.** `/view/api/layouts`, `/view/api/state?layout=` (the same facts as `/plan`, with nothing recorded: a browser
   never turns up among the displays) and `/view/api/image?layout=`, which is always the PNG, a fraction of the BMP a display with
   no preference is sent. They are in `config/openapi.json` under `web`.

@@ -17,9 +17,12 @@ use tokio::task::JoinHandle;
 use super::*;
 use crate::adapters::api_doc_testing as doc;
 use crate::adapters::certificate_authority::{self, Create};
+use crate::adapters::entropy::OsEntropy;
 use crate::adapters::layout_choices::FileLayoutChoices;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
+use crate::adapters::viewer_registry::FileViewerRegistry;
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
+use crate::application::viewers::Viewers;
 use crate::domain::models::layout::{Layout, Layouts};
 use crate::domain::services::layout_choices::LayoutChoices;
 
@@ -55,6 +58,7 @@ struct Fixture {
     socket: PathBuf,
     enrollment: Arc<Enrollment>,
     choices: Arc<FileLayoutChoices>,
+    viewers: Arc<Viewers>,
     authority: Arc<certificate_authority::PrivateAuthority>,
     clock: Arc<TestClock>,
     client: AdminClient,
@@ -94,6 +98,17 @@ async fn enrollment_in(
     (enrollment, authority, clock)
 }
 
+/// Where the links for new viewers start.
+const VIEW_BASE: &str = "https://display.test:8443";
+
+async fn viewers_in(directory: &Path, clock: Arc<TestClock>) -> Arc<Viewers> {
+    Arc::new(Viewers::new(
+        Arc::new(FileViewerRegistry::open(directory).await.unwrap()),
+        clock,
+        Arc::new(OsEntropy),
+    ))
+}
+
 async fn start() -> Fixture {
     let directory = private_directory();
     let (enrollment, authority, clock) = enrollment_in(directory.path()).await;
@@ -105,7 +120,15 @@ async fn start() -> Fixture {
     ])
     .unwrap();
     let choices = Arc::new(FileLayoutChoices::open(directory.path()).await.unwrap());
-    let app = router(enrollment.clone(), choices.clone(), layouts, clock.clone());
+    let viewers = viewers_in(directory.path(), clock.clone()).await;
+    let app = router(
+        enrollment.clone(),
+        choices.clone(),
+        layouts,
+        clock.clone(),
+        viewers.clone(),
+        VIEW_BASE.to_owned(),
+    );
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -115,6 +138,7 @@ async fn start() -> Fixture {
         socket,
         enrollment,
         choices,
+        viewers,
         authority,
         clock,
         server,
@@ -398,7 +422,7 @@ fn the_description_lists_exactly_the_routes_there_are() {
     routes.sort();
     // The statuses each can answer with: 400 only where there is input to get wrong, 404 and 409 only where a
     // display is named, 403 only where a code is checked.
-    let expected: [(&str, &str, &[&str]); 12] = [
+    let expected: [(&str, &str, &[&str]); 16] = [
         (
             "DELETE",
             "/v1/displays/{name}",
@@ -409,10 +433,12 @@ fn the_description_lists_exactly_the_routes_there_are() {
             "/v1/displays/{name}/layout",
             &["200", "400", "404", "500"],
         ),
+        ("DELETE", "/v1/viewers/{id}", &["200", "400", "404", "500"]),
         ("DELETE", "/v1/window", &["200", "500"]),
         ("GET", "/v1/displays", &["200", "500"]),
         ("GET", "/v1/displays/{name}", &["200", "400", "404", "500"]),
         ("GET", "/v1/layouts", &["200", "500"]),
+        ("GET", "/v1/viewers", &["200", "500"]),
         ("GET", "/v1/window", &["200", "500"]),
         (
             "POST",
@@ -428,6 +454,12 @@ fn the_description_lists_exactly_the_routes_there_are() {
             "POST",
             "/v1/displays/{name}/revoke",
             &["200", "400", "404", "409", "500"],
+        ),
+        ("POST", "/v1/viewers", &["200", "400", "404", "409", "500"]),
+        (
+            "POST",
+            "/v1/viewers/{id}/revoke",
+            &["200", "400", "404", "500"],
         ),
         (
             "PUT",
@@ -568,7 +600,15 @@ mod socket {
         // And it works.
         let (enrollment, _, clock) = enrollment_in(directory.path()).await;
         let choices = Arc::new(FileLayoutChoices::open(directory.path()).await.unwrap());
-        let app = router(enrollment, choices, Layouts::default(), clock);
+        let viewers = viewers_in(directory.path(), clock.clone()).await;
+        let app = router(
+            enrollment,
+            choices,
+            Layouts::default(),
+            clock,
+            viewers,
+            VIEW_BASE.to_owned(),
+        );
         let server = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -1224,6 +1264,255 @@ fn the_layout_chosen_is_part_of_what_is_said_about_a_display() {
     assert!(layout_changed(&chosen).contains("departures layout"));
     chosen.layout = None;
     assert!(layout_changed(&chosen).contains("the default"));
+}
+
+// --- viewers -------------------------------------------------------------------------------------------------
+
+fn make(label: &str) -> IssueViewer {
+    IssueViewer {
+        label: label.to_owned(),
+        ..IssueViewer::default()
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_is_made_with_a_link_that_has_its_code_after_a_hash_and_is_listed_without_it() {
+    let f = start().await;
+
+    let issued = f
+        .client
+        .issue_viewer(&make("kitchen tablet"))
+        .await
+        .unwrap();
+
+    assert!(issued.code.starts_with("hdc1_"));
+    // The link is the page, with the code after a `#`, which a browser never sends.
+    assert_eq!(
+        issued.link,
+        format!("{VIEW_BASE}/view#code={}", issued.code)
+    );
+    assert_eq!(issued.viewer.label, "kitchen tablet");
+    assert_eq!(issued.viewer.status, ViewerStatus::Waiting);
+    assert_eq!(issued.viewer.scope, "layout:*");
+    assert_eq!(
+        issued.link_expires_at - issued.viewer.created_at,
+        Duration::minutes(15)
+    );
+    assert!(issued.viewer.id.len() == 8);
+
+    // Everything that shows it again leaves the code out, and the raw JSON too.
+    let list = f.client.viewers().await.unwrap();
+    assert_eq!(list.viewers, std::slice::from_ref(&issued.viewer));
+    let raw = raw(&f.socket, Method::GET, "/v1/viewers", None, "").await.1;
+    assert!(!raw.contains(&issued.code[5..]), "{raw}");
+}
+
+#[tokio::test]
+async fn what_a_viewer_is_asked_to_be_is_checked_with_a_code_for_each_fault() {
+    let f = start().await;
+    let code_of_issue = |request: IssueViewer| {
+        let client = &f.client;
+        async move { code_of(client.issue_viewer(&request).await.unwrap_err()) }
+    };
+
+    assert_eq!(code_of_issue(make("")).await, ErrorCode::InvalidViewer);
+    assert_eq!(
+        code_of_issue(make("bad\nlabel")).await,
+        ErrorCode::InvalidViewer
+    );
+    assert_eq!(
+        code_of_issue(IssueViewer {
+            lifetime_days: Some(0),
+            ..make("x")
+        })
+        .await,
+        ErrorCode::InvalidViewer
+    );
+    assert_eq!(
+        code_of_issue(IssueViewer {
+            code_minutes: Some(2000),
+            ..make("x")
+        })
+        .await,
+        ErrorCode::InvalidViewer
+    );
+    assert_eq!(
+        code_of_issue(IssueViewer {
+            layouts: vec!["nonesuch".into()],
+            ..make("x")
+        })
+        .await,
+        ErrorCode::UnknownLayout
+    );
+    // None of it made a viewer.
+    assert!(f.client.viewers().await.unwrap().viewers.is_empty());
+    // And what is allowed is, with the scope as given.
+    let ok = f
+        .client
+        .issue_viewer(&IssueViewer {
+            layouts: vec!["departures".into(), "dashboard".into()],
+            lifetime_days: Some(30),
+            code_minutes: Some(5),
+            ..make("ok")
+        })
+        .await
+        .unwrap();
+    assert_eq!(ok.viewer.scope, "layout:departures layout:dashboard");
+    assert_eq!(
+        ok.link_expires_at - ok.viewer.created_at,
+        Duration::minutes(5)
+    );
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_what_it_should_be_is_an_invalid_request_and_makes_nothing() {
+    let f = start().await;
+
+    for body in ["", "not json", r#"{"label": 5}"#, r#"{"layouts": []}"#] {
+        let (status, text) = raw(
+            &f.socket,
+            Method::POST,
+            "/v1/viewers",
+            Some("application/json"),
+            body,
+        )
+        .await;
+        assert_eq!(status, 400, "{body:?}");
+        assert!(text.contains("invalid_request"), "{body:?}: {text}");
+    }
+    assert!(f.client.viewers().await.unwrap().viewers.is_empty());
+}
+
+#[tokio::test]
+async fn revoking_and_forgetting_a_viewer_say_what_it_was_and_unknown_ones_are_refused() {
+    let f = start().await;
+    let issued = f.client.issue_viewer(&make("tablet")).await.unwrap();
+    let id = issued.viewer.id.clone();
+
+    let revoked = f.client.revoke_viewer(&id).await.unwrap();
+    assert_eq!(revoked.status, ViewerStatus::Revoked);
+    // Idempotent, and listed as revoked until forgotten.
+    f.client.revoke_viewer(&id).await.unwrap();
+    assert_eq!(
+        f.client.viewers().await.unwrap().viewers[0].status,
+        ViewerStatus::Revoked
+    );
+    // The link no longer works.
+    assert!(f.viewers.exchange(&issued.code).await.is_err());
+
+    let forgotten = f.client.forget_viewer(&id).await.unwrap();
+    assert_eq!(forgotten.label, "tablet");
+    assert!(f.client.viewers().await.unwrap().viewers.is_empty());
+
+    assert_eq!(
+        code_of(f.client.revoke_viewer(&id).await.unwrap_err()),
+        ErrorCode::UnknownViewer
+    );
+    assert_eq!(
+        code_of(f.client.forget_viewer(&id).await.unwrap_err()),
+        ErrorCode::UnknownViewer
+    );
+    // A path that can't be an id is refused by the client before it is sent, and by the server if it is.
+    assert!(matches!(
+        f.client.revoke_viewer("NOT AN ID").await.unwrap_err(),
+        CallError::Invalid(_)
+    ));
+    let (status, text) = raw(
+        &f.socket,
+        Method::POST,
+        "/v1/viewers/UPPER/revoke",
+        None,
+        "",
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(text.contains("invalid_viewer_id"), "{text}");
+}
+
+#[tokio::test]
+async fn a_viewer_that_signs_in_shows_as_active_with_when_its_token_ends() {
+    let f = start().await;
+    let issued = f.client.issue_viewer(&make("tablet")).await.unwrap();
+    let grant = f.viewers.exchange(&issued.code).await.unwrap();
+
+    let listed = f.client.viewers().await.unwrap().viewers.remove(0);
+
+    assert_eq!(listed.status, ViewerStatus::Active);
+    assert_eq!(listed.link_expires_at, None);
+    assert!(listed.expires_at.unwrap() > Utc::now() + Duration::days(89));
+    // Nothing that can sign in is anywhere in what is listed.
+    let raw = raw(&f.socket, Method::GET, "/v1/viewers", None, "").await.1;
+    assert!(
+        !raw.contains(&grant.token.expose()[5..]) && !raw.contains(&issued.code[5..]),
+        "{raw}"
+    );
+}
+
+#[test]
+fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
+    let now = Utc::now();
+    let waiting = ViewerEntry {
+        id: "abcdefgh".into(),
+        label: "kitchen tablet".into(),
+        status: ViewerStatus::Waiting,
+        scope: "layout:*".into(),
+        created_at: now,
+        link_expires_at: Some(now + Duration::minutes(10)),
+        expires_at: None,
+        last_used_at: None,
+    };
+    let active = ViewerEntry {
+        id: "ijklmnop".into(),
+        label: "hall".into(),
+        status: ViewerStatus::Active,
+        scope: "layout:departures".into(),
+        expires_at: Some(now + Duration::days(60)),
+        last_used_at: Some(now - Duration::minutes(5)),
+        link_expires_at: None,
+        ..waiting.clone()
+    };
+    let revoked = ViewerEntry {
+        status: ViewerStatus::Revoked,
+        ..active.clone()
+    };
+
+    let table = describe_viewers(
+        &ViewerList {
+            viewers: vec![waiting.clone(), active, revoked],
+        },
+        now,
+        &Utc,
+    );
+
+    assert!(table.starts_with("ID "), "{table}");
+    assert!(
+        table.contains("kitchen tablet") && table.contains("link works for"),
+        "{table}"
+    );
+    assert!(
+        table.contains("layout:departures") && table.contains("used 5 min ago"),
+        "{table}"
+    );
+    assert!(table.contains("forget it to free its place"), "{table}");
+    assert!(describe_viewers(&ViewerList { viewers: vec![] }, now, &Utc).contains("viewer create"));
+
+    let issued = ViewerIssued {
+        viewer: waiting.clone(),
+        code: "hdc1_x".into(),
+        link: "https://display.test:8443/view#code=hdc1_x".into(),
+        link_expires_at: now + Duration::minutes(10),
+    };
+    let said = viewer_issued(&issued, now, &Utc);
+    assert!(
+        said.contains("https://display.test:8443/view#code=hdc1_x"),
+        "{said}"
+    );
+    assert!(
+        said.contains("works once") && said.contains("not shown again"),
+        "{said}"
+    );
+    assert!(viewer_changed(&waiting, false).contains("Revoked"));
+    assert!(viewer_changed(&waiting, true).contains("Forgot"));
 }
 
 #[tokio::test]

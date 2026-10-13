@@ -14,12 +14,13 @@
 //! Nothing is kept on disk: a restart forgets, which is fine because the owner is there when one happens.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::time::Instant;
 
+use crate::adapters::source::{Source, source_of};
 use crate::domain::models::device_id::DeviceId;
 
 /// How long a name counts against its source: as long as a request waits for the owner (see `REQUEST_LIFETIME`).
@@ -31,19 +32,6 @@ const NAME_RETRY: Duration = Duration::from_secs(10 * 60);
 const MAX_SOURCES: usize = 1024;
 /// The refusals logged as warnings in a minute. The rest are counted and said once.
 const WARNINGS_PER_MINUTE: u32 = 10;
-
-pub type Source = IpAddr;
-
-/// The source an address belongs to.
-pub fn source_of(address: IpAddr) -> Source {
-    match address {
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => IpAddr::V4(v4),
-            None => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !u128::from(u64::MAX))),
-        },
-        v4 => v4,
-    }
-}
 
 pub struct Limits {
     max_per_source: usize,

@@ -7,8 +7,9 @@ use anyhow::Context;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use home_display_server::adapters::admin::{
-    AdminClient, CallError, approved, describe, describe_entry, describe_layouts, describe_list,
-    describe_window, forgotten, layout_changed, rejected, revoked,
+    AdminClient, CallError, IssueViewer, approved, describe, describe_entry, describe_layouts,
+    describe_list, describe_viewers, describe_window, forgotten, layout_changed, rejected, revoked,
+    viewer_changed, viewer_issued,
 };
 use home_display_server::bootstrap::load_application_config;
 
@@ -51,6 +52,11 @@ enum Command {
     Layout {
         #[command(subcommand)]
         action: LayoutAction,
+    },
+    /// Who may look at the picture in a web browser (when `[server.web]` needs a token)
+    Viewer {
+        #[command(subcommand)]
+        action: ViewerAction,
     },
     /// Approve a display that is waiting, with the code shown on its own panel
     ///
@@ -107,6 +113,40 @@ enum LayoutAction {
     Clear {
         /// The display's name
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ViewerAction {
+    /// Make a viewer and print the link that signs a browser in, once
+    ///
+    /// The link works once and only for a short time (15 minutes unless told). Open it in the browser that is to look at the
+    /// picture: it trades the code in the link for a token that browser keeps. The link is not shown again.
+    Create {
+        /// What to call it, to tell it from the others: "kitchen tablet"
+        #[arg(short, long)]
+        label: String,
+        /// A layout it may look at, as `layout list` shows it. Repeat for several. Left out, all of them.
+        #[arg(long = "layout")]
+        layouts: Vec<String>,
+        /// How long its token lasts once the link is used, in days (1 to 3650)
+        #[arg(long, value_name = "DAYS")]
+        lifetime_days: Option<u32>,
+        /// How long the link works, in minutes (1 to 1440)
+        #[arg(long, value_name = "MINUTES")]
+        code_minutes: Option<u32>,
+    },
+    /// Every viewer, with where it stands
+    List,
+    /// End a viewer's access now: its link stops working and its token stops being accepted
+    Revoke {
+        /// The viewer's id, as `viewer list` shows it
+        id: String,
+    },
+    /// Forget a viewer altogether, which frees its place
+    Forget {
+        /// The viewer's id
+        id: String,
     },
 }
 
@@ -197,6 +237,40 @@ async fn run(args: Args) -> Result<(), String> {
                 LayoutAction::Clear { name } => {
                     let entry = client.clear_layout(&name).await.map_err(failed)?;
                     println!("{}", layout_changed(&entry));
+                }
+            }
+            Ok(())
+        }
+        Command::Viewer { action } => {
+            match action {
+                ViewerAction::Create {
+                    label,
+                    layouts,
+                    lifetime_days,
+                    code_minutes,
+                } => {
+                    let issued = client
+                        .issue_viewer(&IssueViewer {
+                            label,
+                            layouts,
+                            lifetime_days,
+                            code_minutes,
+                        })
+                        .await
+                        .map_err(failed)?;
+                    println!("{}", viewer_issued(&issued, Utc::now(), &Local));
+                }
+                ViewerAction::List => {
+                    let list = client.viewers().await.map_err(failed)?;
+                    println!("{}", describe_viewers(&list, Utc::now(), &Local));
+                }
+                ViewerAction::Revoke { id } => {
+                    let entry = client.revoke_viewer(&id).await.map_err(failed)?;
+                    println!("{}", viewer_changed(&entry, false));
+                }
+                ViewerAction::Forget { id } => {
+                    let entry = client.forget_viewer(&id).await.map_err(failed)?;
+                    println!("{}", viewer_changed(&entry, true));
                 }
             }
             Ok(())

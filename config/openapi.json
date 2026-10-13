@@ -819,7 +819,7 @@
         "operationId": "page",
         "responses": {
           "200": {
-            "description": "A web page that shows the picture and keeps it up to date.",
+            "description": "A web page that shows the picture and keeps it up to date. It holds nothing private, so it is served to anyone, and asks for a token itself.",
             "content": {
               "text/html": {
                 "schema": {
@@ -875,6 +875,26 @@
           "304": {
             "description": "The client's `If-None-Match` names this picture. No body."
           },
+          "401": {
+            "description": "A viewer token is needed, or the one shown is not good.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token does not allow that layout (`insufficient_scope`).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Nothing has been rendered yet, or there is no such layout.",
             "content": {
@@ -885,10 +905,26 @@
               }
             }
           },
+          "429": {
+            "description": "Too many requests that were not good from this source.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "An image exists but could not be read."
           }
-        }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/view/api/layouts": {
@@ -913,6 +949,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LayoutItems"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A viewer token is needed, or the one shown is not good. `WWW-Authenticate` says which (RFC 6750).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token allows none of the layouts the page may show.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests that were not good from this source; `Retry-After` says how long to wait.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/view/api/revoke": {
+      "post": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Gives a token up, as the holder asks (RFC 7009).",
+        "operationId": "revoke_endpoint",
+        "requestBody": {
+          "description": "`token=` and the token to give up.",
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Done, or there was nothing to do: a token that is not good, or not there, is answered the same, so that this can't be used to find out which exist."
+          },
+          "400": {
+            "description": "Not a form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
                 }
               }
             }
@@ -970,6 +1077,26 @@
               }
             }
           },
+          "401": {
+            "description": "A viewer token is needed, or the one shown is not good.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token does not allow that layout (`insufficient_scope`).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Nothing has been rendered yet, or there is no such layout (the body lists the ones there are).",
             "content": {
@@ -980,8 +1107,93 @@
               }
             }
           },
+          "429": {
+            "description": "Too many requests that were not good from this source.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The server could not work the state out."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/view/api/token": {
+      "post": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Trades the one-time code from the owner's link for a token, once.",
+        "operationId": "token_endpoint",
+        "requestBody": {
+          "description": "An OAuth token request for the pre-authorized code grant.",
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The token. It is not shown again.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              },
+              "pragma": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-cache`."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_request` (not a form, or a field missing), `unsupported_grant_type`, or `invalid_grant`: the code is not one there is, has been used, or has run out, which are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests that were not good from this source; `Retry-After` says how long to wait.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server could not do it."
           }
         }
       }
@@ -1566,6 +1778,26 @@
           }
         }
       },
+      "OAuthError": {
+        "type": "object",
+        "description": "An error from the token endpoint, as RFC 6749 section 5.2 has it.",
+        "required": [
+          "error",
+          "error_description"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "`invalid_request`, `invalid_grant`, `unsupported_grant_type` or `temporarily_unavailable`.",
+            "examples": [
+              "invalid_grant"
+            ]
+          },
+          "error_description": {
+            "type": "string"
+          }
+        }
+      },
       "Plan": {
         "type": "object",
         "description": "What a display is told after it asks: which image is current, whether it is out of date, and when to come back.",
@@ -1878,6 +2110,56 @@
           }
         }
       },
+      "TokenRequest": {
+        "type": "object",
+        "description": "What a token request is: the grant, and the code.",
+        "required": [
+          "grant_type",
+          "pre-authorized_code"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "description": "Always `urn:ietf:params:oauth:grant-type:pre-authorized_code`."
+          },
+          "pre-authorized_code": {
+            "type": "string",
+            "description": "The one-time code from the link `displayctl viewer create` printed.",
+            "examples": [
+              "hdc1_…"
+            ]
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "description": "A token, as RFC 6749 section 5.1 has it.",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "scope"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "The bearer token, shown here and nowhere else, once."
+          },
+          "token_type": {
+            "type": "string",
+            "description": "Always `Bearer`."
+          },
+          "expires_in": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds until it runs out."
+          },
+          "scope": {
+            "type": "string",
+            "description": "What it allows: `layout:*`, or `layout:NAME` for each layout."
+          }
+        }
+      },
       "ViewState": {
         "allOf": [
           {
@@ -1900,6 +2182,13 @@
           }
         ],
         "description": "Which render the picture is, how old, and when to look again."
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A viewer token (RFC 6750), from `POST /view/api/token`. Needed unless the server is configured with `[server.web] open = true`, when none is."
       }
     }
   },

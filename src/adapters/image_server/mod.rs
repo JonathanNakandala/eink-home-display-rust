@@ -77,6 +77,8 @@ pub struct Handles {
     /// Which layout the owner chose for each display, when HTTPS is served (and so there is an admin interface to
     /// choose with).
     pub layout_choices: Option<Arc<dyn crate::domain::services::layout_choices::LayoutChoices>>,
+    /// Who may look at the page for a browser, when that needs a token: there when HTTPS is served.
+    pub viewers: Option<Arc<crate::application::viewers::Viewers>>,
     /// Where each display stands in the certificate authority, for `/status` and `/metrics`, when HTTPS
     /// is served.
     pub members: Option<Arc<crate::application::enrollment::Enrollment>>,
@@ -230,6 +232,7 @@ pub fn web_router(
     clock: Arc<dyn Clock>,
 ) -> Result<Router, String> {
     let allowed = web::allowed_layouts(settings, &handles.layouts)?;
+    let access = web::Access::of(settings, handles.viewers.clone())?;
     let published = Arc::new(Published {
         images,
         format,
@@ -239,7 +242,7 @@ pub fn web_router(
         handles,
         clock,
     });
-    Ok(web::router(web::WebState::new(published, allowed)))
+    Ok(web::router(web::WebState::new(published, allowed, access)))
 }
 
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
@@ -688,7 +691,9 @@ mod api_description {
             ("/view", "get"),
             ("/view/api/image", "get"),
             ("/view/api/layouts", "get"),
+            ("/view/api/revoke", "post"),
             ("/view/api/state", "get"),
+            ("/view/api/token", "post"),
         ];
         assert_eq!(routes.len(), expected.len(), "{routes:?}");
         for (path, method) in expected {

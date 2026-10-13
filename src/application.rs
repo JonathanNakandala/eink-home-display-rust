@@ -7,6 +7,7 @@ pub mod plan;
 pub mod refresh;
 pub mod renewal_watch;
 pub mod status;
+pub mod viewers;
 
 use std::any::Any;
 use std::panic::AssertUnwindSafe;

@@ -735,6 +735,280 @@
         }
       }
     },
+    "/v1/viewers": {
+      "get": {
+        "tags": [
+          "viewers"
+        ],
+        "summary": "Every viewer, oldest first, with where each stands. Nothing here can be used to sign in.",
+        "operationId": "list_viewers",
+        "responses": {
+          "200": {
+            "description": "The viewers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewerList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "viewers"
+        ],
+        "summary": "Makes a viewer: someone who may look at the picture in a web browser, and the link that signs them in. The link holds a\none-time code, which is shown here and nowhere else, and works once, within the time given.",
+        "operationId": "issue_viewer",
+        "requestBody": {
+          "description": "What to call it, and what it may see.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueViewer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The viewer, and its link. The link is not shown again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewerIssued"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be used. `code` says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A layout asked for does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "There are as many viewers as there may be.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/viewers/{id}": {
+      "delete": {
+        "tags": [
+          "viewers"
+        ],
+        "summary": "Forgets a viewer altogether, which frees its place. Its token, if it had one, stops working.",
+        "operationId": "forget_viewer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The viewer's id, as `viewers` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z2-7]{8}$"
+            },
+            "example": "k3x6qa2m"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The viewer as it was, now forgotten.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewerEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a viewer's id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No viewer has that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/viewers/{id}/revoke": {
+      "post": {
+        "tags": [
+          "viewers"
+        ],
+        "summary": "Ends a viewer's access at once, whatever state it is in: a link not yet used stops working, and a token stops being\naccepted at its next request. The viewer stays listed, as revoked, until it is forgotten.",
+        "operationId": "revoke_viewer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The viewer's id, as `viewers` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z2-7]{8}$"
+            },
+            "example": "k3x6qa2m"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The viewer, revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewerEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a viewer's id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No viewer has that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/window": {
       "get": {
         "tags": [
@@ -1078,10 +1352,55 @@
           "not_waiting",
           "not_a_member",
           "unknown_layout",
+          "invalid_viewer",
+          "invalid_viewer_id",
+          "unknown_viewer",
+          "too_many_viewers",
           "not_found",
           "method_not_allowed",
           "internal"
         ]
+      },
+      "IssueViewer": {
+        "type": "object",
+        "description": "What a viewer is asking of the server to be: the label the owner will know it by, and what it may see.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What to call it, from 1 to 40 characters: \"kitchen tablet\".",
+            "examples": [
+              "kitchen tablet"
+            ]
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The layouts it may look at, by name. Left out or empty, all of them."
+          },
+          "lifetime_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How long its token lasts once the link is used, from 1 to 3650 days. Left out, 90.",
+            "minimum": 0
+          },
+          "code_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How long the link works, from 1 to 1440 minutes. Left out, 15.",
+            "minimum": 0
+          }
+        }
       },
       "LayoutEntry": {
         "type": "object",
@@ -1204,6 +1523,127 @@
           }
         }
       },
+      "ViewerEntry": {
+        "type": "object",
+        "description": "A viewer, as the owner sees it. Nothing here can be used to sign in.",
+        "required": [
+          "id",
+          "label",
+          "status",
+          "scope",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "What to give `viewer revoke` and `viewer forget`.",
+            "examples": [
+              "k3x6qa2m"
+            ],
+            "pattern": "^[a-z2-7]{8}$"
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ViewerStatus"
+          },
+          "scope": {
+            "type": "string",
+            "description": "What it may look at: `layout:*`, or `layout:NAME` for each layout.",
+            "examples": [
+              "layout:*"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "link_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "For one waiting, when its link stops working."
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Once signed in, when the token runs out."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was last used, to within ten minutes or so."
+          }
+        }
+      },
+      "ViewerIssued": {
+        "type": "object",
+        "description": "A viewer made, with the link to sign it in. The only answer of this API that holds a secret, and it is shown only now.",
+        "required": [
+          "viewer",
+          "code",
+          "link",
+          "link_expires_at"
+        ],
+        "properties": {
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerEntry"
+          },
+          "code": {
+            "type": "string",
+            "description": "The one-time code, which a browser exchanges for a token. It is in `link`; it is here for a program that builds its\nown.",
+            "examples": [
+              "hdc1_…"
+            ]
+          },
+          "link": {
+            "type": "string",
+            "description": "What to open in the browser to sign it in, once, before `link_expires_at`: the page, with the code after a `#`, which\na browser keeps to itself and never sends to the server.",
+            "examples": [
+              "https://display.local:8443/view#code=hdc1_…"
+            ]
+          },
+          "link_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ViewerList": {
+        "type": "object",
+        "required": [
+          "viewers"
+        ],
+        "properties": {
+          "viewers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ViewerEntry"
+            },
+            "description": "Oldest first."
+          }
+        }
+      },
+      "ViewerStatus": {
+        "type": "string",
+        "description": "Where a viewer stands.",
+        "enum": [
+          "waiting",
+          "link_expired",
+          "active",
+          "expired",
+          "revoked"
+        ]
+      },
       "WindowState": {
         "type": "object",
         "description": "Whether displays can ask to join right now.",
@@ -1242,6 +1682,10 @@
     {
       "name": "layouts",
       "description": "The ways the picture can be laid out, and which a display is given."
+    },
+    {
+      "name": "viewers",
+      "description": "Who may look at the picture in a web browser when the page is not open to everyone."
     }
   ]
 }
