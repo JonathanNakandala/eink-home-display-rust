@@ -1758,6 +1758,8 @@ dependencies = [
  "url",
  "utoipa",
  "utoipa-axum",
+ "widestring",
+ "windows-sys 0.61.2",
  "x509-parser",
  "yasna",
  "zeroize",

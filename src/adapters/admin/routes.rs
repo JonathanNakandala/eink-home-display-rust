@@ -118,8 +118,8 @@ impl WebFacts {
     info(
         title = "Home display admin API",
         description = "How the owner of a running server looks at it and changes it, from the same machine. \
-            Served over a local socket (a Unix domain socket in the PKI directory, mode 0600), not over the \
-            network. No endpoint returns a pairing code, a key or a certificate."
+            Served over a local socket (a Unix domain socket in the PKI directory, mode 0600, or on Windows a \
+            named pipe only the user the server runs as can open), not over the network. No endpoint returns a pairing code, a key or a certificate."
     ),
     // The error body is only reached through `IntoResponses`, which does not collect the schemas it names, so they
     // are listed here or the references to them would point at nothing.

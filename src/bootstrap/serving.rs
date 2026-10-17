@@ -300,40 +300,29 @@ async fn open_admin(
         log::info!("The admin interface is turned off; no display can be paired until it is on");
         return Ok(None);
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (enrollment, layout_choices, layouts, clock, viewers);
-        log::warn!(
-            "The admin interface is not available on this platform yet, so the pairing window cannot be opened"
-        );
-        return Ok(None);
-    }
-    #[cfg(unix)]
-    {
-        let path = config.admin_socket();
-        let listener = admin::bind(&path).await.with_context(|| {
-            "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
-        })?;
-        let app = admin::router(
-            enrollment.clone(),
-            layout_choices,
-            layouts,
-            clock,
-            viewers,
-            web_facts(config),
-        );
-        log::info!("Admin interface on {}", path.display());
-        Ok(Some(AdminListener {
-            path,
-            serving: Box::pin(async move {
-                if let Err(e) = axum::serve(listener, app).await {
-                    log::error!("The admin interface stopped: {e}");
-                }
-                // The server carries on without it; it must not end because of it.
-                std::future::pending::<()>().await;
-            }),
-        }))
-    }
+    let path = config.admin_socket();
+    let listener = admin::bind(&path).await.with_context(|| {
+        "Failed to open the admin interface (set [server.admin] enabled = false to run without it)"
+    })?;
+    let app = admin::router(
+        enrollment.clone(),
+        layout_choices,
+        layouts,
+        clock,
+        viewers,
+        web_facts(config),
+    );
+    log::info!("Admin interface on {}", path.display());
+    Ok(Some(AdminListener {
+        path,
+        serving: Box::pin(async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                log::error!("The admin interface stopped: {e}");
+            }
+            // The server carries on without it; it must not end because of it.
+            std::future::pending::<()>().await;
+        }),
+    }))
 }
 
 /// Runs the admin interface if there is one. It never finishes: the server's life is not its.
@@ -1318,7 +1307,6 @@ mod tests {
 
     // --- the admin interface -------------------------------------------------------------------------
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn the_window_opened_over_the_admin_socket_is_the_one_the_enrolment_endpoint_obeys() {
         for transport in [Transport::PreferHttps, Transport::Https] {
@@ -1375,13 +1363,16 @@ mod tests {
         assert!(!pki.path().join("admin.sock").exists());
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn the_admin_socket_can_be_put_somewhere_else() {
-        use std::os::unix::fs::PermissionsExt;
         let pki = tempfile::tempdir().unwrap();
         let elsewhere = tempfile::tempdir().unwrap();
-        std::fs::set_permissions(elsewhere.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(elsewhere.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
         let mut config = config(Transport::Https, pki.path());
         config.admin.socket = Some(elsewhere.path().join("ctl.sock"));
         let listening = listening(&config).await.unwrap();
