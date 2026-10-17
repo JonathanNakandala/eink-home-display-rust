@@ -178,6 +178,12 @@ and leaves its last picture, as for any output besides the display.
   `Retry-After: 30`, and its page asks on a timer as above and tries for a stream again later. The rest of the connections stay for
   everything else: a page's own requests, other pages, and the displays. Plain HTTP has no connection limit of its own, so there the
   total is the only bound.
+- **Behind a reverse proxy.** The server counts failed sign-ins (10 in 10 minutes) and open streams by who is asking, and from behind
+  a proxy everyone arrives from the proxy. List its address in `[server.web] trusted_proxies = ["192.168.1.2"]` and, for a request
+  that comes from it, the client is read from the end of `X-Forwarded-For`: past any listed proxies, the first address that isn't
+  one. Entries a client wrote itself, further left, are not believed, and a request from an address not listed is counted as
+  itself whatever it sends. Only list a proxy that sets the header; one that passes a client's on untouched lets the client choose.
+  The HTTPS side's own cap of four connections per source still sees the proxy, since that is counted below TLS.
 - **Without the network.** The page keeps the last picture it saw, on the device (IndexedDB), and shows it at once when it is opened
   or reloaded, saying how old it is and that it cannot reach the server; it is forgotten when the viewer signs out or its access
   ends. Where the browser has service workers (a secure page: HTTPS, or `localhost`) the page itself, its manifest and its icons are

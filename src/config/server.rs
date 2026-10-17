@@ -179,6 +179,13 @@ pub struct WebConfig {
     /// The layouts the page may show, by name as `displayctl layout list` has them. Left empty, all of them.
     #[serde(default)]
     pub layouts: Vec<String>,
+    /// Addresses of reverse proxies in front of the server, such as `["192.168.1.2"]`, whose `X-Forwarded-For` is believed. The
+    /// server counts failed sign-ins and open streams by who is asking, and behind a proxy everyone arrives from the proxy, so
+    /// without this a few wrong tokens from one device stop every other, and one device's streams use up all. Only list a proxy
+    /// that sets the header itself: anything else lets a client choose the address it is counted as. Left empty, the address
+    /// that connects is the one counted.
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 /// HTTPS and the certificate authority behind it. Used when `transport` is `prefer-https` or `https`.
@@ -362,6 +369,7 @@ impl Default for WebConfig {
             streams: default_streams(),
             streams_per_source: default_streams_per_source(),
             screen: None,
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -418,6 +426,13 @@ impl WebConfig {
         for name in &self.layouts {
             crate::domain::models::layout::LayoutName::parse(name)
                 .map_err(|e| format!("[server.web] layouts has {name:?}: {e}"))?;
+        }
+        for address in &self.trusted_proxies {
+            address.parse::<std::net::IpAddr>().map_err(|e| {
+                format!(
+                    "[server.web] trusted_proxies has {address:?}, which is not an IP address: {e}"
+                )
+            })?;
         }
         Ok(())
     }
@@ -848,5 +863,14 @@ mod tests {
                 "{streams}/{per_source}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn trusted_proxies_are_addresses() {
+        assert!(parse("").unwrap().web.trusted_proxies.is_empty());
+        let set = parse("[web]\ntrusted_proxies = [\"192.168.1.2\", \"fd00::2\"]").unwrap();
+        assert!(set.check().is_ok());
+        let bad = parse("[web]\ntrusted_proxies = [\"proxy.home\"]").unwrap();
+        assert!(bad.check().unwrap_err().contains("trusted_proxies"));
     }
 }

@@ -1624,6 +1624,13 @@
           "link_expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Things the owner should know about what this viewer will see, such as a layout the page is set not to show. The viewer is\nmade all the same."
           }
         }
       },

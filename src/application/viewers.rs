@@ -197,8 +197,22 @@ impl Viewers {
         }
         let now = self.now();
         let code = ExchangeCode::generate(self.random());
+        // An id no viewer has: the registry replaces a viewer that has the id it is given, so a chance match (forty random bits
+        // against a few dozen viewers) would otherwise wipe another viewer and its token.
+        let mut id = ViewerId::from_random(&self.random());
+        for _ in 0..16 {
+            if self.registry.get(&id).await?.is_none() {
+                break;
+            }
+            id = ViewerId::from_random(&self.random());
+        }
+        if self.registry.get(&id).await?.is_some() {
+            return Err(IssueError::Failed(anyhow::anyhow!(
+                "no unused viewer id could be made"
+            )));
+        }
         let viewer = Viewer {
-            id: ViewerId::from_random(&self.random()),
+            id,
             label,
             scope: LayoutScope::of(scope),
             lifetime: Duration::days(lifetime_days.into()),
@@ -1295,5 +1309,66 @@ mod tests {
                 .standing(rig.viewers.time()),
             ViewerStanding::Active
         );
+    }
+
+    /// Randomness that says what it is to give, byte by byte: each call fills with the next one.
+    struct Scripted(std::sync::Mutex<std::collections::VecDeque<u8>>);
+    impl Entropy for Scripted {
+        fn fill(&self, bytes: &mut [u8]) {
+            bytes.fill(
+                self.0
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("a byte left to give"),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_id_that_a_viewer_already_has_is_not_given_again_and_that_viewer_is_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        // Each issue asks for a code and then an id. The second viewer's first id is the first viewer's (5), as chance could
+        // make it; a new one (6) is then asked for.
+        let viewers = Viewers::new(
+            Arc::new(FileViewerRegistry::open(directory.path()).await.unwrap()),
+            FixedClock::at(at(0)),
+            Arc::new(Scripted(std::sync::Mutex::new([1, 5, 2, 5, 6, 7].into()))),
+        );
+        let layouts = Layouts::default();
+        let first = viewers.issue(request("first"), &layouts).await.unwrap();
+
+        let second = viewers.issue(request("second"), &layouts).await.unwrap();
+
+        assert_ne!(first.viewer.id, second.viewer.id);
+        let all = viewers.list().await.unwrap();
+        assert_eq!(all.len(), 2, "nothing was replaced");
+        // The first is as it was, and its code still works.
+        assert_eq!(all[0].label.as_str(), "first");
+        assert!(viewers.exchange(first.code.expose()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn if_no_unused_id_can_be_made_it_is_an_error_and_nothing_is_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        // Every id it is offered is the first viewer's.
+        let mut script = vec![1, 5];
+        script.extend([2]);
+        script.extend(std::iter::repeat_n(5, 17));
+        let viewers = Viewers::new(
+            Arc::new(FileViewerRegistry::open(directory.path()).await.unwrap()),
+            FixedClock::at(at(0)),
+            Arc::new(Scripted(std::sync::Mutex::new(script.into()))),
+        );
+        let layouts = Layouts::default();
+        viewers.issue(request("first"), &layouts).await.unwrap();
+
+        let error = viewers
+            .issue(request("second"), &layouts)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, IssueError::Failed(_)), "{error}");
+        assert_eq!(viewers.list().await.unwrap().len(), 1);
     }
 }

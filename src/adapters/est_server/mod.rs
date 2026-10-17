@@ -324,7 +324,10 @@ async fn serve_connection(
             client: identity_of(session.peer_certificates())?,
         }
     };
-    let service = TowerToHyperService::new(app.layer(axum::Extension(connection)));
+    let service = TowerToHyperService::new(
+        app.layer(axum::Extension(crate::adapters::source::PeerAddress(peer)))
+            .layer(axum::Extension(connection)),
+    );
     let served = http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(settings.header_timeout)

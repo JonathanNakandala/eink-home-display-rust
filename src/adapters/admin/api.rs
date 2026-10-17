@@ -284,6 +284,10 @@ pub struct ViewerIssued {
     #[schema(examples("https://display.local:8443/view#code=hdc1_…"))]
     pub link: String,
     pub link_expires_at: DateTime<Utc>,
+    /// Things the owner should know about what this viewer will see, such as a layout the page is set not to show. The viewer is
+    /// made all the same.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// The id of a viewer, in the path.

@@ -259,6 +259,16 @@ fn view_base(config: &ServerConfig) -> String {
     })
 }
 
+/// What the admin interface is told of the page, so that it can say when a viewer made will not see what it was made for.
+fn web_facts(config: &ServerConfig) -> admin::WebFacts {
+    admin::WebFacts {
+        base: view_base(config),
+        enabled: config.web.enabled,
+        open: config.web.open,
+        layouts: config.web.layouts.clone(),
+    }
+}
+
 /// `routes` with the page for a browser beside them, if there is one.
 fn with_web(routes: Router, web: Option<Router>) -> Router {
     match web {
@@ -310,7 +320,7 @@ async fn open_admin(
             layouts,
             clock,
             viewers,
-            view_base(config),
+            web_facts(config),
         );
         log::info!("Admin interface on {}", path.display());
         Ok(Some(AdminListener {
@@ -446,6 +456,15 @@ pub fn web_routes(
             .layouts
             .iter()
             .map(|name| LayoutName::parse(name).map_err(|e| anyhow::anyhow!("{name:?}: {e}")))
+            .collect::<Result<_, _>>()?,
+        trusted_proxies: web
+            .trusted_proxies
+            .iter()
+            .map(|address| {
+                address
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("{address:?}: {e}"))
+            })
             .collect::<Result<_, _>>()?,
     };
     let router = image_server::web_router(

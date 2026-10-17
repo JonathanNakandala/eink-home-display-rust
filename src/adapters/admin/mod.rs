@@ -29,5 +29,5 @@ pub use self::present::{
     describe_window, forgotten, label, layout_changed, qr_for_terminal, rejected, revoked,
     viewer_changed, viewer_issued,
 };
-pub use self::routes::{openapi_json, router};
+pub use self::routes::{WebFacts, openapi_json, router};
 pub use self::transport::{LocalListener, SOCKET_FILE, bind, connect, default_path};

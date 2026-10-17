@@ -197,16 +197,7 @@ pub(super) async fn start_web_for(
         clock,
     )?;
     if let Some(peer) = peer {
-        app = app.layer(axum::Extension(crate::adapters::est_server::Connection {
-            peer: Some(peer),
-            binding: None,
-            client: None,
-            handshake: crate::adapters::est_server::HandshakeFacts::new(
-                false,
-                Duration::ZERO,
-                None,
-            ),
-        }));
+        app = app.layer(axum::Extension(crate::adapters::source::PeerAddress(peer)));
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
