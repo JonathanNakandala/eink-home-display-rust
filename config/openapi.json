@@ -909,6 +909,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "As many streams are open as there may be, in all or from this source; `Retry-After` says when to ask again. Everything else is still answered, so a page carries on asking for the state.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [

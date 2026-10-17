@@ -81,6 +81,11 @@ const MAX_FORM: usize = 2048;
 pub struct StreamTiming {
     pub lifetime: std::time::Duration,
     pub tick: std::time::Duration,
+    /// How many streams may be open at once, in all.
+    pub most: usize,
+    /// How many may be open from one source (as the HTTPS side counts one: a whole IPv6 /64). A stream holds one of the
+    /// connections a source may have, so this leaves the others for everything else it asks for.
+    pub most_per_source: usize,
 }
 
 impl Default for StreamTiming {
@@ -88,6 +93,8 @@ impl Default for StreamTiming {
         Self {
             lifetime: std::time::Duration::from_secs(90),
             tick: std::time::Duration::from_secs(20),
+            most: 8,
+            most_per_source: 2,
         }
     }
 }
@@ -166,7 +173,11 @@ pub(super) struct WebState {
     policy: HeaderValue,
     /// The icon in each size it is served in.
     icons: Vec<(u32, Vec<u8>)>,
+    /// The service worker, its cache named for what it keeps (see `shell_fingerprint`).
+    worker: String,
     stream: StreamTiming,
+    /// How many streams are open, in all and from each source.
+    streams: Arc<limiter::StreamBudget>,
     access: Access,
 }
 
@@ -216,16 +227,20 @@ impl WebState {
         access: Access,
     ) -> Self {
         assert!(!allowed.is_empty(), "the page has a layout to show");
+        let icons: Vec<(u32, Vec<u8>)> = icons::SIZES
+            .iter()
+            .map(|size| (*size, icons::png(*size)))
+            .collect();
+        let fingerprint = shell_fingerprint(PAGE, &manifest_json(), &icons, icons::SVG, WORKER);
         Self {
             published,
             allowed,
             policy: HeaderValue::from_str(&content_security_policy(PAGE))
                 .expect("a policy is a header value"),
-            icons: icons::SIZES
-                .iter()
-                .map(|size| (*size, icons::png(*size)))
-                .collect(),
+            worker: WORKER.replace("__SHELL__", &fingerprint),
+            icons,
             stream,
+            streams: limiter::StreamBudget::new(stream.most, stream.most_per_source),
             access,
         }
     }
@@ -395,6 +410,14 @@ fn source_of_request(connection: &Option<Extension<Connection>>) -> IpAddr {
         .as_ref()
         .and_then(|Extension(connection)| connection.peer)
         .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |peer| peer.ip())
+}
+
+/// Where a request came from, if the connection says: the peer of the TLS connection. Over plain HTTP nothing does.
+fn peer_of(connection: &Option<Extension<Connection>>) -> Option<IpAddr> {
+    connection
+        .as_ref()
+        .and_then(|Extension(connection)| connection.peer)
+        .map(|peer| peer.ip())
 }
 
 fn too_many(wait: std::time::Duration) -> Response {
@@ -595,6 +618,50 @@ async fn page(State(state): State<Arc<WebState>>) -> Response {
     ))
 )]
 async fn manifest() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/manifest+json"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        manifest_json(),
+    )
+        .into_response()
+}
+
+/// What the service worker keeps, named: a short fingerprint of the page, the manifest, the icons and the worker's own script. A
+/// worker kept by name alone would serve an old manifest or icon for ever after an upgrade, since it answers those from its
+/// cache; named for what is in it, any change makes a new worker (a browser checks the script's bytes) with a new cache, and
+/// the old is deleted when it takes over.
+fn shell_fingerprint(
+    page: &str,
+    manifest: &str,
+    icons: &[(u32, Vec<u8>)],
+    svg: &str,
+    worker: &str,
+) -> String {
+    let mut hash = Sha256::new();
+    let mut part = |bytes: &[u8]| {
+        // With each part's length, so that no two arrangements of the same bytes give the same input.
+        hash.update((bytes.len() as u64).to_be_bytes());
+        hash.update(bytes);
+    };
+    part(page.as_bytes());
+    part(manifest.as_bytes());
+    for (size, png) in icons {
+        part(&size.to_be_bytes());
+        part(png);
+    }
+    part(svg.as_bytes());
+    part(worker.as_bytes());
+    let digest = hash.finalize();
+    digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The manifest, as JSON.
+fn manifest_json() -> String {
     let icons: Vec<_> = icons::SIZES
         .iter()
         .filter(|size| **size != 180)
@@ -626,14 +693,7 @@ async fn manifest() -> Response {
         "theme_color": "#111111",
         "icons": icons,
     });
-    (
-        [
-            (header::CONTENT_TYPE, "application/manifest+json"),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
-        manifest.to_string(),
-    )
-        .into_response()
+    manifest.to_string()
 }
 
 /// The icon, as a vector.
@@ -671,7 +731,7 @@ async fn icon_svg() -> Response {
         body = String
     ))
 )]
-async fn worker() -> Response {
+async fn worker(State(state): State<Arc<WebState>>) -> Response {
     (
         [
             (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
@@ -679,7 +739,7 @@ async fn worker() -> Response {
             (header::CACHE_CONTROL, "no-cache"),
             (HeaderName::from_static("service-worker-allowed"), "/view"),
         ],
-        WORKER,
+        state.worker.clone(),
     )
         .into_response()
 }
@@ -959,12 +1019,14 @@ fn event_of(view: &ViewState) -> String {
         (status = 401, description = "A viewer token is needed, or the one shown is not good.", body = String, content_type = "text/plain"),
         (status = 403, description = "The token does not allow that layout (`insufficient_scope`).", body = String, content_type = "text/plain"),
         (status = 404, description = "Nothing has been rendered yet, or there is no such layout.", body = String, content_type = "text/plain"),
-        (status = 429, description = "Too many requests that were not good from this source.", body = OAuthError)
+        (status = 429, description = "Too many requests that were not good from this source.", body = OAuthError),
+        (status = 503, description = "As many streams are open as there may be, in all or from this source; `Retry-After` says when to ask again. Everything else is still answered, so a page carries on asking for the state.", body = String, content_type = "text/plain")
     )
 )]
 async fn events(
     State(state): State<Arc<WebState>>,
     principal: Option<Extension<Principal>>,
+    connection: Option<Extension<Connection>>,
     Query(which): Query<WhichLayout>,
 ) -> Response {
     let (scope, token) = match principal {
@@ -976,10 +1038,22 @@ async fn events(
         Ok(first) => first,
         Err(refusal) => return *refusal,
     };
+    // A place for it, or not: a stream holds one of the connections the server has, and a source has only so many. The page
+    // carries on asking on its own without one, and tries again after a wait.
+    let Some(permit) = state.streams.acquire(peer_of(&connection)) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "30")],
+            "There are as many streams open as there may be; ask again later",
+        )
+            .into_response();
+    };
     let wanted = which.layout;
     let (sender, receiver) =
         tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(4);
-    tokio::spawn(stream_changes(state, scope, token, wanted, first, sender));
+    tokio::spawn(stream_changes(
+        state, scope, token, wanted, first, sender, permit,
+    ));
     let body = axum::body::Body::from_stream(futures_util::stream::unfold(
         receiver,
         |mut receiver| async move { receiver.recv().await.map(|item| (item, receiver)) },
@@ -1004,6 +1078,8 @@ async fn stream_changes(
     wanted: Option<String>,
     first: ViewState,
     sender: tokio::sync::mpsc::Sender<Result<Bytes, std::convert::Infallible>>,
+    // Held for as long as the stream goes on, and given back when this returns, however it does.
+    _permit: limiter::StreamPermit,
 ) {
     let mut finishes = state.published.handles.refresh.finishes();
     let ends = tokio::time::Instant::now() + state.stream.lifetime;
@@ -3360,6 +3436,7 @@ mod tests {
             stream: StreamTiming {
                 lifetime: std::time::Duration::from_millis(1500),
                 tick: std::time::Duration::from_millis(100),
+                ..StreamTiming::default()
             },
         }
     }
@@ -3439,6 +3516,7 @@ mod tests {
             stream: StreamTiming {
                 lifetime: std::time::Duration::from_secs(30),
                 tick: std::time::Duration::from_secs(20),
+                ..StreamTiming::default()
             },
             ..open_all()
         };
@@ -3906,5 +3984,201 @@ mod tests {
         .unwrap();
 
         outcome.unwrap();
+    }
+
+    // --- the service worker's cache is named for what is in it ----------------------------------------------
+
+    fn the_shell() -> (String, Vec<(u32, Vec<u8>)>) {
+        (
+            manifest_json(),
+            icons::SIZES.iter().map(|s| (*s, icons::png(*s))).collect(),
+        )
+    }
+
+    #[test]
+    fn the_fingerprint_is_short_stable_and_changes_with_each_thing_the_worker_keeps() {
+        let (manifest, icons) = the_shell();
+        let base = shell_fingerprint(PAGE, &manifest, &icons, icons::SVG, WORKER);
+
+        assert_eq!(base.len(), 12);
+        assert!(base.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(
+            base,
+            shell_fingerprint(PAGE, &manifest, &icons, icons::SVG, WORKER)
+        );
+        // Each of them alone is enough to make a new worker, and so a new cache.
+        let mut icon_changed = icons.clone();
+        icon_changed[0].1.push(0);
+        for (what, changed) in [
+            (
+                "page",
+                shell_fingerprint("<p>other</p>", &manifest, &icons, icons::SVG, WORKER),
+            ),
+            (
+                "manifest",
+                shell_fingerprint(PAGE, "{}", &icons, icons::SVG, WORKER),
+            ),
+            (
+                "icon",
+                shell_fingerprint(PAGE, &manifest, &icon_changed, icons::SVG, WORKER),
+            ),
+            (
+                "svg",
+                shell_fingerprint(PAGE, &manifest, &icons, "<svg/>", WORKER),
+            ),
+            (
+                "worker",
+                shell_fingerprint(PAGE, &manifest, &icons, icons::SVG, "// other"),
+            ),
+        ] {
+            assert_ne!(changed, base, "{what}");
+        }
+        // Parts are told apart by length, so moving a byte from one to the next is not the same input.
+        assert_ne!(
+            shell_fingerprint("ab", "c", &[], "", ""),
+            shell_fingerprint("a", "bc", &[], "", "")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_worker_is_served_with_its_cache_named_for_what_it_keeps_and_no_placeholder_left() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = serve(tmp.path(), &open_all()).await;
+
+        let response = reqwest::get(format!("{base}/view/sw.js")).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let script = response.text().await.unwrap();
+
+        let (manifest, icons) = the_shell();
+        let expected = shell_fingerprint(PAGE, &manifest, &icons, icons::SVG, WORKER);
+        assert!(
+            script.contains(&format!("const CACHE = 'hd-shell-{expected}';")),
+            "{script}"
+        );
+        assert!(!script.contains("__SHELL__"));
+        // The same on the next request, and from a second server: the name is of the content, not of the process.
+        let again = serve(tmp.path(), &open_all()).await;
+        assert_eq!(
+            reqwest::get(format!("{again}/view/sw.js"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+            script
+        );
+    }
+
+    #[test]
+    fn the_workers_source_has_the_placeholder_once_in_the_cache_name() {
+        assert_eq!(WORKER.matches("__SHELL__").count(), 1);
+        assert!(WORKER.contains("const CACHE = 'hd-shell-__SHELL__';"));
+    }
+
+    // --- streams are a share of the server's connections, not all of them ---------------------------------
+
+    async fn watching(base: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .get(format!("{base}/view/api/events"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_source_holds_only_its_share_of_streams_and_the_rest_of_the_page_still_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"a").await;
+        let settings = WebSettings {
+            stream: StreamTiming {
+                most_per_source: 1,
+                ..StreamTiming::default()
+            },
+            ..open_all()
+        };
+        let (base, _) = start_web_for(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &settings,
+            Arc::new(SystemClock::new(London)),
+            None,
+            Some("192.168.1.20:5000".parse().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        let first = watching(&base).await;
+        assert_eq!(first.status(), 200);
+        // A second from the same place is told so, and when to ask again, without its connection being the worse for it.
+        let second = watching(&base).await;
+        assert_eq!(second.status(), 503);
+        assert_eq!(second.headers()["retry-after"], "30");
+        // The page's other requests, which it carries on with, are answered.
+        assert_eq!(get(format!("{base}/view/api/state")).await.0, 200);
+        assert_eq!(get(format!("{base}/view/api/layouts")).await.0, 200);
+
+        // Given up, the place is there again.
+        drop(first);
+        let mut again = 0;
+        for _ in 0..40 {
+            again = watching(&base).await.status().as_u16();
+            if again == 200 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(again, 200, "the place was never given back");
+    }
+
+    #[tokio::test]
+    async fn the_total_is_bounded_even_where_no_source_is_known() {
+        // Plain HTTP, as open mode over it is: no peer to count, so only the total can be kept to.
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"a").await;
+        let settings = WebSettings {
+            stream: StreamTiming {
+                most: 2,
+                ..StreamTiming::default()
+            },
+            ..open_all()
+        };
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &settings,
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+
+        let _one = watching(&base).await;
+        let _two = watching(&base).await;
+        let third = watching(&base).await;
+
+        assert_eq!(third.status(), 503);
+        assert_eq!(get(format!("{base}/view/api/state")).await.0, 200);
+    }
+
+    #[tokio::test]
+    async fn a_stream_refused_for_want_of_a_place_says_so_before_the_picture_is_looked_for() {
+        // Nothing drawn yet: a stream that is wanted but not there is 404 as for the state, and not 503, which is only for a
+        // stream that would have been given.
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &WebSettings {
+                stream: StreamTiming {
+                    most: 0,
+                    ..StreamTiming::default()
+                },
+                ..open_all()
+            },
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(watching(&base).await.status(), 404);
     }
 }

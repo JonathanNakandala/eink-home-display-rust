@@ -92,8 +92,10 @@ displayctl viewer forget k3x6qa2m         # removes it from the list, which free
   (`root.pem` in `[server.tls] directory`) is trusted on the device.
 - **What is kept.** `viewers.json` beside the list of displays holds a SHA-256 hash of each code and token, never the secret
   (both are 256 random bits, so a hash is all that is needed to recognise one and no use to anyone who reads the file).
-- **Guessing.** After ten attempts from one source that were not good (a wrong code, a token that isn't one) it is told to wait
+- **Guessing.** After ten attempts from one address that were not good (a wrong code, a token that isn't one) it is told to wait
   ten minutes (`429`, with `Retry-After`); a good request clears the count. This is for noise: a 256-bit token can't be guessed.
+  A source here is one address, not a whole IPv6 network, so a stale tablet asking with a revoked token turns away only itself and
+  not the rest of the household.
 - **Signing out.** The page's *Sign out* gives the token up (it is revoked, not only forgotten by the browser).
 
 The exchange and the token follow the OAuth 2.0 standards, so that nothing here is invented where one exists:
@@ -154,7 +156,7 @@ height = 1080
 The page is then **another output**, beside whatever display you have (the reTerminal, the Waveshare, or none to speak of): each
 run draws every layout for it too, at its own size, in full colour, with no dithering, and keeps just the PNG in
 `<server.directory>/_web/<layout>/`, so the panel's pictures and the page's never meet. The layouts scale with the size they are
-drawn at. It costs one more render of every layout per run (the one Chrome draws them all, whatever their sizes), and the page's
+drawn at. It costs one more render of every layout per run (the one Chrome draws them all, whatever their sizes), but a display's button press is answered when the display's own picture is drawn, which is first, and does not wait for the page's, and the page's
 pictures are reported in `/status` (`layouts[].output` is `web`) and `/metrics` (`home_display_layout_drawn{output="web",…}`) like
 any other. With a Waveshare panel the server now runs for the page's sake alone (and `/healthz` and `/status` judge it by the page's pictures, since the panel, driven directly, publishes none), and a layout the page can't be given is reported
 and leaves its last picture, as for any output besides the display.
@@ -170,10 +172,18 @@ and leaves its last picture, as for any output besides the display.
   token. The page is closed while hidden to spare the battery, and if a stream can't be had at all it carries on asking as before:
   about two seconds after the next render is due (a display is told to wait thirty, for its radio and panel), and every couple of
   seconds while it is not there yet; on **Auto** it also looks again exactly when the schedule changes the layout.
+- **A stream is a share of the connections, not all of them.** Each open stream holds one of the HTTPS side's 16 connections, and one
+  source may hold four (a whole IPv6 network counts as one source, so every device in a home on IPv6 shares them). So only
+  `[server.web] streams` (8) may be open in all and `streams_per_source` (2) from one source; one more is answered `503` with
+  `Retry-After: 30`, and its page asks on a timer as above and tries for a stream again later. The rest of the connections stay for
+  everything else: a page's own requests, other pages, and the displays. Plain HTTP has no connection limit of its own, so there the
+  total is the only bound.
 - **Without the network.** The page keeps the last picture it saw, on the device (IndexedDB), and shows it at once when it is opened
   or reloaded, saying how old it is and that it cannot reach the server; it is forgotten when the viewer signs out or its access
   ends. Where the browser has service workers (a secure page: HTTPS, or `localhost`) the page itself, its manifest and its icons are
-  kept too (`/view/sw.js`, which never touches the API), so an installed page opens with the network down. A revoked token is
+  kept too (`/view/sw.js`, which never touches the API), so an installed page opens with the network down. The worker's cache is named
+  for a fingerprint of what it keeps (the page, manifest, icons and the worker's own script), so after a server upgrade a tablet
+  gets the new page, manifest and icons by itself and the old cache is deleted. A revoked token is
   refused the moment the network is back, since the API is never answered from a cache.
 - **Keeping the screen on.** *Keep screen on* in the bar (and automatically in a kiosk, unless you turned it off) asks the browser
   not to let the screen sleep while the page shows, with the Screen Wake Lock. It needs a secure page: HTTPS, or `localhost`. Over

@@ -95,6 +95,8 @@ enabled = true
 enabled = false
 open = false
 access_token_minutes = 60
+streams = 8
+streams_per_source = 2
 layouts = []
 
 [schedule]

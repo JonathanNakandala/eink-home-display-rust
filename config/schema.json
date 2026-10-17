@@ -93,7 +93,9 @@
           "layouts": [],
           "open": false,
           "public_url": null,
-          "screen": null
+          "screen": null,
+          "streams": 8,
+          "streams_per_source": 2
         }
       }
     },
@@ -619,7 +621,9 @@
             "layouts": [],
             "open": false,
             "public_url": null,
-            "screen": null
+            "screen": null,
+            "streams": 8,
+            "streams_per_source": 2
           }
         }
       }
@@ -819,6 +823,20 @@
             }
           ],
           "default": null
+        },
+        "streams": {
+          "description": "How many streams of changes may be open at once, in all, from 1 to 15. A page with one is told of a new picture as it is\ndrawn; each holds one of the server's 16 HTTPS connections (and plain HTTP has no such limit), so the rest are kept for\neverything else, displays included. A page that is not given one asks on a timer instead, which costs only a few seconds.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 8,
+          "minimum": 0
+        },
+        "streams_per_source": {
+          "description": "How many of them may be open from one source, from 1 to 3. The HTTPS side lets one source (a whole IPv6 network counts as\none, so every device in a home on IPv6) hold four connections, and a stream holds one, so this leaves the others for\nwhat else that source asks for.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
         }
       }
     }

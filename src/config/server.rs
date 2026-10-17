@@ -95,6 +95,14 @@ impl Default for AdminConfig {
     }
 }
 
+fn default_streams() -> u32 {
+    8
+}
+
+fn default_streams_per_source() -> u32 {
+    2
+}
+
 fn default_access_token_minutes() -> u32 {
     crate::application::viewers::DEFAULT_ACCESS_MINUTES
 }
@@ -153,6 +161,16 @@ pub struct WebConfig {
     /// copied stays good. A viewer made without `--refresh` has one token for its whole life, and this does not apply.
     #[serde(default = "default_access_token_minutes")]
     pub access_token_minutes: u32,
+    /// How many streams of changes may be open at once, in all, from 1 to 15. A page with one is told of a new picture as it is
+    /// drawn; each holds one of the server's 16 HTTPS connections (and plain HTTP has no such limit), so the rest are kept for
+    /// everything else, displays included. A page that is not given one asks on a timer instead, which costs only a few seconds.
+    #[serde(default = "default_streams")]
+    pub streams: u32,
+    /// How many of them may be open from one source, from 1 to 3. The HTTPS side lets one source (a whole IPv6 network counts as
+    /// one, so every device in a home on IPv6) hold four connections, and a stream holds one, so this leaves the others for
+    /// what else that source asks for.
+    #[serde(default = "default_streams_per_source")]
+    pub streams_per_source: u32,
     /// Draw the pictures for the page at the page's own size, in full colour, in place of showing the panel's (which are
     /// 16 greys at the panel's size, and so look it on a colour screen). It is another output, drawn for besides the display
     /// each time, so it costs a render of every layout more. Left out, the page shows the panel's pictures.
@@ -341,6 +359,8 @@ impl Default for WebConfig {
             layouts: Vec::new(),
             public_url: None,
             access_token_minutes: default_access_token_minutes(),
+            streams: default_streams(),
+            streams_per_source: default_streams_per_source(),
             screen: None,
         }
     }
@@ -354,6 +374,18 @@ impl WebConfig {
             return Err(format!(
                 "[server.web] access_token_minutes is {}; it must be from 1 to {most}",
                 self.access_token_minutes
+            ));
+        }
+        if !(1..=15).contains(&self.streams) {
+            return Err(format!(
+                "[server.web] streams is {}; it must be from 1 to 15, so that some of the server's 16 connections are left for everything else",
+                self.streams
+            ));
+        }
+        if !(1..=3).contains(&self.streams_per_source) {
+            return Err(format!(
+                "[server.web] streams_per_source is {}; it must be from 1 to 3, so that one of a source's four connections is left for everything else",
+                self.streams_per_source
             ));
         }
         if let Some(url) = &self.public_url {
@@ -795,5 +827,26 @@ mod tests {
         assert_eq!(kept, std::path::PathBuf::from("/srv/display/_web"));
         // A layout name is lower-case letters, digits and hyphens: it can never be `_web`.
         assert!(crate::domain::models::layout::LayoutName::parse("_web").is_err());
+    }
+
+    #[test]
+    fn the_streams_a_page_may_hold_have_defaults_and_leave_connections_for_everything_else() {
+        let config = parse("").unwrap();
+        assert_eq!((config.web.streams, config.web.streams_per_source), (8, 2));
+        let set = parse("[web]\nstreams = 4\nstreams_per_source = 1").unwrap();
+        assert_eq!((set.web.streams, set.web.streams_per_source), (4, 1));
+        assert!(set.check().is_ok());
+
+        for (streams, per_source) in [(0, 2), (16, 2), (8, 0), (8, 4)] {
+            let bad = parse(&format!(
+                "[web]\nstreams = {streams}\nstreams_per_source = {per_source}"
+            ))
+            .unwrap();
+            let error = bad.check().unwrap_err();
+            assert!(
+                error.contains("[server.web] streams"),
+                "{streams}/{per_source}: {error}"
+            );
+        }
     }
 }
