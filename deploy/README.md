@@ -534,8 +534,13 @@ it. The authority's own directory is made that way.
 - **Windows:** the socket is a named pipe, named for the socket's path (`\\.\pipe\home-display-admin-…`), so the server and
   `displayctl` find each other by the same path, however it is spelled. No file is made, so the directory's permissions
   do not matter. What keeps other users out is the pipe's access list, which names the user the server runs as and
-  nobody else (not even Administrators); other machines are refused by the pipe itself. It has been tried with one
-  user only, not from a second account. A second server on the same path fails to start.
+  nobody else (not even Administrators), and which is owned by that user; other machines are refused by the pipe itself.
+  `displayctl` checks that the pipe it connected to is owned by the user it runs as, and sends nothing if not, so
+  another user cannot make a pipe of that name first and collect a pairing code. A second server on the same path fails
+  to start. What the system holds for a live pipe is checked by a test, but nothing has been tried from a second
+  account.
+  - Run `displayctl` as the user the server runs as. If the server runs as a service under another account (the system
+    account, say), the pipe belongs to that account and `displayctl` from your own login is refused.
 - **No secret comes back from it:** not a pairing code, a key or a certificate. You read the code off the display.
 - **The API is described** in [config/admin-openapi.json](../config/admin-openapi.json) (OpenAPI 3.1), which is also served at
   `/openapi.json` on the socket. Any HTTP client that can use a Unix socket can use it, for example

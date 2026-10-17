@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
 
 #[cfg(unix)]
@@ -61,12 +61,9 @@ pub async fn bind(path: &Path) -> anyhow::Result<LocalListener> {
     platform::bind(path).await.map(LocalListener)
 }
 
-/// A connection to the admin socket at `path`.
-pub async fn connect(path: &Path) -> anyhow::Result<Stream> {
-    let name = platform::name(path)?;
-    Stream::connect(name)
-        .await
-        .with_context(|| format!("Failed to connect to {}", path.display()))
+/// A connection to the admin socket at `path`. On Windows it is made only to a pipe that the user running this owns.
+pub async fn connect(path: &Path) -> anyhow::Result<platform::Connection> {
+    platform::connect(path).await
 }
 
 /// Where the socket is, given the directory the server keeps its authority in.
