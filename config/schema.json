@@ -95,7 +95,8 @@
           "public_url": null,
           "screen": null,
           "streams": 8,
-          "streams_per_source": 2
+          "streams_per_source": 2,
+          "trusted_proxies": []
         }
       }
     },
@@ -623,7 +624,8 @@
             "public_url": null,
             "screen": null,
             "streams": 8,
-            "streams_per_source": 2
+            "streams_per_source": 2,
+            "trusted_proxies": []
           }
         }
       }
@@ -837,6 +839,14 @@
           "format": "uint32",
           "default": 2,
           "minimum": 0
+        },
+        "trusted_proxies": {
+          "description": "Addresses of reverse proxies in front of the server, such as `[\"192.168.1.2\"]`, whose `X-Forwarded-For` is believed. The\nserver counts failed sign-ins and open streams by who is asking, and behind a proxy everyone arrives from the proxy, so\nwithout this a few wrong tokens from one device stop every other, and one device's streams use up all. Only list a proxy\nthat sets the header itself: anything else lets a client choose the address it is counted as. Left empty, the address\nthat connects is the one counted.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

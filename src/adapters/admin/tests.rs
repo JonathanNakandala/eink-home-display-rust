@@ -110,6 +110,10 @@ async fn viewers_in(directory: &Path, clock: Arc<TestClock>) -> Arc<Viewers> {
 }
 
 async fn start() -> Fixture {
+    start_with(WebFacts::new(VIEW_BASE)).await
+}
+
+async fn start_with(web: WebFacts) -> Fixture {
     let directory = private_directory();
     let (enrollment, authority, clock) = enrollment_in(directory.path()).await;
     let socket = default_path(directory.path());
@@ -127,7 +131,7 @@ async fn start() -> Fixture {
         layouts,
         clock.clone(),
         viewers.clone(),
-        VIEW_BASE.to_owned(),
+        web,
     );
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -607,7 +611,7 @@ mod socket {
             Layouts::default(),
             clock,
             viewers,
-            VIEW_BASE.to_owned(),
+            WebFacts::new(VIEW_BASE),
         );
         let server = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
@@ -1532,6 +1536,7 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
         code: "hdc1_x".into(),
         link: "https://display.test:8443/view#code=hdc1_x".into(),
         link_expires_at: now + Duration::minutes(10),
+        warnings: vec!["The page is turned off".into()],
     };
     let said = viewer_issued(&issued, now, &Utc);
     assert!(
@@ -1542,8 +1547,94 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
         said.contains("works once") && said.contains("not shown again"),
         "{said}"
     );
+    assert!(said.contains("Note: The page is turned off"), "{said}");
     assert!(viewer_changed(&waiting, false).contains("Revoked"));
     assert!(viewer_changed(&waiting, true).contains("Forgot"));
+}
+
+#[tokio::test]
+async fn a_viewer_that_the_page_will_not_serve_is_made_with_a_warning_that_says_why() {
+    let make = |layouts: &[&str]| IssueViewer {
+        label: "tablet".into(),
+        layouts: layouts.iter().map(|name| (*name).to_owned()).collect(),
+        lifetime_days: None,
+        code_minutes: None,
+        refresh: false,
+    };
+
+    // As things are meant to be, there is nothing to say.
+    let f = start().await;
+    assert_eq!(
+        f.client.issue_viewer(&make(&[])).await.unwrap().warnings,
+        Vec::<String>::new()
+    );
+
+    let off = start_with(WebFacts {
+        enabled: false,
+        ..WebFacts::new(VIEW_BASE)
+    })
+    .await;
+    let said = off.client.issue_viewer(&make(&[])).await.unwrap();
+    assert_eq!(said.warnings.len(), 1, "{:?}", said.warnings);
+    assert!(
+        said.warnings[0].contains("turned off"),
+        "{:?}",
+        said.warnings
+    );
+
+    let open = start_with(WebFacts {
+        open: true,
+        ..WebFacts::new(VIEW_BASE)
+    })
+    .await;
+    let said = open.client.issue_viewer(&make(&[])).await.unwrap();
+    assert!(said.warnings[0].contains("open"), "{:?}", said.warnings);
+
+    let narrow = start_with(WebFacts {
+        layouts: vec!["dashboard".into()],
+        ..WebFacts::new(VIEW_BASE)
+    })
+    .await;
+    // For all layouts, or for ones the page shows: nothing to say. For one it doesn't, or some of them: what is missing.
+    assert!(
+        narrow
+            .client
+            .issue_viewer(&make(&[]))
+            .await
+            .unwrap()
+            .warnings
+            .is_empty()
+    );
+    assert!(
+        narrow
+            .client
+            .issue_viewer(&make(&["dashboard"]))
+            .await
+            .unwrap()
+            .warnings
+            .is_empty()
+    );
+    let none = narrow
+        .client
+        .issue_viewer(&make(&["departures"]))
+        .await
+        .unwrap();
+    assert!(
+        none.warnings[0].contains("none of what it was made for")
+            && none.warnings[0].contains("departures"),
+        "{:?}",
+        none.warnings
+    );
+    let some = narrow
+        .client
+        .issue_viewer(&make(&["dashboard", "departures"]))
+        .await
+        .unwrap();
+    assert!(
+        some.warnings[0].contains("does not show departures"),
+        "{:?}",
+        some.warnings
+    );
 }
 
 #[tokio::test]

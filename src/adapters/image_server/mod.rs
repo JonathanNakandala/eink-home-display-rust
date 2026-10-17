@@ -247,6 +247,7 @@ pub fn web_router(
         allowed,
         settings.stream,
         access,
+        settings.trusted_proxies.clone(),
     )))
 }
 

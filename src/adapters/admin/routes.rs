@@ -43,8 +43,74 @@ pub(super) struct Admin {
     pub(super) clock: Arc<dyn Clock>,
     /// Who may look at the page for a browser, when that needs a token.
     pub(super) viewers: Arc<Viewers>,
+    /// What the page for a browser is, as far as a new viewer's link is concerned.
+    pub(super) web: WebFacts,
+}
+
+/// What the admin interface needs to know of the page for a browser: where it is, and what it will show to whom, so that a
+/// viewer is not made that cannot see what it was made for without the owner being told.
+#[derive(Debug, Clone)]
+pub struct WebFacts {
     /// Where a browser reaches the HTTPS side, which the link for a new viewer starts with.
-    pub(super) view_base: String,
+    pub base: String,
+    /// Whether the page is served at all.
+    pub enabled: bool,
+    /// Whether it asks for no token.
+    pub open: bool,
+    /// The layouts the page may show, by name. Empty means all of them.
+    pub layouts: Vec<String>,
+}
+
+impl WebFacts {
+    /// A page that is served, asks for tokens and shows every layout, at `base`.
+    pub fn new(base: impl Into<String>) -> Self {
+        Self {
+            base: base.into(),
+            enabled: true,
+            open: false,
+            layouts: Vec::new(),
+        }
+    }
+
+    /// What is worth telling the owner who has just made a viewer allowed `layouts` (empty: all).
+    fn warnings(&self, layouts: &[String]) -> Vec<String> {
+        let mut said = Vec::new();
+        if !self.enabled {
+            said.push(
+                "The page is turned off ([server.web] enabled = false), so this link opens nothing until it is on".to_owned(),
+            );
+        } else if self.open {
+            said.push(
+                "The page is open ([server.web] open = true): it shows to anyone who can reach it with no sign-in, so this viewer is not needed".to_owned(),
+            );
+        }
+        if self.enabled && !self.layouts.is_empty() {
+            let hidden: Vec<&str> = if layouts.is_empty() {
+                Vec::new()
+            } else {
+                layouts
+                    .iter()
+                    .filter(|name| !self.layouts.contains(name))
+                    .map(String::as_str)
+                    .collect()
+            };
+            if !layouts.is_empty() && hidden.len() == layouts.len() {
+                said.push(format!(
+                    "The page shows only {} ([server.web] layouts), so this viewer will see none of what it was made for ({})",
+                    self.layouts.join(", "),
+                    hidden.join(", ")
+                ));
+            } else if !hidden.is_empty() {
+                said.push(format!(
+                    "The page does not show {} ([server.web] layouts is {}), so this viewer will not see {}",
+                    hidden.join(", "),
+                    self.layouts.join(", "),
+                    if hidden.len() == 1 { "it" } else { "them" }
+                ));
+            }
+        }
+        said
+    }
 }
 
 #[derive(OpenApi)]
@@ -98,7 +164,7 @@ pub fn router(
     layouts: Layouts,
     clock: Arc<dyn Clock>,
     viewers: Arc<Viewers>,
-    view_base: String,
+    web: WebFacts,
 ) -> Router {
     let (router, _) = routes().split_for_parts();
     let description: Arc<str> = openapi_json().into();
@@ -133,7 +199,7 @@ pub fn router(
             layouts,
             clock,
             viewers,
-            view_base,
+            web,
         }))
 }
 
@@ -624,6 +690,7 @@ async fn issue_viewer(
             ),
         )
     })?;
+    let warnings = admin.web.warnings(&asked.layouts);
     let issued = admin
         .viewers
         .issue(
@@ -659,10 +726,11 @@ async fn issue_viewer(
         code: issued.code.expose().to_owned(),
         link: format!(
             "{}/view#code={}",
-            admin.view_base.trim_end_matches('/'),
+            admin.web.base.trim_end_matches('/'),
             issued.code.expose()
         ),
         link_expires_at,
+        warnings,
     }))
 }
 

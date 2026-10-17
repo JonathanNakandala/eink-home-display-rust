@@ -87,7 +87,7 @@ async fn start() -> Server {
         layouts,
         clock,
         viewers,
-        "https://display.test:8443".to_owned(),
+        home_display_server::adapters::admin::WebFacts::new("https://display.test:8443"),
     );
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;

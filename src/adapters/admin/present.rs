@@ -284,10 +284,16 @@ pub fn viewer_issued<Z: chrono::TimeZone>(
 where
     Z::Offset: std::fmt::Display,
 {
+    let notes: String = issued
+        .warnings
+        .iter()
+        .map(|warning| format!("Note: {warning}.\n"))
+        .collect();
     format!(
-        "Made the viewer {} ({}), who may look at: {}.\n\n\
+        "{notes}{}Made the viewer {} ({}), who may look at: {}.\n\n\
          Open this in the browser to sign it in. It works once, and for {} more (until {}), and is not shown again:\n\n  {}\n\n\
          The part after # never leaves the browser. If it is lost or not used in time, revoke the viewer and make another.",
+        if notes.is_empty() { "" } else { "\n" },
         issued.viewer.id,
         issued.viewer.label,
         issued.viewer.scope,

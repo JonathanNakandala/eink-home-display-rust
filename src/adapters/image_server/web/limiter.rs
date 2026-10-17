@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use crate::adapters::source::{Source, source_of};
 
 /// The address, as it is: an IPv4 address that arrived as an IPv6 one is the IPv4 one, and that is all.
-fn exact(address: std::net::IpAddr) -> std::net::IpAddr {
+pub(super) fn exact(address: std::net::IpAddr) -> std::net::IpAddr {
     match address {
         std::net::IpAddr::V6(v6) => v6
             .to_ipv4_mapped()
