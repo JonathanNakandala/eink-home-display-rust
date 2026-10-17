@@ -89,6 +89,20 @@ script:
                 id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
                 if (id(force_refresh))
                   ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
+            # A refresh takes a minute or so (the server renders, then the picture comes down and is drawn), so say so in
+            # the corner at once. Only that corner is redrawn; the picture is replaced when it arrives, or this by what went
+            # wrong.
+            - if:
+                condition:
+                  lambda: 'return id(force_refresh);'
+                then:
+                  - lambda: |-
+                      id(notice_text) = home_display_format::refreshing_notice();
+                      id(show_notice) = true;
+                      id(notice_on_panel) = true;
+                      id(refreshing_on_panel) = true;
+                      id(prompt_on_panel) = false;
+                  - component.update: eink_display
             - script.execute: begin_server
           else:
             # Without Wi-Fi there is no point asking the server, or looking for it.
@@ -111,13 +125,15 @@ script:
             - script.execute: show_prompt
       - if:
           condition:
-            # Once per spell: the text has an age in it, which would otherwise redraw every wake.
-            lambda: 'return id(plan_stale) && !id(notice_on_panel);'
+            # Once per spell: the text has an age in it, which would otherwise redraw every wake. "Refreshing..." does not count
+            # as a notice here: left alone it would say so for ever.
+            lambda: 'return id(plan_stale) && (!id(notice_on_panel) || id(refreshing_on_panel));'
           then:
             - lambda: |-
                 id(notice_text) = home_display_format::stale_notice(id(plan_age_seconds));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
+                id(refreshing_on_panel) = false;
                 id(prompt_on_panel) = false;
             - component.update: eink_display
             - delay: ${eink_refresh_settle}
@@ -186,9 +202,11 @@ script:
       - script.execute: backoff
       - if:
           condition:
-            lambda: 'return id(failed_wakes) == 1 && !id(notice_on_panel);'
+            # The first failure of a spell, once; or any failure that finds "Refreshing..." in the corner, which is not a report
+            # and must be replaced by one.
+            lambda: 'return (id(failed_wakes) == 1 && !id(notice_on_panel)) || id(refreshing_on_panel);'
           then:
-            - logger.log: "First failure, showing notice"
+            - logger.log: "Failure, showing notice"
             # The clock survives deep sleep; this just gives a fresh start a moment to sync.
             - if:
                 condition:
@@ -205,6 +223,7 @@ script:
                                                               id(utc_offset_known), id(utc_offset_s));
                 id(show_notice) = true;
                 id(notice_on_panel) = true;
+                id(refreshing_on_panel) = false;
                 id(prompt_on_panel) = false;
             - component.update: eink_display
             - delay: ${eink_refresh_settle}
