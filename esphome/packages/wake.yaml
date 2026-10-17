@@ -102,7 +102,15 @@ script:
                       id(notice_on_panel) = true;
                       id(refreshing_on_panel) = true;
                       id(prompt_on_panel) = false;
+                  - logger.log: "Showing the refreshing notice in the corner"
                   - component.update: eink_display
+                  # The panel finishes this before the wake goes on: left running beside the server request and the
+                  # download, both would crawl and the watchdog would end the wake with the notice still up.
+                  - wait_until:
+                      condition:
+                        lambda: 'return eink_notice::idle(*id(eink_display));'
+                      timeout: 15s
+                  - logger.log: "Refreshing notice is on the panel"
             - script.execute: begin_server
           else:
             # Without Wi-Fi there is no point asking the server, or looking for it.
@@ -175,6 +183,13 @@ script:
                 level: WARN
                 format: "The wake didn't finish in ${wake_timeout}: giving up"
             - script.execute: backoff
+            # Not a report of its own (a timeout writes no notice), but "Refreshing..." must not be left saying so.
+            - if:
+                condition:
+                  lambda: 'return id(refreshing_on_panel);'
+                then:
+                  - script.execute: show_failure
+                  - script.wait: show_failure
             - script.execute: sleep_now
 
   # Counts a failed wake and works out how long to sleep: sleep_duration, doubling with each failure in a row.
@@ -191,6 +206,37 @@ script:
           ESP_LOGW("backoff", "Failure %u in a row (%s); sleeping %u s", (unsigned) id(failed_wakes),
                    home_display_report::failure_label(home_display_state::fail_reason), (unsigned) (id(plan_sleep_ms) / 1000));
 
+  # Writes the failure notice in the corner: what went wrong, and when if the time can be told. Used by `give_up` and by
+  # the watchdog, which both end a wake that failed.
+  - id: show_failure
+    then:
+      - logger.log: "Failure, showing notice"
+      # The clock survives deep sleep; this just gives a fresh start a moment to sync.
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - wait_until:
+                condition:
+                  time.has_time:
+                timeout: 8s
+      - lambda: |-
+          // What went wrong, in a few words (the log has the detail), and when, if the time can be told.
+          auto now = id(sntp_time).now();
+          id(notice_text) = home_display_format::failure_notice(home_display_state::fail_reason, now.is_valid(), now.timestamp,
+                                                        id(utc_offset_known), id(utc_offset_s));
+          id(show_notice) = true;
+          id(notice_on_panel) = true;
+          id(refreshing_on_panel) = false;
+          id(prompt_on_panel) = false;
+      - component.update: eink_display
+      # The driver goes at its own pace, which a download still running slows (the watchdog ends a wake in the middle of one).
+      - wait_until:
+          condition:
+            lambda: 'return eink_notice::idle(*id(eink_display));'
+          timeout: 40s
+      - delay: ${eink_refresh_settle}
+
   # Nothing worked: the picture stays on the panel (e-ink keeps it). The first failure in a row
   # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time
   # (doubling, up to max_backoff_ms), so a server that is down doesn't drain the battery.
@@ -206,25 +252,6 @@ script:
             # and must be replaced by one.
             lambda: 'return (id(failed_wakes) == 1 && !id(notice_on_panel)) || id(refreshing_on_panel);'
           then:
-            - logger.log: "Failure, showing notice"
-            # The clock survives deep sleep; this just gives a fresh start a moment to sync.
-            - if:
-                condition:
-                  wifi.connected:
-                then:
-                  - wait_until:
-                      condition:
-                        time.has_time:
-                      timeout: 8s
-            - lambda: |-
-                // What went wrong, in a few words (the log has the detail), and when, if the time can be told.
-                auto now = id(sntp_time).now();
-                id(notice_text) = home_display_format::failure_notice(home_display_state::fail_reason, now.is_valid(), now.timestamp,
-                                                              id(utc_offset_known), id(utc_offset_s));
-                id(show_notice) = true;
-                id(notice_on_panel) = true;
-                id(refreshing_on_panel) = false;
-                id(prompt_on_panel) = false;
-            - component.update: eink_display
-            - delay: ${eink_refresh_settle}
+            - script.execute: show_failure
+            - script.wait: show_failure
       - script.execute: sleep_now
