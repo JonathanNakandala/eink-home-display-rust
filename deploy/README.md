@@ -156,7 +156,7 @@ run draws every layout for it too, at its own size, in full colour, with no dith
 `<server.directory>/_web/<layout>/`, so the panel's pictures and the page's never meet. The layouts scale with the size they are
 drawn at. It costs one more render of every layout per run (the one Chrome draws them all, whatever their sizes), and the page's
 pictures are reported in `/status` (`layouts[].output` is `web`) and `/metrics` (`home_display_layout_drawn{output="web",…}`) like
-any other. With a Waveshare panel the server now runs for the page's sake alone, and a layout the page can't be given is reported
+any other. With a Waveshare panel the server now runs for the page's sake alone (and `/healthz` and `/status` judge it by the page's pictures, since the panel, driven directly, publishes none), and a layout the page can't be given is reported
 and leaves its last picture, as for any output besides the display.
 
 ### For a screen on a wall

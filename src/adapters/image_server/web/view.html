@@ -176,6 +176,10 @@
     var response = await send(path, options);
     if (response.status === 401 && refreshToken()) {
       var renewed = await renew();
+      // The server could not be asked, or answered with trouble of its own (the network, a 5xx, too many requests): that is not
+      // the viewer's access ending, which only a refusal of the refresh token says. Nothing is forgotten, and whoever called
+      // tries again after its own wait.
+      if (renewed === null) throw new Error('The token could not be renewed just now');
       if (renewed) response = await send(path, options);
     }
     return response;
