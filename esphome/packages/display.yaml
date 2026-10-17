@@ -37,6 +37,8 @@ online_image:
             - script.execute: after_image
           else:
             - logger.log: "Image downloaded, drawing"
+            # An earlier notice in this wake ("Refreshing...") must not be drawn again in place of the picture.
+            - lambda: 'id(show_notice) = false;'
             - component.update: eink_display
             - delay: ${eink_refresh_settle}
             # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
@@ -46,6 +48,7 @@ online_image:
                 id(shown_version) = id(plan_version);
                 home_display_shown::keep(home_display_state::downloaded_etag);
                 id(notice_on_panel) = false;
+                id(refreshing_on_panel) = false;
                 id(prompt_on_panel) = false;
                 id(low_label_on_panel) = id(battery_low);
             - script.execute: after_image
@@ -111,6 +114,14 @@ globals:
 
   # A notice is on the panel instead of (part of) the picture, so the next good wake must redraw it.
   - id: notice_on_panel
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # The notice in the corner is "Refreshing...", drawn when the button asked for a refresh. It is a notice (so the picture is
+  # redrawn over it once the server is fine), but unlike the others it is not a report: a failure or a stale picture may
+  # replace it, where they would leave an earlier notice alone.
+  - id: refreshing_on_panel
     type: bool
     restore_value: yes
     initial_value: 'false'

@@ -67,6 +67,18 @@ TEST(the_server_is_where_mdns_found_it_or_the_fallback) {
   CHECK_EQ(server_base(0, 0, fallback), fallback);
 }
 
+TEST(the_button_refresh_notice_fits_the_font_and_is_no_longer_than_the_notices_that_replace_it) {
+  // Both sit in the same corner, anchored at its right, so a longer one covers the shorter one's white box. A shorter one
+  // would leave the end of the box behind. (The glyphs of the font are in packages/display.yaml.)
+  const std::string refreshing = refreshing_notice();
+  CHECK_EQ(refreshing, "Refreshing...");
+  CHECK_EQ(refreshing.find_first_not_of(" :@%-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"),
+           std::string::npos);
+  CHECK(failure_notice(Failure::SERVER, false, 0, false, 0).size() > refreshing.size());
+  CHECK(failure_notice(Failure::MEMORY, false, 0, false, 0).size() >= refreshing.size());
+  CHECK(stale_notice(600).size() > refreshing.size());
+}
+
 TEST(a_failure_notice_names_the_cause_and_the_time_only_when_it_is_known) {
   const int64_t now = 1791376496;  // 12:34:56 UTC; an hour ahead in the server's zone
   CHECK_EQ(failure_notice(Failure::SERVER, true, now, true, 3600), "Last update failed @ 13:34");
