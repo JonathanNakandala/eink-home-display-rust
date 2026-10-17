@@ -667,6 +667,45 @@ mod socket {
     }
 }
 
+#[cfg(windows)]
+mod pipe {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_second_server_on_the_same_path_is_refused_and_the_first_is_untouched() {
+        let f = start().await;
+        let error = format!("{:#}", bind(&f.socket).await.err().expect("should refuse"));
+        assert!(error.contains("Failed to open the admin pipe"), "{error}");
+        assert!(
+            f.client.window().await.is_ok(),
+            "the first server still answers"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pipe_goes_when_the_server_does_and_the_path_can_be_used_again() {
+        let directory = private_directory();
+        let path = default_path(directory.path());
+        let listener = bind(&path).await.unwrap();
+        drop(listener);
+        assert!(matches!(
+            AdminClient::new(&path).window().await,
+            Err(CallError::Unreachable(_))
+        ));
+        assert!(
+            bind(&path).await.is_ok(),
+            "nothing is left behind to be cleared"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_server_is_reached_by_the_path_however_it_is_spelled() {
+        let f = start().await;
+        let shouted = std::path::PathBuf::from(f.socket.to_string_lossy().to_uppercase());
+        assert!(AdminClient::new(&shouted).window().await.is_ok());
+    }
+}
+
 #[tokio::test]
 async fn with_no_server_the_client_says_it_could_not_be_reached() {
     let directory = private_directory();

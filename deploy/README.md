@@ -531,8 +531,11 @@ it. The authority's own directory is made that way.
 - **A long path will not do.** A Unix socket's path is limited to about 100 bytes. If the default is too long, the server
   says so; set `[server.admin] socket` to a shorter one (in a directory only you can use).
 - **Turn it off** with `[server.admin] enabled = false`. Then nothing can open the window, so no new display can join.
-- **Windows:** not offered yet. The pipe it would use has not been checked to keep other users out, and that is its
-  whole protection, so the server logs that it is unavailable and runs without it.
+- **Windows:** the socket is a named pipe, named for the socket's path (`\\.\pipe\home-display-admin-…`), so the server and
+  `displayctl` find each other by the same path, however it is spelled. No file is made, so the directory's permissions
+  do not matter. What keeps other users out is the pipe's access list, which names the user the server runs as and
+  nobody else (not even Administrators); other machines are refused by the pipe itself. It has been tried with one
+  user only, not from a second account. A second server on the same path fails to start.
 - **No secret comes back from it:** not a pairing code, a key or a certificate. You read the code off the display.
 - **The API is described** in [config/admin-openapi.json](../config/admin-openapi.json) (OpenAPI 3.1), which is also served at
   `/openapi.json` on the socket. Any HTTP client that can use a Unix socket can use it, for example

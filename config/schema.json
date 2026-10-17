@@ -129,7 +129,7 @@
           "default": true
         },
         "socket": {
-          "description": "Where the socket is. Left out, it is `admin.sock` in `[server.tls] directory`. A Unix socket path has to be\nshort (about 100 bytes), and the directory it is in has to be closed to other users; set this if either is\na problem for the default.",
+          "description": "Where the socket is. Left out, it is `admin.sock` in `[server.tls] directory`. A Unix socket path has to be\nshort (about 100 bytes), and the directory it is in has to be closed to other users; set this if either is\na problem for the default. On Windows no file is made: the path only names the pipe that is used.",
           "type": [
             "string",
             "null"

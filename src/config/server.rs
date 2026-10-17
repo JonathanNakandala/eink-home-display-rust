@@ -77,7 +77,7 @@ pub struct AdminConfig {
     pub enabled: bool,
     /// Where the socket is. Left out, it is `admin.sock` in `[server.tls] directory`. A Unix socket path has to be
     /// short (about 100 bytes), and the directory it is in has to be closed to other users; set this if either is
-    /// a problem for the default.
+    /// a problem for the default. On Windows no file is made: the path only names the pipe that is used.
     #[serde(default)]
     pub socket: Option<PathBuf>,
 }
