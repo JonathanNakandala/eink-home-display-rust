@@ -1,0 +1,2 @@
+# The generated files in config/ are compared byte for byte with what the program writes, which uses LF.
+* text=auto eol=lf
