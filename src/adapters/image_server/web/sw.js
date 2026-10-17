@@ -5,7 +5,9 @@
 // as the network is back.
 'use strict';
 
-const CACHE = 'hd-shell-1';
+// Named for what it keeps (the server puts a fingerprint of the page, manifest, icons and this script where the name ends), so
+// that when any of them changes the worker is a new one, its cache is a new one, and the old is deleted when it takes over.
+const CACHE = 'hd-shell-__SHELL__';
 const SHELL = [
   '/view',
   '/view/manifest.webmanifest',

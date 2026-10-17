@@ -27,6 +27,8 @@ pub enum RefreshOutcome {
 pub struct RefreshControl {
     wake: Notify,
     finished: watch::Sender<u64>,
+    /// Changes each time the display's picture is drawn, which is what a display that asked is waiting for.
+    shown: watch::Sender<u64>,
     last_started: Mutex<Option<Instant>>,
     cooldown: Duration,
 }
@@ -36,6 +38,7 @@ impl RefreshControl {
         Arc::new(Self {
             wake: Notify::new(),
             finished: watch::channel(0).0,
+            shown: watch::channel(0).0,
             last_started: Mutex::new(None),
             cooldown,
         })
@@ -56,7 +59,10 @@ impl RefreshControl {
         self.finished.send_modify(|count| *count += 1);
     }
 
-    /// Triggers a render and waits for it, unless one started within the cooldown.
+    /// Triggers a render and waits for the display's picture of it, unless one started within the cooldown. That is the picture
+    /// drawn and kept for the display, which is all it is waiting for: the outputs besides it (a web page's own, drawn after)
+    /// are not waited for, so that having a page doesn't make a button press slower. A run that ends without getting that far
+    /// (it failed) ends the wait all the same.
     pub async fn request(&self, timeout: Duration) -> RefreshOutcome {
         {
             let mut last = self
@@ -70,11 +76,17 @@ impl RefreshControl {
             // Reserved now, so a second request arriving before the loop wakes is throttled too.
             *last = Some(now);
         }
-        let mut finished = self.finished.subscribe();
-        let seen = *finished.borrow();
+        let (mut finished, mut shown) = (self.finished.subscribe(), self.shown.subscribe());
+        let (seen_finished, seen_shown) = (*finished.borrow(), *shown.borrow());
         self.wake.notify_one();
-        match tokio::time::timeout(timeout, finished.wait_for(|count| *count > seen)).await {
-            Ok(Ok(_)) => RefreshOutcome::Rendered,
+        let done = async {
+            tokio::select! {
+                result = finished.wait_for(|count| *count > seen_finished) => result.map(|_| ()),
+                result = shown.wait_for(|count| *count > seen_shown) => result.map(|_| ()),
+            }
+        };
+        match tokio::time::timeout(timeout, done).await {
+            Ok(Ok(())) => RefreshOutcome::Rendered,
             _ => RefreshOutcome::TimedOut,
         }
     }
@@ -86,6 +98,10 @@ impl RenderObserver for RefreshControl {
             .last_started
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+    }
+
+    fn display_updated(&self) {
+        self.shown.send_modify(|count| *count += 1);
     }
 
     fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {
@@ -100,6 +116,62 @@ impl RenderObserver for RefreshControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_request_is_answered_when_the_displays_picture_is_drawn_not_when_the_pages_are() {
+        let control = RefreshControl::new(Duration::from_secs(30));
+        let plays = Arc::clone(&control);
+        tokio::spawn(async move {
+            loop {
+                plays.wake().notified().await;
+                plays.render_started();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                // The display's picture is there; the page's own take a good while longer.
+                plays.display_updated();
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                plays.render_finished();
+            }
+        });
+        let asked = std::time::Instant::now();
+
+        let outcome = control.request(Duration::from_secs(5)).await;
+
+        assert_eq!(outcome, RefreshOutcome::Rendered);
+        assert!(
+            asked.elapsed() < Duration::from_millis(800),
+            "{:?}",
+            asked.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_that_fails_before_the_display_is_done_still_ends_the_wait() {
+        let control = RefreshControl::new(Duration::from_secs(30));
+        let plays = Arc::clone(&control);
+        tokio::spawn(async move {
+            plays.wake().notified().await;
+            plays.render_started();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            // Never says the display was updated: the run failed.
+            plays.render_finished();
+        });
+
+        let outcome = control.request(Duration::from_secs(5)).await;
+
+        assert_eq!(outcome, RefreshOutcome::Rendered);
+    }
+
+    #[tokio::test]
+    async fn a_display_updated_before_the_request_does_not_answer_it() {
+        let control = RefreshControl::new(Duration::from_secs(30));
+        // An earlier run's display had been updated.
+        control.display_updated();
+
+        let outcome = control.request(Duration::from_millis(150)).await;
+
+        // Nothing renders now, and what was said before the request is not what it waits for.
+        assert_eq!(outcome, RefreshOutcome::TimedOut);
+    }
 
     /// Plays the scheduler loop: renders (taking `work`) each time it is woken.
     fn spawn_loop(

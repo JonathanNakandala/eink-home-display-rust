@@ -320,6 +320,10 @@ where
                     .await,
             });
         }
+        // The display's pictures are done: whatever is waiting for them (a button press) need not wait for the outputs besides.
+        for observer in &self.observers {
+            observer.display_updated();
+        }
         for output in &self.extra_outputs {
             let (profile, layouts) = (output.profile(), self.layouts_for(output.as_ref(), now));
             for layout in layouts {
@@ -1408,5 +1412,93 @@ mod tests {
             started.elapsed()
         );
         assert!(report.is_degraded());
+    }
+
+    /// Notes, in order, what the display's pictures, the observers and another output do.
+    #[derive(Default)]
+    struct Order(Mutex<Vec<&'static str>>);
+    impl Order {
+        fn note(&self, what: &'static str) {
+            self.0.lock().unwrap().push(what);
+        }
+    }
+    impl RenderObserver for Order {
+        fn render_started(&self) {
+            self.note("started");
+        }
+        fn display_updated(&self) {
+            self.note("display updated");
+        }
+        fn render_succeeded(&self, _: DateTime<Tz>, _: &RenderReport) {
+            self.note("succeeded");
+        }
+        fn render_failed(&self, _: DateTime<Tz>, _: &anyhow::Error) {
+            self.note("failed");
+        }
+    }
+    /// An output besides the display, which says when it is given a picture.
+    struct Noting(Arc<Order>);
+    #[async_trait]
+    impl ImageDisplayService for Noting {
+        fn name(&self) -> &'static str {
+            "web"
+        }
+        fn profile(&self) -> DisplayProfile {
+            Panel.profile()
+        }
+        fn wants_every_layout(&self) -> bool {
+            true
+        }
+        async fn display(&self, _: &LayoutName, _: &ImageData) -> anyhow::Result<()> {
+            self.0.note("page drawn");
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn observers_are_told_the_displays_pictures_are_done_before_the_outputs_besides_it_are_drawn()
+     {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        let order = Arc::new(Order::default());
+
+        recording_app(&journal)
+            .with_output(Arc::new(Noting(order.clone())))
+            .with_observer(order.clone())
+            .run(Location::new(0.0, 0.0))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *order.0.lock().unwrap(),
+            [
+                "started",
+                "display updated",
+                "page drawn",
+                "page drawn",
+                "succeeded"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_that_fails_before_the_display_is_done_never_says_it_was() {
+        let journal = Arc::new(Journal {
+            every_layout: true,
+            ..Journal::default()
+        });
+        *journal.failing.lock().unwrap() = Some("first".to_owned());
+        let order = Arc::new(Order::default());
+
+        let result = recording_app(&journal)
+            .with_output(Arc::new(Noting(order.clone())))
+            .with_observer(order.clone())
+            .run(Location::new(0.0, 0.0))
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(*order.0.lock().unwrap(), ["started", "failed"]);
     }
 }

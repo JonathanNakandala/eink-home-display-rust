@@ -141,8 +141,9 @@ async fn main() -> Result<()> {
         clock.clone(),
     )?
     .with_observer(Arc::new(launch::AttemptMarker::new(marker, clock.clone())))
-    // Status before refresh: a button press is answered as soon as the refresh hears the render
-    // end, and whoever then reads /status must see that render's outcome.
+    // Status before refresh: a button press is answered as soon as the refresh hears that the display's picture is drawn (or, if
+    // the run fails first, that it has ended), which is before the outputs besides the display are; so /status may not yet show
+    // that run's outcome when the display has its answer, and does once the run ends.
     .with_observer(status.clone())
     .with_observer(refresh.clone());
     let periodic = run_periodically_from(

@@ -436,7 +436,11 @@ pub fn web_routes(
         (images, format)
     };
     let settings = image_server::WebSettings {
-        stream: Default::default(),
+        stream: image_server::StreamTiming {
+            most: web.streams as usize,
+            most_per_source: web.streams_per_source as usize,
+            ..Default::default()
+        },
         open: web.open,
         layouts: web
             .layouts
