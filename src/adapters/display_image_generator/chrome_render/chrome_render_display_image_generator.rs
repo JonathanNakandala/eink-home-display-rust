@@ -588,12 +588,20 @@ mod tests {
 
     #[test]
     fn file_urls_encode_characters_that_need_it() {
-        let url = file_url(Path::new("/tmp/my render/dashboard é.html")).unwrap();
-
-        assert_eq!(
-            url.as_str(),
-            "file:///tmp/my%20render/dashboard%20%C3%A9.html"
+        #[cfg(unix)]
+        let (path, expected) = (
+            "/tmp/my render/dashboard é.html",
+            "file:///tmp/my%20render/dashboard%20%C3%A9.html",
         );
+        #[cfg(windows)]
+        let (path, expected) = (
+            r"C:\tmp\my render\dashboard é.html",
+            "file:///C:/tmp/my%20render/dashboard%20%C3%A9.html",
+        );
+
+        let url = file_url(Path::new(path)).unwrap();
+
+        assert_eq!(url.as_str(), expected);
     }
 
     #[test]
