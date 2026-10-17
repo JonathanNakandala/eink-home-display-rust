@@ -129,6 +129,26 @@ pub fn web_screen_images(
         })
 }
 
+/// The images the display routes (`/image`, `/plan`, `/healthz`, `/status`) stand on, and the format whose date is a render's
+/// version: the panel's, when the panel fetches its pictures. A panel that is driven directly publishes nothing, so for one the
+/// service is judged by what it does draw, the page's own pictures if it has a screen of its own; judged by the panel's empty
+/// folder it would read as stale for ever, and `/healthz` as failing.
+pub fn served_images(
+    config: &ApplicationConfig,
+    panel: Arc<dyn PublishedImages>,
+    format: crate::domain::models::display::ImageFormat,
+) -> (
+    Arc<dyn PublishedImages>,
+    crate::domain::models::display::ImageFormat,
+) {
+    if !config.display.kind.fetches_image()
+        && let Some(web) = web_screen_images(&config.server)
+    {
+        return (web, crate::domain::models::display::ImageFormat::Png);
+    }
+    (panel, format)
+}
+
 /// The page for a browser as an output, if `[server.web]` is on and has a `screen`.
 pub fn setup_web_screen(
     config: &crate::config::server::ServerConfig,
@@ -281,5 +301,132 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// A configuration with this display, the page on with a screen of its own, and everything under `directory`.
+    fn configured(kind: &str, directory: &std::path::Path, screen: bool) -> ApplicationConfig {
+        let mut config = ApplicationConfig::example();
+        config.display.kind = match kind {
+            "waveshare" => crate::config::application::DisplayKind::WaveshareEpd7in5V2,
+            _ => crate::config::application::DisplayKind::ReTerminalE1003,
+        };
+        config.server.directory = directory.to_path_buf();
+        config.server.web.enabled = true;
+        config.server.web.open = true;
+        config.server.web.screen = screen.then(crate::config::server::ScreenConfig::default);
+        config
+    }
+
+    /// The display routes over `images`, as `main` makes them, with a status board that has been going for an hour, so that
+    /// a service that has drawn nothing is stale, and `/healthz` of it.
+    async fn healthz_over(
+        images: Arc<dyn PublishedImages>,
+        format: crate::domain::models::display::ImageFormat,
+        drawn: bool,
+    ) -> (u16, String) {
+        use crate::adapters::clock::SystemClock;
+        use crate::adapters::image_server::{Handles, router};
+        use crate::application::devices::DeviceBoard;
+        use crate::application::plan::PlanTiming;
+        use crate::application::refresh::RefreshControl;
+        use crate::application::status::StatusBoard;
+        use crate::domain::models::layout::Layouts;
+        use crate::domain::models::schedule::Schedule;
+        use crate::domain::services::render_observer::RenderObserver;
+
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(chrono_tz::UTC));
+        let status = StatusBoard::new(clock.now() - chrono::Duration::hours(1));
+        if drawn {
+            status.render_succeeded(clock.now(), &Default::default());
+        }
+        let handles = Handles {
+            layouts: Layouts::default(),
+            layout_choices: None,
+            viewers: None,
+            refresh: RefreshControl::new(Duration::from_secs(30)),
+            status,
+            devices: DeviceBoard::new(Duration::from_secs(900)),
+            members: None,
+            handshakes: None,
+        };
+        let app = router(
+            images,
+            format,
+            Schedule::parse_every("1h").unwrap(),
+            PlanTiming {
+                wake_delay: Duration::from_secs(30),
+                stale_grace: Duration::from_secs(300),
+            },
+            handles,
+            clock,
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let response = reqwest::get(format!("http://{address}/healthz"))
+            .await
+            .unwrap();
+        (
+            response.status().as_u16(),
+            response.text().await.unwrap().trim().to_owned(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_panel_driven_directly_with_a_page_of_its_own_is_healthy_by_what_is_drawn_for_the_page()
+     {
+        use crate::domain::models::display::ImageFormat;
+        use crate::domain::models::layout::LayoutName;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = configured("waveshare", tmp.path(), true);
+        let panel: Arc<dyn PublishedImages> = Arc::new(DirectoryImages::new(tmp.path()));
+        // The default layout of the test's layouts is what `Layouts::default()` calls it.
+        let layout = LayoutName::parse("default").unwrap();
+        // What a Waveshare run leaves: nothing for the panel, and a picture for the page.
+        DirectoryImages::new(config.server.web_images_directory())
+            .publish(&layout, ImageFormat::Png, b"drawn for the page")
+            .await
+            .unwrap();
+
+        // Why it matters: judged by the panel's folder, where this panel never publishes, the service reads as stale for good.
+        let by_the_panel = healthz_over(panel.clone(), ImageFormat::Bmp, true).await;
+        assert_eq!(by_the_panel.0, 503, "{by_the_panel:?}");
+
+        let (images, format) = served_images(&config, panel, ImageFormat::Bmp);
+
+        assert_eq!(format, ImageFormat::Png);
+        assert_eq!(
+            healthz_over(images, format, true).await,
+            (200, "ok".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panel_that_publishes_is_judged_by_its_own_pictures_page_or_no_page() {
+        use crate::domain::models::display::ImageFormat;
+        use crate::domain::models::layout::LayoutName;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = configured("reterminal", tmp.path(), true);
+        let panel: Arc<dyn PublishedImages> = Arc::new(DirectoryImages::new(tmp.path()));
+        let layout = LayoutName::parse("default").unwrap();
+        panel
+            .publish(&layout, ImageFormat::Bmp, b"the panel's")
+            .await
+            .unwrap();
+
+        let (images, format) = served_images(&config, panel.clone(), ImageFormat::Bmp);
+
+        // The panel's, in its own format: nothing about the page's folder (which has nothing in it) is held against it.
+        assert_eq!(format, ImageFormat::Bmp);
+        assert_eq!(
+            healthz_over(images, format, true).await,
+            (200, "ok".to_owned())
+        );
+        // And the page's own pictures being absent is not what makes a reTerminal stale.
+        let no_screen = configured("reterminal", tmp.path(), false);
+        let (_, format) = served_images(&no_screen, panel, ImageFormat::Qoi);
+        assert_eq!(format, ImageFormat::Qoi);
     }
 }

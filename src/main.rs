@@ -183,9 +183,11 @@ async fn main() -> Result<()> {
         handles.clone(),
         clock.clone(),
     )?;
+    // What the service is judged by: the panel's pictures, or, for a panel driven directly, the page's own.
+    let (served, served_format) = bootstrap::served_images(&config, images, format);
     let display_routes = router(
-        images,
-        format,
+        served,
+        served_format,
         schedule.clone(),
         settings.timing,
         handles,

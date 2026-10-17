@@ -3807,4 +3807,104 @@ mod tests {
 
         outcome.unwrap();
     }
+
+    /// Needs a real Chrome, so run with `--ignored`. The server fails to renew a token twice running (as it would for a
+    /// moment of bad Wi-Fi, a `5xx` or a `429`) just as the access token runs out: that is not the end of the viewer's access,
+    /// so the page keeps its tokens and its picture, tries again, and renews.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn a_renewal_that_fails_does_not_sign_a_refreshing_viewer_out_and_is_tried_again() {
+        let g = guarded_for(None, &needing_a_token(), Some(chrono::Duration::seconds(2))).await;
+        publish_picture(g._directory.path(), FIRST, 40).await;
+        publish_picture(g._directory.path(), "departures", 20).await;
+        let issued = g
+            .viewers
+            .issue(
+                IssueRequest {
+                    label: "wall tablet".into(),
+                    refreshing: true,
+                    ..IssueRequest::default()
+                },
+                &g.layouts,
+            )
+            .await
+            .unwrap();
+        let link = format!("{}/view#code={}", g.base, issued.code.expose());
+        let (base, clock) = (g.base.clone(), g.clock.clone());
+
+        let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let browser = headless_chrome::Browser::new(
+                headless_chrome::LaunchOptions::default_builder()
+                    .headless(true)
+                    .path(headless_chrome::browser::default_executable().ok())
+                    .build()?,
+            )?;
+            let tab = browser.new_tab()?;
+            let text = |script: &str| -> anyhow::Result<String> {
+                Ok(tab.evaluate(script, false)?.value.and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default())
+            };
+            let number = |script: &str| -> anyhow::Result<f64> {
+                Ok(tab.evaluate(script, false)?.value.and_then(|v| v.as_f64()).unwrap_or(-1.0))
+            };
+            let waits = |script: &str, wanted: f64, tries: u32| -> anyhow::Result<()> {
+                for _ in 0..tries {
+                    if number(script)? >= wanted {
+                        return Ok(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                anyhow::bail!("{script} never reached {wanted}")
+            };
+            let picture_width = "document.getElementById('picture').naturalWidth";
+            let prompt = "document.getElementById('signin').hidden ? 0 : 1";
+
+            tab.navigate_to(&format!("{base}/view?away"))?.wait_until_navigated()?;
+            tab.navigate_to(&link)?.wait_until_navigated()?;
+            waits(picture_width, 20.0, 100)?;
+            let refresh_before = text("localStorage.getItem('hd.refresh')")?;
+            anyhow::ensure!(refresh_before.starts_with("hdr1_"), "no refresh token kept");
+
+            // The next two requests for a token fail at the server, as a hiccup would; others go through.
+            tab.evaluate(
+                "window.__fails = 2; var real = window.fetch; window.fetch = function (url, options) { \
+                   if (String(url).indexOf('/view/api/token') >= 0 && window.__fails > 0) { \
+                     window.__fails -= 1; return Promise.resolve(new Response('', { status: 500 })); } \
+                   return real.apply(this, arguments); };",
+                false,
+            )?;
+            // The access token runs out (by the server's clock, which a test moves on), and the page looks again.
+            clock.set(at(7, 0) + chrono::Duration::seconds(5));
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            tab.evaluate("document.dispatchEvent(new Event('visibilitychange'))", false)?;
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+
+            // Not signed out: the prompt is not up, and the tokens and the picture are as they were.
+            anyhow::ensure!(number(prompt)? == 0.0, "the page said access had ended after a failed renewal");
+            anyhow::ensure!(text("localStorage.getItem('hd.refresh')")? == refresh_before, "the refresh token was dropped");
+            anyhow::ensure!(number(picture_width)? == 20.0, "the picture went");
+
+            // And it is tried again, and works: a new refresh token, still the picture, no prompt.
+            for _ in 0..250 {
+                if text("localStorage.getItem('hd.refresh')")? != refresh_before {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            anyhow::ensure!(
+                text("localStorage.getItem('hd.refresh')")? != refresh_before,
+                "it never tried again: status {:?}, title {:?}, token {:?}, fails left {}",
+                text("document.getElementById('status').textContent")?,
+                text("document.getElementById('signin-title').textContent")?,
+                text("localStorage.getItem('hd.token')")?,
+                number("window.__fails")?
+            );
+            anyhow::ensure!(number(prompt)? == 0.0, "the prompt came up");
+            anyhow::ensure!(number(picture_width)? == 20.0, "the picture went after the retry");
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        outcome.unwrap();
+    }
 }
