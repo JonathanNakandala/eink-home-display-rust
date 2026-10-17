@@ -17,6 +17,7 @@ pub mod layout_choices;
 pub mod listen;
 pub mod pairing_store;
 pub mod published_images;
+pub mod remembered_credentials;
 pub mod response_headers;
 pub mod source;
 pub mod stop_points;

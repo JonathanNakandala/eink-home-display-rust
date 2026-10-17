@@ -8,9 +8,10 @@ use anyhow::Context;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use home_display_server::adapters::admin::{
-    AdminClient, CallError, IssueViewer, approved, describe, describe_entry, describe_layouts,
-    describe_list, describe_viewers, describe_window, forgotten, layout_changed, qr_for_terminal,
-    rejected, revoked, viewer_changed, viewer_issued,
+    AdminClient, CallError, IssueViewer, approved, credential_changed, describe,
+    describe_credentials, describe_entry, describe_layouts, describe_list, describe_viewers,
+    describe_window, forgotten, key_from_stream, layout_changed, qr_for_terminal, rejected,
+    revoked, viewer_changed, viewer_issued,
 };
 use home_display_server::bootstrap::load_application_config;
 
@@ -59,6 +60,15 @@ enum Command {
         #[command(subcommand)]
         action: ViewerAction,
     },
+    /// The keys the server uses to ask other services for data: set them, or take them away, while it runs
+    ///
+    /// A key can be set and never read back, so it need not be in the configuration file. By default it lives in the
+    /// server's memory alone and is gone when the server stops; `--remember` also keeps it in a file only the server's
+    /// user can read.
+    Credential {
+        #[command(subcommand)]
+        action: CredentialAction,
+    },
     /// Approve a display that is waiting, with the code shown on its own panel
     ///
     /// Type the code from the display itself, never from anywhere else: the server does not show it, because a code
@@ -84,6 +94,30 @@ enum Command {
     /// Forget a display, whatever its state, so it can ask again as if for the first time
     Forget {
         /// The display's name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CredentialAction {
+    /// The keys there are, and whether each is set. Never a key
+    List,
+    /// Set a key, which the server uses from its next request to that service
+    ///
+    /// The key is typed at a prompt that does not show it, or piped in (`pass show openweather | displayctl credential set
+    /// open-weather`). It is never taken from the command line, where it would be in the shell's history and visible to
+    /// other users.
+    Set {
+        /// Which key: open-weather, open-ldbws or tfl (`credential list` shows them)
+        name: String,
+        /// Also keep the key in a file only the server's user can read, so it is there after a restart. Without this
+        /// the key is in memory alone, and setting it drops any copy kept before.
+        #[arg(long)]
+        remember: bool,
+    },
+    /// Take away the key that was set, and any copy kept of it. A key in the configuration file is used again
+    Clear {
+        /// Which key
         name: String,
     },
 }
@@ -302,6 +336,27 @@ async fn run(args: Args) -> Result<(), String> {
             }
             Ok(())
         }
+        Command::Credential { action } => {
+            match action {
+                CredentialAction::List => {
+                    let list = client.credentials().await.map_err(failed)?;
+                    println!("{}", describe_credentials(&list, Utc::now()));
+                }
+                CredentialAction::Set { name, remember } => {
+                    let key = read_key(&name).map_err(|e| e.to_string())?;
+                    let entry = client
+                        .set_credential(&name, &key, remember)
+                        .await
+                        .map_err(failed)?;
+                    println!("{}", credential_changed(&entry, false));
+                }
+                CredentialAction::Clear { name } => {
+                    let entry = client.clear_credential(&name).await.map_err(failed)?;
+                    println!("{}", credential_changed(&entry, true));
+                }
+            }
+            Ok(())
+        }
         Command::Approve { name, code } => {
             let entry = client.approve(&name, &code).await.map_err(failed)?;
             println!("{}", approved(&entry));
@@ -323,4 +378,15 @@ async fn run(args: Args) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// The key for `name`, from a prompt that does not show what is typed when this is a terminal, and from standard input
+/// otherwise. The name is only used to say what the prompt is for.
+fn read_key(name: &str) -> std::io::Result<secrecy::SecretString> {
+    if std::io::stdin().is_terminal() {
+        eprint!("Key for {name} (what you type is not shown): ");
+        let typed = rpassword::read_password()?;
+        return key_from_stream(typed.as_bytes());
+    }
+    key_from_stream(std::io::stdin().lock())
 }

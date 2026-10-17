@@ -12,6 +12,7 @@
 
 mod api;
 mod client;
+mod key_input;
 mod present;
 mod routes;
 #[cfg(test)]
@@ -19,15 +20,17 @@ mod tests;
 mod transport;
 
 pub use self::api::{
-    ApiError, ApproveRequest, ChooseLayout, DisplayEntry, DisplayList, DisplayState, ErrorBody,
-    ErrorCode, IssueViewer, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES, OpenWindow, ViewerEntry,
-    ViewerIssued, ViewerList, ViewerStatus, WindowState,
+    ApiError, ApproveRequest, ChooseLayout, CredentialEntry, CredentialList, DisplayEntry,
+    DisplayList, DisplayState, ErrorBody, ErrorCode, IssueViewer, KeySource, LayoutEntry,
+    LayoutList, MAX_WINDOW_MINUTES, OpenWindow, SetCredential, ViewerEntry, ViewerIssued,
+    ViewerList, ViewerStatus, WindowState,
 };
 pub use self::client::{AdminClient, CallError, describe};
+pub use self::key_input::key_from_stream;
 pub use self::present::{
-    age, approved, describe_entry, describe_layouts, describe_list, describe_viewers,
-    describe_window, forgotten, label, layout_changed, qr_for_terminal, rejected, revoked,
-    viewer_changed, viewer_issued,
+    age, approved, credential_changed, describe_credentials, describe_entry, describe_layouts,
+    describe_list, describe_viewers, describe_window, forgotten, label, layout_changed,
+    qr_for_terminal, rejected, revoked, viewer_changed, viewer_issued,
 };
 pub use self::routes::{WebFacts, openapi_json, router};
 pub use self::transport::{LocalListener, SOCKET_FILE, bind, connect, default_path};

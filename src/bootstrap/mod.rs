@@ -4,6 +4,7 @@
 //! and run.
 
 mod application;
+mod credentials;
 mod departures;
 mod display;
 mod load;
@@ -16,6 +17,7 @@ pub use self::application::{
     LayoutSet, assemble, from_config, load_layouts, served_images, setup_web_screen,
     web_screen_images,
 };
+pub use self::credentials::{report_missing_keys, setup_credentials};
 pub use self::departures::setup_departure_boards;
 pub use self::display::setup_display;
 pub use self::load::{

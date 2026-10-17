@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context, bail};
 
 use crate::adapters::departures::{
@@ -8,17 +10,19 @@ use crate::application::DepartureBoard;
 use crate::config::departures::{
     DEFAULT_TFL_HOST_URL, DepartureBoardConfig, DepartureSource, ProvidersConfig,
 };
+use crate::domain::services::credential_source::CredentialSource;
 
 /// Builds one board per enabled `[[departures]]` entry, in config order.
 pub fn setup_departure_boards(
     boards: &[DepartureBoardConfig],
     providers: &ProvidersConfig,
+    credentials: &Arc<dyn CredentialSource>,
 ) -> anyhow::Result<Vec<DepartureBoard<DeparturesServiceImpl>>> {
     boards
         .iter()
         .filter(|board| board.enabled)
         .map(|board| {
-            let service = setup_service(board, providers)
+            let service = setup_service(board, providers, credentials)
                 .with_context(|| format!("Invalid departures board \"{}\"", board.name))?;
             Ok(DepartureBoard::new(board.name.clone(), board.rows, service))
         })
@@ -28,6 +32,7 @@ pub fn setup_departure_boards(
 fn setup_service(
     board: &DepartureBoardConfig,
     providers: &ProvidersConfig,
+    credentials: &Arc<dyn CredentialSource>,
 ) -> anyhow::Result<DeparturesServiceImpl> {
     match &board.source {
         DepartureSource::OpenLdbws { from, to } => {
@@ -37,7 +42,7 @@ fn setup_service(
             Ok(DeparturesServiceImpl::OpenLdbws(
                 OpenLdbwsDeparturesServiceAdapter::new(
                     config.host_url.clone(),
-                    config.api_key.clone(),
+                    credentials.clone(),
                     from.clone(),
                     to.clone(),
                     board.travel_minutes,
@@ -47,15 +52,15 @@ fn setup_service(
         }
         DepartureSource::Tfl { stop_id } => {
             // The TfL section is optional: anonymous access to the default host works.
-            let (host_url, app_key) = match &providers.tfl {
-                Some(config) => (config.host_url.clone(), config.app_key.clone()),
-                None => (DEFAULT_TFL_HOST_URL.to_owned(), None),
+            let host_url = match &providers.tfl {
+                Some(config) => config.host_url.clone(),
+                None => DEFAULT_TFL_HOST_URL.to_owned(),
             };
             Ok(DeparturesServiceImpl::Tfl(
                 TflDeparturesServiceAdapter::new(
                     TflStopPointServiceAdapter::new(
                         host_url,
-                        app_key,
+                        credentials.clone(),
                         crate::adapters::http::client(),
                     ),
                     stop_id.clone(),

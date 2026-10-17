@@ -6,8 +6,8 @@
 use chrono::{DateTime, Duration, Utc};
 
 use super::api::{
-    DisplayEntry, DisplayList, DisplayState, LayoutList, ViewerEntry, ViewerIssued, ViewerList,
-    ViewerStatus, WindowState,
+    CredentialEntry, CredentialList, DisplayEntry, DisplayList, DisplayState, KeySource,
+    LayoutList, ViewerEntry, ViewerIssued, ViewerList, ViewerStatus, WindowState,
 };
 
 /// How long ago, or how long to go, in the largest units that matter: `just now`, `3 min`, `2 h 5 min`, `3 days`.
@@ -370,6 +370,77 @@ pub fn viewer_changed(entry: &ViewerEntry, forgotten: bool) -> String {
             entry.id, entry.label
         )
     }
+}
+
+/// The keys, as a table: whether each is set and where it came from. Never a key.
+pub fn describe_credentials(list: &CredentialList, now: DateTime<Utc>) -> String {
+    let width = list
+        .credentials
+        .iter()
+        .map(|entry| entry.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("NAME".len());
+    let mut lines = vec![format!("{:width$}  {:7}  DETAIL", "NAME", "STATE")];
+    for entry in &list.credentials {
+        let detail = match (entry.set, entry.source) {
+            (true, Some(KeySource::Config)) => "from the configuration file".to_owned(),
+            (true, Some(KeySource::Remembered)) => "set earlier and kept for a restart".to_owned(),
+            (true, _) => format!(
+                "set{}; {}",
+                entry
+                    .since
+                    .map_or_else(String::new, |at| format!(" {} ago", age(now - at))),
+                if entry.remembered {
+                    "kept for a restart"
+                } else {
+                    "in memory only, gone when the server stops"
+                }
+            ),
+            (false, _) if entry.optional => {
+                format!("{}; works without one, but slower", entry.description)
+            }
+            (false, _) => format!("{}; unavailable until it is set", entry.description),
+        };
+        lines.push(format!(
+            "{:width$}  {:7}  {detail}",
+            entry.name,
+            if entry.set { "set" } else { "not set" },
+        ));
+    }
+    lines.join(
+        "
+",
+    )
+}
+
+/// What was done, in a sentence, once a key was set or taken away. Never the key.
+pub fn credential_changed(entry: &CredentialEntry, cleared: bool) -> String {
+    if cleared {
+        return match entry.source {
+            Some(KeySource::Config) => format!(
+                "Took away the {} key that was set. The one in the configuration file is in use again.",
+                entry.name
+            ),
+            _ if entry.optional => format!(
+                "Took away the {} key that was set. There is none now; requests go without one.",
+                entry.name
+            ),
+            _ => format!(
+                "Took away the {} key that was set. There is none now, so that source is unavailable until one is set.",
+                entry.name
+            ),
+        };
+    }
+    format!(
+        "Set the {} key. It is used from the next request to the service{}.",
+        entry.name,
+        if entry.remembered {
+            ", and kept in a file only the server's user can read, so it is there after a restart"
+        } else {
+            ". It is in memory only: it is gone when the server stops"
+        }
+    )
 }
 
 /// What was done, in a sentence, once approving worked.

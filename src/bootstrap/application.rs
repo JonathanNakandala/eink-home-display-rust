@@ -16,6 +16,7 @@ use crate::config::cache::CachePaths;
 use crate::domain::models::layout::Layouts;
 use crate::domain::services::ImageDisplayService;
 use crate::domain::services::clock::Clock;
+use crate::domain::services::credential_source::CredentialSource;
 use crate::domain::services::departures_service::DeparturesService;
 use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
@@ -32,6 +33,7 @@ pub fn assemble<DIG, IDS, IR>(
     generator: DIG,
     display: IDS,
     repository: IR,
+    credentials: Arc<dyn CredentialSource>,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<Application<WeatherServiceImpl, DIG, IDS, IR, DeparturesServiceImpl>>
 where
@@ -40,11 +42,11 @@ where
     IR: ImageRepository,
 {
     Ok(Application::new(
-        setup_weather_service(&config.weather)?,
+        setup_weather_service(&config.weather, credentials.clone())?,
         generator,
         display,
         repository,
-        setup_departure_boards(&config.departures, &config.providers)?,
+        setup_departure_boards(&config.departures, &config.providers, &credentials)?,
         RenderPolicy {
             max_age: (&config.stale_data).into(),
             limits: (&config.limits).into(),
@@ -88,6 +90,7 @@ pub fn from_config(
     chrome_source: ChromeSource,
     images: Arc<dyn PublishedImages>,
     layouts: LayoutSet,
+    credentials: Arc<dyn CredentialSource>,
     clock: Arc<dyn Clock>,
 ) -> anyhow::Result<
     Application<
@@ -104,6 +107,7 @@ pub fn from_config(
             .with_templates(layouts.templates),
         setup_display(&config.display, images),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),
+        credentials,
         clock,
     )?
     .with_layouts(layouts.layouts);

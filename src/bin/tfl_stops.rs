@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -6,9 +8,11 @@ use home_display_server::adapters::stop_points::tfl::tfl_stop_point_service::{
 };
 use home_display_server::cli::{StopsCommand, TflStopsArgs};
 use home_display_server::domain::models::arrival::Arrival;
+use home_display_server::domain::models::credential::CredentialName;
 use home_display_server::domain::models::location::Location;
 use home_display_server::domain::models::stop_point::{StopKind, StopPoint};
 use home_display_server::domain::services::arrivals_service::ArrivalsService;
+use home_display_server::domain::services::credential_source::FixedCredentials;
 use home_display_server::domain::services::stop_point_service::StopPointService;
 
 #[tokio::main]
@@ -16,9 +20,13 @@ async fn main() -> anyhow::Result<()> {
     initialize_logging();
 
     let args = TflStopsArgs::parse();
+    let mut credentials = FixedCredentials::none();
+    if let Some(key) = args.app_key {
+        credentials = credentials.with(CredentialName::Tfl, key);
+    }
     let service = TflStopPointServiceAdapter::new(
         args.host_url.unwrap_or_else(|| DEFAULT_HOST_URL.to_owned()),
-        args.app_key.map(Into::into),
+        Arc::new(credentials),
         reqwest::Client::new(),
     );
 

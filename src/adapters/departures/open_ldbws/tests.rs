@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, TimeZone};
 use chrono_tz::Europe::London;
 use chrono_tz::Tz;
@@ -5,8 +7,37 @@ use httpmock::prelude::*;
 use speculoos::prelude::*;
 
 use crate::adapters::departures::open_ldbws::open_ldbws_departures_service::OpenLdbwsDeparturesServiceAdapter;
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::departures::{DepartureService, DepartureStatus, Departures};
+use crate::domain::models::source_error::SourceError;
+use crate::domain::services::credential_source::{CredentialSource, FixedCredentials};
 use crate::domain::services::departures_service::DeparturesService;
+
+fn fixed_key() -> Arc<dyn CredentialSource> {
+    Arc::new(FixedCredentials::none().with(CredentialName::OpenLdbws, "apikey"))
+}
+
+#[tokio::test]
+async fn without_a_key_no_request_is_made_and_the_source_says_so() {
+    let server = MockServer::start();
+    let any = server.mock(|when, then| {
+        when.any_request();
+        then.status(200);
+    });
+    let under_test = OpenLdbwsDeparturesServiceAdapter::new(
+        format!("{}/GetArrDepBoardWithDetails", server.base_url()),
+        Arc::new(FixedCredentials::none()),
+        "HRN".to_owned(),
+        "WGC".to_owned(),
+        0,
+        reqwest::Client::new(),
+    );
+
+    let result = under_test.get_departures(4, now()).await;
+
+    assert!(matches!(result, Err(SourceError::KeyNotSet)), "{result:?}");
+    any.assert_calls(0);
+}
 
 const SAMPLE_RESPONSE: &str = r#"{
     "generatedAt": "2024-01-10T18:00:00+00:00",
@@ -59,7 +90,7 @@ async fn returns_parsed_departures_for_station_pair() {
 
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".into(),
+        fixed_key(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         0,
@@ -112,7 +143,7 @@ async fn asks_for_the_board_as_it_will_be_after_the_travel_time() {
 
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".into(),
+        fixed_key(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         5,
@@ -139,7 +170,7 @@ async fn caps_the_time_offset_at_what_the_api_accepts() {
 
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".into(),
+        fixed_key(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         500,
@@ -164,7 +195,7 @@ async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
     });
     let under_test = OpenLdbwsDeparturesServiceAdapter::new(
         format!("{}/GetArrDepBoardWithDetails", server.base_url()),
-        "apikey".into(),
+        fixed_key(),
         "HRN".to_owned(),
         "WGC".to_owned(),
         0,

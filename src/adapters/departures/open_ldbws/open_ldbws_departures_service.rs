@@ -1,15 +1,19 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use reqwest::Client;
 use reqwest::header::HeaderValue;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 
 use crate::adapters::departures::open_ldbws::response::{Service, StationBoard};
 use crate::adapters::http;
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::departures::{
     DepartureService, DepartureStatus, Departures, clock_time_near, countdown, seconds_to,
 };
 use crate::domain::models::source_error::SourceError;
+use crate::domain::services::credential_source::CredentialSource;
 use crate::domain::services::departures_service::DeparturesService;
 
 /// `host_url` is the Rail Data Marketplace product's base path up to and
@@ -20,7 +24,8 @@ use crate::domain::services::departures_service::DeparturesService;
 #[derive(derive_new::new)]
 pub struct OpenLdbwsDeparturesServiceAdapter {
     host_url: String,
-    api_key: SecretString,
+    /// Asked for the key at each request, so one set while the server runs is used from the next.
+    credentials: Arc<dyn CredentialSource>,
     from: String,
     to: String,
     /// Minutes to get to the station; the board is requested as it will be then.
@@ -53,7 +58,11 @@ impl DeparturesService for OpenLdbwsDeparturesServiceAdapter {
         }
 
         // Marked sensitive, so reqwest and hyper leave it out of any debug output of the request.
-        let mut key = HeaderValue::from_str(self.api_key.expose_secret()).map_err(|_| {
+        let api_key = self
+            .credentials
+            .key(CredentialName::OpenLdbws)
+            .ok_or(SourceError::KeyNotSet)?;
+        let mut key = HeaderValue::from_str(api_key.expose_secret()).map_err(|_| {
             SourceError::bad_response("the API key has characters a header can't hold")
         })?;
         key.set_sensitive(true);

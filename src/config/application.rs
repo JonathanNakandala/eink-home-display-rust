@@ -3,13 +3,15 @@ use std::path::{Path, PathBuf};
 use chrono::{NaiveTime, Weekday};
 use config::{Config, ConfigError, Environment, File};
 use schemars::JsonSchema;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::config::cache::CacheConfig;
-use crate::config::departures::{DepartureBoardConfig, ProvidersConfig};
+use crate::config::departures::{DepartureBoardConfig, DepartureSource, ProvidersConfig};
 use crate::config::schedule::ScheduleConfig;
 use crate::config::server::ServerConfig;
 use crate::config::weather::WeatherConfig;
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::display::{Dither, ImageFormat};
 use crate::domain::models::layout::{LayoutName, LayoutRule, LayoutSchedule};
 
@@ -340,6 +342,55 @@ impl ApplicationConfig {
     /// uses only part of the configuration can check just that part instead.
     pub fn validate(&self) -> Result<(), serde_valid::validation::Errors> {
         self.weather.validate_in_use()
+    }
+
+    /// The keys the file holds. They are where the keys the server uses start; the owner can set others while it runs.
+    pub fn credential_keys(&self) -> Vec<(CredentialName, SecretString)> {
+        let mut keys = Vec::new();
+        if let Some(key) = self
+            .weather
+            .open_weather
+            .as_ref()
+            .and_then(|open_weather| open_weather.api_key.clone())
+        {
+            keys.push((CredentialName::OpenWeather, key));
+        }
+        if let Some(key) = self
+            .providers
+            .open_ldbws
+            .as_ref()
+            .and_then(|open_ldbws| open_ldbws.api_key.clone())
+        {
+            keys.push((CredentialName::OpenLdbws, key));
+        }
+        if let Some(key) = self
+            .providers
+            .tfl
+            .as_ref()
+            .and_then(|tfl| tfl.app_key.clone())
+        {
+            keys.push((CredentialName::Tfl, key));
+        }
+        keys
+    }
+
+    /// The keys that something in use needs and that a service refuses to answer without: the OpenWeather key when the
+    /// weather is on and from OpenWeather, the raildata one when a board is from there. The TfL one is optional, so never listed.
+    pub fn credentials_needed(&self) -> Vec<CredentialName> {
+        use crate::config::weather::WeatherProvider;
+
+        let mut needed = Vec::new();
+        if self.weather.enabled && matches!(self.weather.provider, WeatherProvider::OpenWeather) {
+            needed.push(CredentialName::OpenWeather);
+        }
+        if self
+            .departures
+            .iter()
+            .any(|board| board.enabled && matches!(board.source, DepartureSource::OpenLdbws { .. }))
+        {
+            needed.push(CredentialName::OpenLdbws);
+        }
+        needed
     }
 
     pub fn new(file_path: &Path) -> Result<Self, ConfigError> {

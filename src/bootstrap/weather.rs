@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::bail;
 
 use crate::adapters::weather::WeatherServiceImpl;
@@ -8,8 +10,12 @@ use crate::config::weather::{
     DEFAULT_OPEN_METEO_AIR_QUALITY_HOST_URL, DEFAULT_OPEN_METEO_HOST_URL, WeatherConfig,
     WeatherProvider,
 };
+use crate::domain::services::credential_source::CredentialSource;
 
-pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherServiceImpl> {
+pub fn setup_weather_service(
+    config: &WeatherConfig,
+    credentials: Arc<dyn CredentialSource>,
+) -> anyhow::Result<WeatherServiceImpl> {
     if !config.enabled {
         return Ok(WeatherServiceImpl::NoOp(NoOpWeatherServiceAdapter::new()));
     }
@@ -21,7 +27,7 @@ pub fn setup_weather_service(config: &WeatherConfig) -> anyhow::Result<WeatherSe
             Ok(WeatherServiceImpl::OpenWeather(
                 OpenWeatherWeatherServiceAdapter::new(
                     open_weather.host_url.clone(),
-                    open_weather.api_key.clone(),
+                    credentials,
                     crate::adapters::http::client(),
                 ),
             ))

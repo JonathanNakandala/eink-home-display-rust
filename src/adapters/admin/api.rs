@@ -9,9 +9,11 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, IntoResponses, ToSchema};
 
+use crate::application::credentials::{CredentialStatus, Origin};
 use crate::application::status::ProfileStatus;
 use crate::domain::models::layout::LayoutName;
 use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
@@ -337,6 +339,97 @@ pub struct ApproveRequest {
     pub code: String,
 }
 
+/// Where the key in use came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KeySource {
+    /// The server's configuration file.
+    Config,
+    /// Set with this API, and in the server's memory alone: gone when the server stops.
+    Set,
+    /// Set with this API and asked to be remembered, then read back from where the server keeps it when it started.
+    Remembered,
+}
+
+/// One of the keys the server uses for other services, and where it stands. Never the key itself: nothing in this API
+/// returns one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CredentialEntry {
+    /// The key's name, as the path takes it.
+    #[schema(examples("open-weather"))]
+    pub name: String,
+    /// What it is for.
+    #[schema(examples("OpenWeather API key (weather)"))]
+    pub description: String,
+    /// Whether the service answers without a key, so that having none is a choice and not a gap.
+    pub optional: bool,
+    /// Whether there is a key now.
+    pub set: bool,
+    /// Where the key in use came from. Only present when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<KeySource>,
+    /// When it was set with this API. Not present for a key from the configuration file, or from an earlier run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<DateTime<Utc>>,
+    /// Whether a copy is kept on disk, so that the key outlasts a restart.
+    pub remembered: bool,
+}
+
+impl CredentialEntry {
+    pub fn of(status: &CredentialStatus) -> Self {
+        Self {
+            name: status.name.as_str().to_owned(),
+            description: status.name.describe().to_owned(),
+            optional: status.name.is_optional(),
+            set: status.is_set(),
+            source: status.origin.map(|origin| match origin {
+                Origin::Config => KeySource::Config,
+                Origin::Set => KeySource::Set,
+                Origin::Remembered => KeySource::Remembered,
+            }),
+            since: status.since,
+            remembered: status.remembered,
+        }
+    }
+}
+
+/// Every key the server can hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CredentialList {
+    pub credentials: Vec<CredentialEntry>,
+}
+
+/// The name of a key, in the path.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Path)]
+pub struct CredentialPath {
+    /// The key's name, as `GET /v1/credentials` lists it.
+    #[param(example = "open-weather")]
+    pub name: String,
+}
+
+/// A key to use from now on. It is sent in the body, never in the path or a query, so it is in no log of requests.
+#[derive(Deserialize, ToSchema)]
+pub struct SetCredential {
+    /// The key, exactly as the service gave it. Plain text with no spaces or line breaks; an OpenWeather key is 32
+    /// characters. The answer never repeats it.
+    #[schema(value_type = String, format = Password)]
+    pub key: SecretString,
+    /// Keep the key on disk too, in a file only the server's user can read, so that it is still there after a restart.
+    /// Without this the key is in memory alone, and setting it also drops any copy kept before.
+    #[serde(default)]
+    pub remember: bool,
+}
+
+impl std::fmt::Debug for SetCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SetCredential")
+            .field("key", &"[REDACTED]")
+            .field("remember", &self.remember)
+            .finish()
+    }
+}
+
 /// Why a request failed, for a program to act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -365,6 +458,14 @@ pub enum ErrorCode {
     NotAMember,
     /// No layout of that name exists (or the name could not be one). `GET /v1/layouts` lists them.
     UnknownLayout,
+    /// The name in the path is not one of the keys the server holds. `GET /v1/credentials` lists them.
+    UnknownCredential,
+    /// The key cannot be one: the wrong length for its service, or with a space, a line break or another character that is
+    /// not plain text. The message says which, and never repeats the key.
+    InvalidCredential,
+    /// The key was asked to be remembered but the server has nowhere to keep it (it keeps them with the pairing data, which
+    /// it has only when it serves HTTPS). Set it without `remember`, or serve HTTPS.
+    CannotRemember,
     /// What a new viewer was asked for is not allowed: the label, how long its token lasts, or how long its link works.
     InvalidViewer,
     /// The viewer's id in the path is not an id (eight lower-case letters and digits).
@@ -389,13 +490,18 @@ impl ErrorCode {
             | Self::InvalidName
             | Self::InvalidCode
             | Self::InvalidViewer
-            | Self::InvalidViewerId => StatusCode::BAD_REQUEST,
+            | Self::InvalidViewerId
+            | Self::InvalidCredential => StatusCode::BAD_REQUEST,
             Self::WrongCode => StatusCode::FORBIDDEN,
             Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
-            Self::NotFound | Self::UnknownDisplay | Self::UnknownLayout | Self::UnknownViewer => {
-                StatusCode::NOT_FOUND
+            Self::NotFound
+            | Self::UnknownDisplay
+            | Self::UnknownLayout
+            | Self::UnknownViewer
+            | Self::UnknownCredential => StatusCode::NOT_FOUND,
+            Self::NotWaiting | Self::NotAMember | Self::TooManyViewers | Self::CannotRemember => {
+                StatusCode::CONFLICT
             }
-            Self::NotWaiting | Self::NotAMember | Self::TooManyViewers => StatusCode::CONFLICT,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }

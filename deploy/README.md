@@ -388,6 +388,7 @@ intermediate, so losing or leaking the intermediate never means pairing every di
 | `root.key` | the root's key. Used only to make an intermediate. The server never loads it to serve | **yes** |
 | `intermediate.pem` | the intermediate's certificate (5 years) and key, in one file so they are replaced together | **yes** |
 | `retired.pem` | earlier intermediates, kept until they end, because what they signed is still good | no |
+| `credentials.json` | API keys you set with `displayctl credential set --remember` (see below). Only there once you remember one; **plain text**, readable by the server's user alone on Unix | **yes** |
 | `pairings.json` | which displays are members, written whole through a temporary file and a rename, with the version before the last change kept as `pairings.json.bak`. **It holds no pairing codes**: the server works a code out only when you type one to be compared, so there is no copy in the file or its backup to read | no |
 
 - **Back up the directory**, `root.pem` and `root.key` above all: without them every display has to be paired
@@ -541,11 +542,50 @@ it. The authority's own directory is made that way.
   account.
   - Run `displayctl` as the user the server runs as. If the server runs as a service under another account (the system
     account, say), the pipe belongs to that account and `displayctl` from your own login is refused.
-- **No secret comes back from it:** not a pairing code, a key or a certificate. You read the code off the display.
+- **No secret comes back from it:** not a pairing code, a key, an API key or a certificate. You read the code off the display.
 - **The API is described** in [config/admin-openapi.json](../config/admin-openapi.json) (OpenAPI 3.1), which is also served at
   `/openapi.json` on the socket. Any HTTP client that can use a Unix socket can use it, for example
   `curl --unix-socket pki/admin.sock http://localhost/v1/window`. A `PUT` needs the JSON header:
   `curl -X PUT -H 'content-type: application/json' -d '{"minutes": 15}' --unix-socket pki/admin.sock http://localhost/v1/window`.
+
+### Keys for other services: `displayctl credential`
+
+The weather and the train and bus departures come from services that want an API key. They can go in the configuration file
+(`api_key` under `[weather.open_weather]` and `[providers.open_ldbws]`, `app_key` under `[providers.tfl]`), or be given to the
+server while it runs, so that a key is never in a file you might commit, copy or back up:
+
+```
+displayctl -c config.toml credential list                    # which are set, and where each came from (never the key)
+displayctl -c config.toml credential set open-weather        # asks for the key, and does not show what you type
+pass show openweather | displayctl -c config.toml credential set open-weather     # or read it from a pipe
+displayctl -c config.toml credential set open-ldbws --remember
+displayctl -c config.toml credential clear open-weather
+```
+
+| name | for | needed? |
+|---|---|---|
+| `open-weather` | the OpenWeather API key (32 characters) | when `[weather] provider = "OpenWeather"` |
+| `open-ldbws` | the raildata.org.uk Consumer Key | when a board is from National Rail |
+| `tfl` | the TfL application key | no: TfL answers without one, but slowly |
+
+- **A key can be set and never read back.** `credential list` and the API say whether there is one, where it came from
+  (`config`, `set`, or `remembered`) and when it was set, and nothing else. A key is never taken from the command line, where
+  it would be in your shell's history and visible to other users; it is typed at a prompt or piped in. It is never logged, and a
+  refusal says what was wrong with it (too short, a space in it) without repeating it.
+- **It is used from the next request.** A render that has started may still use the old one. Until a key is set, the source
+  shows on the display as unavailable (`key not set`), and the log says at start-up which are missing and how to set them. A
+  key the service rejects shows as `key rejected`, as before.
+- **By default a key lives in the server's memory alone** and is gone when the server stops, so after a restart or a reboot
+  it must be set again (from a script, say). **`--remember` also keeps it** in `credentials.json` in `[server.tls] directory`,
+  so it is there after a restart. That file holds the key as it is, in plain text: encrypting it with another key kept beside
+  it would be no safer, so what protects it is who can read the file. On Unix it is made readable by its owner alone, from
+  the moment it exists. **On Windows it has the permissions its folder gives it, as `root.key` does**, which for a folder in
+  your own profile means you, the administrators and the system; keep `[server.tls] directory` somewhere only you can read.
+  Setting a key *without* `--remember` also removes any copy kept before, so "memory only" really is only.
+- **`credential clear` takes away what you set**, remembered or not. A key in the configuration file, if there is one, is
+  used again. A key in the file is never changed or written by the server.
+- **It needs the admin interface**, so HTTPS (`transport = "prefer-https"` or `"https"`) and `[server.admin] enabled`.
+  Asking for `--remember` without it is refused, with nowhere to keep the key.
 
 ### What to watch for in the logs
 

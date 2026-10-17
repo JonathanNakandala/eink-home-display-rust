@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use httpmock::prelude::*;
 use speculoos::prelude::*;
 
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::domain::models::arrival::Arrival;
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::location::Location;
 use crate::domain::models::stop_point::{StopKind, StopPoint};
 use crate::domain::services::arrivals_service::ArrivalsService;
+use crate::domain::services::credential_source::FixedCredentials;
 use crate::domain::services::stop_point_service::StopPointService;
 
 const NEARBY_RESPONSE: &str = r#"{
@@ -23,7 +27,11 @@ const NEARBY_RESPONSE: &str = r#"{
 }"#;
 
 fn adapter(server: &MockServer) -> TflStopPointServiceAdapter {
-    TflStopPointServiceAdapter::new(server.base_url(), None, reqwest::Client::new())
+    TflStopPointServiceAdapter::new(
+        server.base_url(),
+        Arc::new(FixedCredentials::none()),
+        reqwest::Client::new(),
+    )
 }
 
 #[tokio::test]
@@ -156,4 +164,46 @@ async fn returns_arrivals_soonest_first() {
             "Turnpike Lane Underground Station".into(),
         ),
     ]);
+}
+
+#[tokio::test]
+async fn a_key_that_is_set_is_sent_and_without_one_the_request_goes_without() {
+    let server = MockServer::start();
+    let keyed = server.mock(|when, then| {
+        when.method(GET)
+            .path("/StopPoint")
+            .query_param("app_key", "the-key");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(NEARBY_RESPONSE);
+    });
+    let keyless = server.mock(|when, then| {
+        when.method(GET).path("/StopPoint").is_false(|request| {
+            request
+                .query_params()
+                .iter()
+                .any(|(name, _)| name == "app_key")
+        });
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(NEARBY_RESPONSE);
+    });
+    let with_key = TflStopPointServiceAdapter::new(
+        server.base_url(),
+        Arc::new(FixedCredentials::none().with(CredentialName::Tfl, "the-key")),
+        reqwest::Client::new(),
+    );
+    let without_key = adapter(&server);
+
+    with_key
+        .find_nearby(Location::new(51.586572, -0.112116), StopKind::Bus, 200)
+        .await
+        .unwrap();
+    without_key
+        .find_nearby(Location::new(51.586572, -0.112116), StopKind::Bus, 200)
+        .await
+        .unwrap();
+
+    keyed.assert_calls(1);
+    keyless.assert_calls(1);
 }

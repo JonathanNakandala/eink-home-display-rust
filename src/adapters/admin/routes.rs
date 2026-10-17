@@ -14,13 +14,15 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::api::{
-    ApiError, ApproveRequest, BadRequest, ChooseLayout, DisplayEntry, DisplayList, DisplayPath,
-    DisplayState, ErrorBody, ErrorCode, IssueViewer, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES,
-    OpenWindow, ServerFailure, ViewerEntry, ViewerIssued, ViewerList, ViewerPath, ViewerStatus,
-    WindowState,
+    ApiError, ApproveRequest, BadRequest, ChooseLayout, CredentialEntry, CredentialList,
+    CredentialPath, DisplayEntry, DisplayList, DisplayPath, DisplayState, ErrorBody, ErrorCode,
+    IssueViewer, KeySource, LayoutEntry, LayoutList, MAX_WINDOW_MINUTES, OpenWindow, ServerFailure,
+    SetCredential, ViewerEntry, ViewerIssued, ViewerList, ViewerPath, ViewerStatus, WindowState,
 };
+use crate::application::credentials::{Credentials, SetError};
 use crate::application::enrollment::{ApproveError, Enrollment};
 use crate::application::viewers::{ChangeError, IssueError, IssueRequest, Viewers};
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::layout::Layouts;
 use crate::domain::models::pairing::PairingCode;
@@ -43,6 +45,8 @@ pub(super) struct Admin {
     pub(super) clock: Arc<dyn Clock>,
     /// Who may look at the page for a browser, when that needs a token.
     pub(super) viewers: Arc<Viewers>,
+    /// The keys for other services, which can be set here and never read.
+    pub(super) credentials: Arc<Credentials>,
     /// What the page for a browser is, as far as a new viewer's link is concerned.
     pub(super) web: WebFacts,
 }
@@ -123,12 +127,13 @@ impl WebFacts {
     ),
     // The error body is only reached through `IntoResponses`, which does not collect the schemas it names, so they
     // are listed here or the references to them would point at nothing.
-    components(schemas(ApiError, ErrorBody, ErrorCode, DisplayState, ViewerStatus)),
+    components(schemas(ApiError, ErrorBody, ErrorCode, DisplayState, ViewerStatus, KeySource)),
     tags(
         (name = "pairing", description = "Letting displays join."),
         (name = "displays", description = "The displays the server knows, and what the owner decides about them."),
         (name = "layouts", description = "The ways the picture can be laid out, and which a display is given."),
-        (name = "viewers", description = "Who may look at the picture in a web browser when the page is not open to everyone.")
+        (name = "viewers", description = "Who may look at the picture in a web browser when the page is not open to everyone."),
+        (name = "credentials", description = "The keys the server uses to ask other services for data. They can be set and taken away here, and never read back.")
     )
 )]
 struct ApiDoc;
@@ -148,6 +153,8 @@ fn routes() -> OpenApiRouter<Arc<Admin>> {
         .routes(routes!(forget_viewer))
         .routes(routes!(revoke_viewer))
         .routes(routes!(choose_layout, clear_layout))
+        .routes(routes!(list_credentials))
+        .routes(routes!(set_credential, clear_credential))
 }
 
 /// The API description (OpenAPI 3.1), as committed in `config/admin-openapi.json` and served at `/openapi.json`.
@@ -164,6 +171,7 @@ pub fn router(
     layouts: Layouts,
     clock: Arc<dyn Clock>,
     viewers: Arc<Viewers>,
+    credentials: Arc<Credentials>,
     web: WebFacts,
 ) -> Router {
     let (router, _) = routes().split_for_parts();
@@ -199,6 +207,7 @@ pub fn router(
             layouts,
             clock,
             viewers,
+            credentials,
             web,
         }))
 }
@@ -810,4 +819,110 @@ async fn forget_viewer(
         .await
         .map_err(viewer_change_failed)?;
     Ok(Json(ViewerEntry::of(&viewer, admin.viewers.time())))
+}
+
+// --- credentials -------------------------------------------------------------------------------------
+
+/// A key's name from the path, as a name or the reason it is not one.
+fn credential_name(name: &str) -> Result<CredentialName, ApiError> {
+    CredentialName::parse(name)
+        .map_err(|e| ApiError::new(ErrorCode::UnknownCredential, e.to_string()))
+}
+
+/// Every key the server can hold, and whether there is one. Never a key.
+#[utoipa::path(
+    get,
+    path = "/v1/credentials",
+    tag = "credentials",
+    responses(
+        (status = 200, description = "The keys, and where each stands.", body = CredentialList),
+        ServerFailure
+    )
+)]
+async fn list_credentials(State(admin): State<Arc<Admin>>) -> Json<CredentialList> {
+    Json(CredentialList {
+        credentials: admin
+            .credentials
+            .list()
+            .iter()
+            .map(CredentialEntry::of)
+            .collect(),
+    })
+}
+
+/// Sets the key from now on, in place of any other. It is used by the next request to its service, so a render that has
+/// already started may still use the old one. The answer says where the key stands and never repeats it.
+#[utoipa::path(
+    put,
+    path = "/v1/credentials/{name}",
+    tag = "credentials",
+    params(CredentialPath),
+    request_body(content = SetCredential, description = "The key, and whether to keep it for a restart."),
+    responses(
+        (status = 200, description = "The key is set.", body = CredentialEntry),
+        (status = 400, description = "The body could not be used, or the key cannot be one for that service.", body = ApiError),
+        (status = 404, description = "No key has that name.", body = ApiError),
+        (status = 409, description = "It was asked to be remembered, and the server has nowhere to keep it.", body = ApiError),
+        ServerFailure
+    )
+)]
+async fn set_credential(
+    State(admin): State<Arc<Admin>>,
+    Path(path): Path<CredentialPath>,
+    body: Result<Json<SetCredential>, JsonRejection>,
+) -> Result<Json<CredentialEntry>, ApiError> {
+    let name = credential_name(&path.name)?;
+    // What a body that could not be read says is not repeated: the reason for it can quote what was sent, and what was
+    // sent here is a key.
+    let Json(SetCredential { key, remember }) = body.map_err(|_| {
+        ApiError::new(
+            ErrorCode::InvalidRequest,
+            "The body must be JSON like {\"key\": \"...\", \"remember\": false}, with the key as a string",
+        )
+    })?;
+    let status = admin
+        .credentials
+        .set(name, key, remember)
+        .await
+        .map_err(|error| match error {
+            SetError::Invalid(e) => ApiError::new(ErrorCode::InvalidCredential, e.to_string()),
+            SetError::NowhereToKeep => ApiError::new(ErrorCode::CannotRemember, error.to_string()),
+            SetError::NotKept(_) => ApiError::internal("keep the key", error),
+        })?;
+    log::info!(
+        "The {name} key was set ({})",
+        if remember {
+            "kept for a restart"
+        } else {
+            "in memory only"
+        }
+    );
+    Ok(Json(CredentialEntry::of(&status)))
+}
+
+/// Takes away the key that was set here, and any copy kept of it. A key in the configuration file, if there is one, is
+/// the key again. Having none set is not an error.
+#[utoipa::path(
+    delete,
+    path = "/v1/credentials/{name}",
+    tag = "credentials",
+    params(CredentialPath),
+    responses(
+        (status = 200, description = "The key that was set is gone; this is where the key stands now.", body = CredentialEntry),
+        (status = 404, description = "No key has that name.", body = ApiError),
+        ServerFailure
+    )
+)]
+async fn clear_credential(
+    State(admin): State<Arc<Admin>>,
+    Path(path): Path<CredentialPath>,
+) -> Result<Json<CredentialEntry>, ApiError> {
+    let name = credential_name(&path.name)?;
+    let status = admin
+        .credentials
+        .clear(name)
+        .await
+        .map_err(|e| ApiError::internal("take the key away", e))?;
+    log::info!("The {name} key that was set has been taken away");
+    Ok(Json(CredentialEntry::of(&status)))
 }

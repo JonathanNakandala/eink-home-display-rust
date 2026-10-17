@@ -1,17 +1,22 @@
+use std::sync::Arc;
+
 use reqwest::Client;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 
 use crate::adapters::http;
 use crate::adapters::weather::open_weather::response::OpenWeatherResponse;
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::location::Location;
 use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
+use crate::domain::services::credential_source::CredentialSource;
 use crate::domain::services::weather_service::WeatherService;
 
 #[derive(derive_new::new)]
 pub struct OpenWeatherWeatherServiceAdapter {
     host_url: String,
-    api_key: SecretString,
+    /// Asked for the key at each request, so one set while the server runs is used from the next.
+    credentials: Arc<dyn CredentialSource>,
     client: Client,
 }
 
@@ -20,12 +25,16 @@ impl WeatherService for OpenWeatherWeatherServiceAdapter {
         &self,
         location: Location,
     ) -> Result<Option<WeatherInformation>, SourceError> {
+        let key = self
+            .credentials
+            .key(CredentialName::OpenWeather)
+            .ok_or(SourceError::KeyNotSet)?;
         let url = format!(
             "{}/data/2.5/weather?lat={}&lon={}&appid={}&units=metric",
             self.host_url,
             location.latitude,
             location.longitude,
-            self.api_key.expose_secret()
+            key.expose_secret()
         );
 
         let response = http::send(self.client.get(&url)).await?;
