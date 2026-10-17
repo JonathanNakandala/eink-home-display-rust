@@ -17,6 +17,10 @@ pub enum SourceError {
     /// The connection couldn't be made, or broke.
     #[error("could not reach the service")]
     Unreachable(#[source] BoxError),
+    /// The service wants a key and the server has none for it yet: it has not been set, in the configuration or with
+    /// `displayctl credential set`.
+    #[error("no key has been set")]
+    KeyNotSet,
     /// The API key or credentials were refused.
     #[error("credentials rejected (HTTP {status})")]
     Unauthorized { status: u16 },
@@ -62,7 +66,10 @@ impl SourceError {
 
     /// Whether this won't clear by itself, because the key, the URL or the settings are wrong.
     pub fn needs_attention(&self) -> bool {
-        matches!(self, Self::Unauthorized { .. } | Self::Rejected { .. })
+        matches!(
+            self,
+            Self::KeyNotSet | Self::Unauthorized { .. } | Self::Rejected { .. }
+        )
     }
 
     /// A few words for the display, e.g. "key rejected".
@@ -70,6 +77,7 @@ impl SourceError {
         match self {
             Self::Timeout => "timed out",
             Self::Unreachable(_) => "no connection",
+            Self::KeyNotSet => "key not set",
             Self::Unauthorized { .. } => "key rejected",
             Self::RateLimited => "rate limited",
             Self::Upstream { .. } => "service error",

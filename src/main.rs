@@ -56,6 +56,9 @@ async fn main() -> Result<()> {
     let zone = bootstrap::resolve_zone(&config.location)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(zone));
 
+    // The keys for other services: the configuration file's, and those the owner sets while this runs.
+    let credentials = bootstrap::setup_credentials(&config, clock.clone());
+
     // Read and checked before anything runs, so a template with a mistake in it stops the program here.
     let layouts = bootstrap::load_layouts(&config.layouts, None)?;
     let served_layouts = layouts.layouts.clone();
@@ -72,6 +75,7 @@ async fn main() -> Result<()> {
             chrome_source,
             Arc::new(DirectoryImages::new(config.server.directory.clone())),
             layouts,
+            credentials,
             clock,
         )?
         .run(location)
@@ -138,6 +142,7 @@ async fn main() -> Result<()> {
         chrome_source,
         images.clone(),
         layouts,
+        credentials.clone(),
         clock.clone(),
     )?
     .with_observer(Arc::new(launch::AttemptMarker::new(marker, clock.clone())))
@@ -159,13 +164,22 @@ async fn main() -> Result<()> {
     );
     // Served for a display that downloads its image, and for the page for a browser, for as long as the refresh loop runs.
     if !config.display.kind.fetches_image() && !config.server.web.enabled {
+        bootstrap::report_missing_keys(&config, &credentials);
         return periodic.await;
     }
     let settings = ServerSettings::from(&config.server);
     let format = config.display.image_format.into();
     // The certificate authority and the list of displays are opened first, so that a missing or unreadable
     // one stops the program here, and so `/status` can report on them.
-    let security = bootstrap::open_security(&config.server, clock.clone(), args.init_pki).await?;
+    let security = bootstrap::open_security(
+        &config.server,
+        clock.clone(),
+        credentials.clone(),
+        args.init_pki,
+    )
+    .await?;
+    // After the remembered keys are back, so that only what is really missing is said.
+    bootstrap::report_missing_keys(&config, &credentials);
     let handles = Handles {
         layouts: served_layouts.clone(),
         refresh: refresh.clone(),

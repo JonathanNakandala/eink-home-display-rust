@@ -1,14 +1,18 @@
+use std::sync::Arc;
+
 use anyhow::Context;
 use reqwest::Client;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 
 use crate::adapters::http;
 use crate::adapters::stop_points::tfl::response::{
     NearbyResponse, NearbyStop, SearchMatch, SearchResponse,
 };
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::location::Location;
 use crate::domain::models::source_error::SourceError;
 use crate::domain::models::stop_point::{StopKind, StopPoint};
+use crate::domain::services::credential_source::CredentialSource;
 use crate::domain::services::stop_point_service::StopPointService;
 
 pub const DEFAULT_HOST_URL: &str = "https://api.tfl.gov.uk";
@@ -16,7 +20,8 @@ pub const DEFAULT_HOST_URL: &str = "https://api.tfl.gov.uk";
 #[derive(derive_new::new)]
 pub struct TflStopPointServiceAdapter {
     host_url: String,
-    app_key: Option<SecretString>,
+    /// Asked for the key at each request. TfL answers without one, so having none is not an error.
+    credentials: Arc<dyn CredentialSource>,
     client: Client,
 }
 
@@ -42,7 +47,7 @@ impl TflStopPointServiceAdapter {
         path: &str,
         mut params: Vec<(&'static str, String)>,
     ) -> Result<reqwest::Response, SourceError> {
-        if let Some(key) = &self.app_key {
+        if let Some(key) = self.credentials.key(CredentialName::Tfl) {
             params.push(("app_key", key.expose_secret().to_owned()));
         }
         http::send(

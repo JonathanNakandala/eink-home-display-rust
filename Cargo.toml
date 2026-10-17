@@ -60,6 +60,7 @@ hyper-util = { version = "0.1.21", features = ["server", "http1", "tokio", "serv
 arc-swap = "1.9.2"
 yasna = "0.6"
 qrcode = { version = "0.14.1", default-features = false }
+rpassword = "7"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

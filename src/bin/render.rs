@@ -152,12 +152,14 @@ async fn fetch_live(config: &ApplicationConfig, zone: chrono_tz::Tz) -> Result<G
         .context("The [weather] configuration is invalid")?;
     // Reuse the application's own fetching by running it against a capture-only generator.
     let (tx, rx) = std::sync::mpsc::channel();
+    let clock = Arc::new(SystemClock::new(zone));
     let app = bootstrap::assemble(
         config,
         Capture(tx),
         NoDisplay,
         NoStore,
-        Arc::new(SystemClock::new(zone)),
+        bootstrap::setup_credentials(config, clock.clone()),
+        clock,
     )?;
     app.run(Location::new(
         config.location.latitude,

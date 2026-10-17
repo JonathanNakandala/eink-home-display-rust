@@ -423,8 +423,11 @@
       "type": "object",
       "properties": {
         "api_key": {
-          "description": "Consumer Key from your raildata.org.uk \"Live Arrival and Departure Boards\" subscription.",
-          "type": "string"
+          "description": "Consumer Key from your raildata.org.uk \"Live Arrival and Departure Boards\" subscription. Left out, it is set while\nthe server runs, with `displayctl credential set open-ldbws`, and until then the boards show as unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "host_url": {
           "description": "Base path up to and including the operation name; the CRS code is appended as the final path segment.",
@@ -432,7 +435,6 @@
         }
       },
       "required": [
-        "api_key",
         "host_url"
       ]
     },
@@ -460,8 +462,11 @@
       "type": "object",
       "properties": {
         "api_key": {
-          "description": "32-character OpenWeather API key.",
-          "type": "string",
+          "description": "32-character OpenWeather API key. Left out, it is set while the server runs, with\n`displayctl credential set open-weather`, and until then the weather shows as unavailable.",
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 32,
           "minLength": 32
         },
@@ -470,7 +475,6 @@
         }
       },
       "required": [
-        "api_key",
         "host_url"
       ]
     },

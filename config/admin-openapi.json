@@ -6,6 +6,199 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/credentials": {
+      "get": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "Every key the server can hold, and whether there is one. Never a key.",
+        "operationId": "list_credentials",
+        "responses": {
+          "200": {
+            "description": "The keys, and where each stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialList"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/credentials/{name}": {
+      "put": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "Sets the key from now on, in place of any other. It is used by the next request to its service, so a render that has\nalready started may still use the old one. The answer says where the key stands and never repeats it.",
+        "operationId": "set_credential",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The key's name, as `GET /v1/credentials` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "open-weather"
+          }
+        ],
+        "requestBody": {
+          "description": "The key, and whether to keep it for a restart.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetCredential"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The key is set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body could not be used, or the key cannot be one for that service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No key has that name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It was asked to be remembered, and the server has nowhere to keep it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "credentials"
+        ],
+        "summary": "Takes away the key that was set here, and any copy kept of it. A key in the configuration file, if there is one, is\nthe key again. Having none set is not an error.",
+        "operationId": "clear_credential",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The key's name, as `GET /v1/credentials` lists it.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "open-weather"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The key that was set is gone; this is where the key stands now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No key has that name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed. The log has the detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The answer to a request that failed.",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/displays": {
       "get": {
         "tags": [
@@ -1202,6 +1395,79 @@
           }
         }
       },
+      "CredentialEntry": {
+        "type": "object",
+        "description": "One of the keys the server uses for other services, and where it stands. Never the key itself: nothing in this API\nreturns one.",
+        "required": [
+          "name",
+          "description",
+          "optional",
+          "set",
+          "remembered"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The key's name, as the path takes it.",
+            "examples": [
+              "open-weather"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "What it is for.",
+            "examples": [
+              "OpenWeather API key (weather)"
+            ]
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "Whether the service answers without a key, so that having none is a choice and not a gap."
+          },
+          "set": {
+            "type": "boolean",
+            "description": "Whether there is a key now."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KeySource",
+                "description": "Where the key in use came from. Only present when there is one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was set with this API. Not present for a key from the configuration file, or from an earlier run."
+          },
+          "remembered": {
+            "type": "boolean",
+            "description": "Whether a copy is kept on disk, so that the key outlasts a restart."
+          }
+        }
+      },
+      "CredentialList": {
+        "type": "object",
+        "description": "Every key the server can hold.",
+        "required": [
+          "credentials"
+        ],
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CredentialEntry"
+            }
+          }
+        }
+      },
       "DisplayEntry": {
         "type": "object",
         "description": "A display the server knows, and where it stands. Nothing here is secret: it never carries a pairing code, a key\nor a certificate.",
@@ -1352,6 +1618,9 @@
           "not_waiting",
           "not_a_member",
           "unknown_layout",
+          "unknown_credential",
+          "invalid_credential",
+          "cannot_remember",
           "invalid_viewer",
           "invalid_viewer_id",
           "unknown_viewer",
@@ -1405,6 +1674,15 @@
             "description": "Give it short-lived access tokens (an hour, unless `[server.web] access_token_minutes` says) and a rotating refresh\ntoken to renew them with, in place of one token that lasts `lifetime_days`. A token that is lost is then good for an\nhour and not a quarter of a year, and a refresh token that is copied is noticed, which ends the session. `lifetime_days`\nis then how long the session lasts."
           }
         }
+      },
+      "KeySource": {
+        "type": "string",
+        "description": "Where the key in use came from.",
+        "enum": [
+          "config",
+          "set",
+          "remembered"
+        ]
       },
       "LayoutEntry": {
         "type": "object",
@@ -1524,6 +1802,24 @@
               "type": "string"
             },
             "description": "The image formats it can decode."
+          }
+        }
+      },
+      "SetCredential": {
+        "type": "object",
+        "description": "A key to use from now on. It is sent in the body, never in the path or a query, so it is in no log of requests.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "format": "password",
+            "description": "The key, exactly as the service gave it. Plain text with no spaces or line breaks; an OpenWeather key is 32\ncharacters. The answer never repeats it."
+          },
+          "remember": {
+            "type": "boolean",
+            "description": "Keep the key on disk too, in a file only the server's user can read, so that it is still there after a restart.\nWithout this the key is in memory alone, and setting it also drops any copy kept before."
           }
         }
       },
@@ -1702,6 +1998,10 @@
     {
       "name": "viewers",
       "description": "Who may look at the picture in a web browser when the page is not open to everyone."
+    },
+    {
+      "name": "credentials",
+      "description": "The keys the server uses to ask other services for data. They can be set and taken away here, and never read back."
     }
   ]
 }

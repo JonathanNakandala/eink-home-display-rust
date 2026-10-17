@@ -22,6 +22,7 @@ use chrono::Duration;
 use chrono_tz::Tz;
 use home_display_server::adapters::authenticated::AuthenticatedDevice;
 use home_display_server::adapters::clock::SystemClock;
+use home_display_server::application::credentials::Credentials;
 use home_display_server::bootstrap::{open_security, start_serving};
 use home_display_server::config::server::ServerConfig;
 use home_display_server::domain::models::display::ImageFormat;
@@ -63,7 +64,8 @@ async fn main() -> anyhow::Result<()> {
         .try_deserialize()?;
 
     let clock = Arc::new(SystemClock::new(Tz::UTC));
-    let security = open_security(&config, clock, true)
+    let credentials = Credentials::new(clock.clone(), []);
+    let security = open_security(&config, clock, credentials, true)
         .await?
         .ok_or_else(|| anyhow::anyhow!("HTTPS is served"))?;
     let handshakes = security.handshakes.clone();

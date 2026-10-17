@@ -36,7 +36,7 @@ impl ApplicationConfig {
                 enabled: true,
                 provider: WeatherProvider::OpenWeather,
                 open_weather: Some(OpenWeatherConfig {
-                    api_key: "0".repeat(32).into(),
+                    api_key: Some("0".repeat(32).into()),
                     host_url: "https://api.openweathermap.org".to_owned(),
                 }),
                 open_meteo: None,
@@ -56,7 +56,7 @@ impl ApplicationConfig {
             ],
             providers: ProvidersConfig {
                 open_ldbws: Some(OpenLdbwsConfig {
-                    api_key: "your-raildata-consumer-key".into(),
+                    api_key: Some("your-raildata-consumer-key".into()),
                     host_url: "https://api1.raildata.org.uk/1010-live-arrival-and-departure-boards-arr-and-dep1_1/LDBWS/api/20220120/GetArrDepBoardWithDetails".to_owned(),
                 }),
                 tfl: Some(TflConfig {
@@ -113,8 +113,8 @@ mod tests {
         let weather_key = "WEATHER-KEY-0123456789-abcdefghi";
         assert_eq!(weather_key.len(), 32);
         let mut config = ApplicationConfig::example();
-        config.weather.open_weather.as_mut().unwrap().api_key = weather_key.into();
-        config.providers.open_ldbws.as_mut().unwrap().api_key = "RAIL-KEY-secret".into();
+        config.weather.open_weather.as_mut().unwrap().api_key = Some(weather_key.into());
+        config.providers.open_ldbws.as_mut().unwrap().api_key = Some("RAIL-KEY-secret".into());
         config.providers.tfl.as_mut().unwrap().app_key = Some("TFL-KEY-secret".into());
 
         // What main logs at start-up, and what a stray `{:#?}` would print.
@@ -130,11 +130,23 @@ mod tests {
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
         let loaded = ApplicationConfig::new(&path).unwrap();
         assert_eq!(
-            loaded.weather.open_weather.unwrap().api_key.expose_secret(),
+            loaded
+                .weather
+                .open_weather
+                .unwrap()
+                .api_key
+                .unwrap()
+                .expose_secret(),
             weather_key
         );
         assert_eq!(
-            loaded.providers.open_ldbws.unwrap().api_key.expose_secret(),
+            loaded
+                .providers
+                .open_ldbws
+                .unwrap()
+                .api_key
+                .unwrap()
+                .expose_secret(),
             "RAIL-KEY-secret"
         );
         assert_eq!(
@@ -149,12 +161,73 @@ mod tests {
         );
 
         // A key refused for its length is reported by length, not repeated.
-        config.weather.open_weather.as_mut().unwrap().api_key = "too-short-but-secret".into();
+        config.weather.open_weather.as_mut().unwrap().api_key = Some("too-short-but-secret".into());
         let error = config.validate().unwrap_err().to_string();
         assert!(
             error.contains("32 characters") && !error.contains("too-short-but-secret"),
             "{error}"
         );
+    }
+
+    /// The example with every key taken out, as a file is when the keys are set while the server runs.
+    fn without_keys() -> ApplicationConfig {
+        let mut config = ApplicationConfig::example();
+        config.weather.open_weather.as_mut().unwrap().api_key = None;
+        config.providers.open_ldbws.as_mut().unwrap().api_key = None;
+        config.providers.tfl.as_mut().unwrap().app_key = None;
+        config
+    }
+
+    #[test]
+    fn a_file_with_no_keys_in_it_is_valid_and_reads_back_without_any() {
+        let config = without_keys();
+        let text = toml::to_string(&config).unwrap();
+        assert!(
+            !text.contains("api_key") && !text.contains("app_key"),
+            "{text}"
+        );
+
+        let path = std::env::temp_dir().join("home_display_no_keys_test.toml");
+        std::fs::write(&path, text).unwrap();
+        let loaded = ApplicationConfig::new(&path).expect("a file with no keys parses");
+
+        loaded.validate().expect("and is valid");
+        assert!(loaded.credential_keys().is_empty());
+    }
+
+    #[test]
+    fn the_keys_in_the_file_are_the_ones_the_server_starts_with_and_what_it_needs_is_listed() {
+        use crate::domain::models::credential::CredentialName;
+
+        let config = ApplicationConfig::example();
+        let names: Vec<CredentialName> = config
+            .credential_keys()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                CredentialName::OpenWeather,
+                CredentialName::OpenLdbws,
+                CredentialName::Tfl
+            ]
+        );
+        // The weather and the national rail boards will not answer without a key; TfL's is optional.
+        assert_eq!(
+            config.credentials_needed(),
+            [CredentialName::OpenWeather, CredentialName::OpenLdbws]
+        );
+
+        let mut off = without_keys();
+        off.weather.enabled = false;
+        off.departures.retain(|board| {
+            !matches!(
+                board.source,
+                crate::config::departures::DepartureSource::OpenLdbws { .. }
+            )
+        });
+        assert!(off.credentials_needed().is_empty());
     }
 
     #[test]

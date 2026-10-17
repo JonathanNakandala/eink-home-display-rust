@@ -1,6 +1,7 @@
 pub mod arrivals_service;
 pub mod certificate_authority;
 pub mod clock;
+pub mod credential_source;
 pub mod departures_service;
 pub mod display_image_generator;
 pub mod entropy;
@@ -10,6 +11,7 @@ pub mod layout_choices;
 pub mod pairing_store;
 pub mod published_images;
 pub mod quiet_times_calculator;
+pub mod remembered_credentials;
 pub mod render_observer;
 pub mod stop_point_service;
 pub mod train_schedule_service;

@@ -40,8 +40,12 @@ pub enum WeatherProvider {
     OpenMeteo,
 }
 
-/// An OpenWeather key is exactly 32 characters; anything else is a placeholder or a typo.
-fn api_key_length(key: &SecretString) -> Result<(), serde_valid::validation::Error> {
+/// An OpenWeather key, if there is one in the file, is exactly 32 characters; anything else is a placeholder or a typo.
+/// None is fine: the key can be set while the server runs.
+fn api_key_length(key: &Option<SecretString>) -> Result<(), serde_valid::validation::Error> {
+    let Some(key) = key else {
+        return Ok(());
+    };
     // The message must not repeat the key, only how long it is.
     let length = key.expose_secret().chars().count();
     if length == 32 {
@@ -55,11 +59,16 @@ fn api_key_length(key: &SecretString) -> Result<(), serde_valid::validation::Err
 
 #[derive(Debug, Serialize, Deserialize, Validate, JsonSchema)]
 pub struct OpenWeatherConfig {
-    /// 32-character OpenWeather API key.
-    #[serde(serialize_with = "secret::serialize")]
+    /// 32-character OpenWeather API key. Left out, it is set while the server runs, with
+    /// `displayctl credential set open-weather`, and until then the weather shows as unavailable.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "secret::serialize_option"
+    )]
     #[validate(custom = api_key_length)]
-    #[schemars(with = "String", length(min = 32, max = 32))]
-    pub api_key: SecretString,
+    #[schemars(with = "Option<String>", length(min = 32, max = 32))]
+    pub api_key: Option<SecretString>,
     pub host_url: String,
 }
 
@@ -93,7 +102,7 @@ mod tests {
             enabled,
             provider,
             open_weather: Some(OpenWeatherConfig {
-                api_key: api_key.into(),
+                api_key: Some(api_key.into()),
                 host_url: "https://api.openweathermap.org".to_owned(),
             }),
             open_meteo: None,

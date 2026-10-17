@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use anyhow::{Result, bail};
 use clap::Parser;
 
+use home_display_server::adapters::clock::SystemClock;
 use home_display_server::bootstrap::{self, setup_departure_boards};
 use home_display_server::cli::DeparturesArgs;
 use home_display_server::domain::models::departures::{DepartureStatus, Departures};
+use home_display_server::domain::services::credential_source::CredentialSource;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,9 +31,14 @@ async fn main() -> Result<()> {
         bail!("No matching [[departures]] boards in config");
     }
 
+    let credentials: Arc<dyn CredentialSource> =
+        bootstrap::setup_credentials(&config, Arc::new(SystemClock::new(zone)));
     for board_config in configs {
-        let mut boards =
-            setup_departure_boards(std::slice::from_ref(board_config), &config.providers)?;
+        let mut boards = setup_departure_boards(
+            std::slice::from_ref(board_config),
+            &config.providers,
+            &credentials,
+        )?;
         let Some(board) = boards.pop() else {
             println!("\n{}  (disabled)", board_config.name);
             continue;

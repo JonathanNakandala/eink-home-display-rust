@@ -27,7 +27,9 @@ use crate::adapters::est_server::{Access, EstServer, EstSettings, guarded};
 use crate::adapters::image_server::{self, SecureOffer, ServerSettings};
 use crate::adapters::layout_choices::FileLayoutChoices;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
+use crate::adapters::remembered_credentials::FileRememberedCredentials;
 use crate::adapters::viewer_registry::FileViewerRegistry;
+use crate::application::credentials::Credentials;
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::application::handshakes::Handshakes;
 use crate::application::viewers::Viewers;
@@ -81,6 +83,9 @@ pub struct Security {
     pub layout_choices: Arc<dyn LayoutChoices>,
     /// Who may look at the page for a browser, when it is not open. Kept beside the list of displays.
     pub viewers: Arc<Viewers>,
+    /// The keys for other services, which the admin interface sets. Those the owner asked to be remembered are kept
+    /// beside the list of displays.
+    pub credentials: Arc<Credentials>,
     /// The time the server goes by, which the layout schedule is read against.
     pub clock: Arc<dyn Clock>,
 }
@@ -94,6 +99,7 @@ pub struct Security {
 pub async fn open_security(
     config: &ServerConfig,
     clock: Arc<dyn Clock>,
+    credentials: Arc<Credentials>,
     init_pki: bool,
 ) -> anyhow::Result<Option<Security>> {
     if !config.transport.serves_https() {
@@ -103,6 +109,15 @@ pub async fn open_security(
     let layout_choices = FileLayoutChoices::open(&config.tls.directory)
         .await
         .context("Failed to open the layouts chosen for the displays")?;
+    // The keys the owner asked to be remembered come back here, before the first render asks for them.
+    credentials
+        .keep_in(Arc::new(
+            FileRememberedCredentials::open(&config.tls.directory)
+                .await
+                .context("Failed to open the keys the owner asked to be remembered")?,
+        ))
+        .await
+        .context("Failed to bring back the keys the owner asked to be remembered")?;
     Ok(Some(Security {
         authority,
         enrollment,
@@ -122,6 +137,7 @@ pub async fn open_security(
                 config.web.access_token_minutes.into(),
             )),
         ),
+        credentials,
         clock,
     }))
 }
@@ -162,6 +178,7 @@ pub async fn start(
         handshakes,
         layout_choices,
         viewers,
+        credentials,
         clock,
     } = security.context("HTTPS is served but the authority was not opened")?;
     let est_settings = EstSettings {
@@ -171,7 +188,16 @@ pub async fn start(
         ..EstSettings::default()
     };
 
-    let admin = open_admin(config, &enrollment, layout_choices, layouts, clock, viewers).await?;
+    let admin = open_admin(
+        config,
+        &enrollment,
+        layout_choices,
+        layouts,
+        clock,
+        viewers,
+        credentials,
+    )
+    .await?;
     let admin_path = admin.as_ref().map(|admin| admin.path.clone());
     let admin = admin.map(|admin| admin.serving);
 
@@ -295,6 +321,7 @@ async fn open_admin(
     layouts: Layouts,
     clock: Arc<dyn Clock>,
     viewers: Arc<Viewers>,
+    credentials: Arc<Credentials>,
 ) -> anyhow::Result<Option<AdminListener>> {
     if !config.admin.enabled {
         log::info!("The admin interface is turned off; no display can be paired until it is on");
@@ -310,6 +337,7 @@ async fn open_admin(
         layouts,
         clock,
         viewers,
+        credentials,
         web_facts(config),
     );
     log::info!("Admin interface on {}", path.display());
@@ -542,7 +570,8 @@ mod tests {
         web: Option<Router>,
     ) -> anyhow::Result<Listening> {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
-        let security = open_security(config, clock, init_pki).await?;
+        let credentials = Credentials::new(clock.clone(), []);
+        let security = open_security(config, clock, credentials, init_pki).await?;
         start(
             config,
             stand_in_display(),
@@ -897,10 +926,15 @@ mod tests {
         config.web.enabled = true;
         config.web.open = true;
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
-        let security = open_security(&config, clock.clone(), true)
-            .await
-            .unwrap()
-            .unwrap();
+        let security = open_security(
+            &config,
+            clock.clone(),
+            Credentials::new(clock.clone(), []),
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let layouts = Layouts::new(vec![Layout::new("dashboard", "Everything")]).unwrap();
         let handles = Handles {
             layouts: layouts.clone(),
@@ -980,10 +1014,15 @@ mod tests {
         // On, and needing a token (not open).
         config.web.enabled = true;
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
-        let security = open_security(&config, clock.clone(), true)
-            .await
-            .unwrap()
-            .unwrap();
+        let security = open_security(
+            &config,
+            clock.clone(),
+            Credentials::new(clock.clone(), []),
+            true,
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let layouts = Layouts::new(vec![Layout::new("dashboard", "Everything")]).unwrap();
         let handles = Handles {
             layouts: layouts.clone(),
@@ -1341,6 +1380,52 @@ mod tests {
             let other = enroll(&harness, Trust::Authority(&authority), "hall", &new_key()).await;
             assert_eq!(other.status, 403, "{transport:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_key_the_owner_asked_to_be_remembered_is_back_when_the_server_starts_again() {
+        use crate::domain::models::credential::CredentialName;
+
+        let pki = tempfile::tempdir().unwrap();
+        let config = config(Transport::Https, pki.path());
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let first = Credentials::new(clock.clone(), []);
+        let security = open_security(&config, clock.clone(), first.clone(), true)
+            .await
+            .unwrap();
+        first
+            .set(
+                CredentialName::Tfl,
+                "tfl-key-restart-test".to_owned().into(),
+                true,
+            )
+            .await
+            .unwrap();
+        first
+            .set(
+                CredentialName::OpenLdbws,
+                "memory-only-key".to_owned().into(),
+                false,
+            )
+            .await
+            .unwrap();
+        drop(security);
+
+        let second = Credentials::new(clock.clone(), []);
+        open_security(&config, clock, second.clone(), false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            second.status(CredentialName::Tfl).origin,
+            Some(crate::application::credentials::Origin::Remembered)
+        );
+        assert!(
+            !second.status(CredentialName::OpenLdbws).is_set(),
+            "a key not asked to be kept is gone with the server"
+        );
+        let on_disk = std::fs::read_to_string(pki.path().join("credentials.json")).unwrap();
+        assert!(!on_disk.contains("memory-only-key"), "{on_disk}");
     }
 
     #[tokio::test]

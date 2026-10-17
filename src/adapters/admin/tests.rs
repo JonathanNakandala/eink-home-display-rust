@@ -21,6 +21,7 @@ use crate::adapters::entropy::OsEntropy;
 use crate::adapters::layout_choices::FileLayoutChoices;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::adapters::viewer_registry::FileViewerRegistry;
+use crate::application::credentials::Credentials;
 use crate::application::enrollment::{Enrollment, EnrollmentPolicy};
 use crate::application::viewers::Viewers;
 use crate::domain::models::layout::{Layout, Layouts};
@@ -59,6 +60,7 @@ struct Fixture {
     enrollment: Arc<Enrollment>,
     choices: Arc<FileLayoutChoices>,
     viewers: Arc<Viewers>,
+    credentials: Arc<Credentials>,
     authority: Arc<certificate_authority::PrivateAuthority>,
     clock: Arc<TestClock>,
     client: AdminClient,
@@ -125,12 +127,14 @@ async fn start_with(web: WebFacts) -> Fixture {
     .unwrap();
     let choices = Arc::new(FileLayoutChoices::open(directory.path()).await.unwrap());
     let viewers = viewers_in(directory.path(), clock.clone()).await;
+    let credentials = Credentials::new(clock.clone(), []);
     let app = router(
         enrollment.clone(),
         choices.clone(),
         layouts,
         clock.clone(),
         viewers.clone(),
+        credentials.clone(),
         web,
     );
     let server = tokio::spawn(async move {
@@ -143,6 +147,7 @@ async fn start_with(web: WebFacts) -> Fixture {
         enrollment,
         choices,
         viewers,
+        credentials,
         authority,
         clock,
         server,
@@ -425,8 +430,9 @@ fn the_description_lists_exactly_the_routes_there_are() {
     }
     routes.sort();
     // The statuses each can answer with: 400 only where there is input to get wrong, 404 and 409 only where a
-    // display is named, 403 only where a code is checked.
-    let expected: [(&str, &str, &[&str]); 16] = [
+    // display or a key is named, 403 only where a code is checked.
+    let expected: [(&str, &str, &[&str]); 19] = [
+        ("DELETE", "/v1/credentials/{name}", &["200", "404", "500"]),
         (
             "DELETE",
             "/v1/displays/{name}",
@@ -439,6 +445,7 @@ fn the_description_lists_exactly_the_routes_there_are() {
         ),
         ("DELETE", "/v1/viewers/{id}", &["200", "400", "404", "500"]),
         ("DELETE", "/v1/window", &["200", "500"]),
+        ("GET", "/v1/credentials", &["200", "500"]),
         ("GET", "/v1/displays", &["200", "500"]),
         ("GET", "/v1/displays/{name}", &["200", "400", "404", "500"]),
         ("GET", "/v1/layouts", &["200", "500"]),
@@ -464,6 +471,11 @@ fn the_description_lists_exactly_the_routes_there_are() {
             "POST",
             "/v1/viewers/{id}/revoke",
             &["200", "400", "404", "500"],
+        ),
+        (
+            "PUT",
+            "/v1/credentials/{name}",
+            &["200", "400", "404", "409", "500"],
         ),
         (
             "PUT",
@@ -2183,4 +2195,307 @@ fn a_qr_code_of_a_real_link_fits_a_terminal_and_a_text_too_long_for_one_is_an_er
     assert!(printed.lines().count() <= 30);
 
     assert!(qr_for_terminal(&"x".repeat(5000)).is_err());
+}
+
+// --- the keys ---------------------------------------------------------------------------------------------
+
+mod credentials {
+    use secrecy::ExposeSecret;
+
+    use super::*;
+    use crate::adapters::remembered_credentials::FileRememberedCredentials;
+    use crate::domain::models::credential::CredentialName;
+    use crate::domain::services::credential_source::CredentialSource;
+
+    /// A key no other test uses, so that a look through the log for it finds only what this test caused.
+    const KEY: &str = "tfl-key-for-the-admin-test-7731";
+    const WEATHER_KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    async fn put(f: &Fixture, name: &str, body: &str) -> (StatusCode, String) {
+        raw(
+            &f.socket,
+            Method::PUT,
+            &format!("/v1/credentials/{name}"),
+            Some("application/json"),
+            body,
+        )
+        .await
+    }
+
+    fn entry(text: &str) -> Value {
+        serde_json::from_str(text).unwrap()
+    }
+
+    #[tokio::test]
+    async fn every_key_there_can_be_is_listed_and_none_is_set_on_a_server_that_has_none() {
+        let f = start().await;
+
+        let (status, text) = raw(&f.socket, Method::GET, "/v1/credentials", None, "").await;
+
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let list = entry(&text);
+        let names: Vec<&str> = list["credentials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["open-weather", "open-ldbws", "tfl"]);
+        for e in list["credentials"].as_array().unwrap() {
+            assert_eq!(e["set"], false, "{e}");
+            assert_eq!(e["remembered"], false, "{e}");
+        }
+        assert_eq!(list["credentials"][2]["optional"], true);
+        assert_eq!(list["credentials"][0]["optional"], false);
+    }
+
+    #[tokio::test]
+    async fn a_key_set_is_used_by_the_server_and_the_answer_says_where_it_stands_and_not_what_it_is()
+     {
+        let f = start().await;
+
+        let (status, text) = put(
+            &f,
+            "open-weather",
+            &format!(r#"{{"key": "{WEATHER_KEY}"}}"#),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let set = entry(&text);
+        assert_eq!(set["name"], "open-weather");
+        assert_eq!(set["set"], true);
+        assert_eq!(set["source"], "set");
+        assert_eq!(set["remembered"], false);
+        assert!(set["since"].is_string(), "{set}");
+        assert_eq!(
+            f.credentials
+                .key(CredentialName::OpenWeather)
+                .map(|key| key.expose_secret().to_owned())
+                .as_deref(),
+            Some(WEATHER_KEY),
+            "what a service asks for is the key just set"
+        );
+        // And nothing that can be asked says it, not the entry, not the list, not the description of the API.
+        for path in ["/v1/credentials", "/openapi.json"] {
+            let (_, shown) = raw(&f.socket, Method::GET, path, None, "").await;
+            assert!(!shown.contains(WEATHER_KEY), "{path}: {shown}");
+        }
+        assert!(!text.contains(WEATHER_KEY), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_key_is_never_repeated_in_a_refusal_whatever_was_wrong_with_it() {
+        let f = start().await;
+        let short = "short-secret-9981";
+        for (name, body) in [
+            // The wrong length for its service.
+            ("open-weather", format!(r#"{{"key": "{short}"}}"#)),
+            // Something a header can't hold.
+            ("tfl", r#"{"key": "has a space secret-9981"}"#.to_owned()),
+            // Not a string, which a JSON error would quote.
+            ("tfl", r#"{"key": 998112345}"#.to_owned()),
+            // Not an object at all.
+            ("tfl", r#""secret-9981""#.to_owned()),
+            // Truncated.
+            ("tfl", r#"{"key": "secret-9981"#.to_owned()),
+        ] {
+            let (status, text) = put(&f, name, &body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {text}");
+            assert!(!text.contains("9981"), "{body}: {text}");
+        }
+        assert!(!f.credentials.status(CredentialName::Tfl).is_set());
+        assert!(!f.credentials.status(CredentialName::OpenWeather).is_set());
+    }
+
+    #[tokio::test]
+    async fn a_key_that_cannot_be_one_is_refused_with_a_code_that_says_why_and_changes_nothing() {
+        let f = start().await;
+
+        let (status, text) = put(&f, "open-weather", r#"{"key": "tooshort"}"#).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = entry(&text);
+        assert_eq!(error["error"]["code"], "invalid_credential");
+        assert!(
+            error["error"]["message"].as_str().unwrap().contains("32"),
+            "{text}"
+        );
+        assert!(!f.credentials.status(CredentialName::OpenWeather).is_set());
+    }
+
+    #[tokio::test]
+    async fn a_name_that_is_not_a_key_is_not_found_and_says_which_there_are() {
+        let f = start().await;
+
+        for method in [Method::PUT, Method::DELETE] {
+            let (status, text) = raw(
+                &f.socket,
+                method,
+                "/v1/credentials/weather",
+                Some("application/json"),
+                r#"{"key": "abc"}"#,
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
+            let error = entry(&text);
+            assert_eq!(error["error"]["code"], "unknown_credential");
+            assert!(
+                error["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("open-weather"),
+                "{text}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn asking_to_keep_a_key_where_nothing_can_be_kept_is_refused_and_the_key_is_not_set() {
+        let f = start().await;
+
+        let (status, text) = put(
+            &f,
+            "tfl",
+            &format!(r#"{{"key": "{KEY}", "remember": true}}"#),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{text}");
+        assert_eq!(entry(&text)["error"]["code"], "cannot_remember");
+        assert!(!f.credentials.status(CredentialName::Tfl).is_set());
+    }
+
+    #[tokio::test]
+    async fn a_key_asked_to_be_kept_is_in_a_file_only_its_owner_can_read_and_taking_it_away_removes_the_file()
+     {
+        let f = start().await;
+        let kept = tempfile::tempdir().unwrap();
+        f.credentials
+            .keep_in(Arc::new(
+                FileRememberedCredentials::open(kept.path()).await.unwrap(),
+            ))
+            .await
+            .unwrap();
+        let file = kept.path().join("credentials.json");
+
+        let (status, text) = put(
+            &f,
+            "tfl",
+            &format!(r#"{{"key": "{KEY}", "remember": true}}"#),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert_eq!(entry(&text)["remembered"], true);
+        assert!(std::fs::read_to_string(&file).unwrap().contains(KEY));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        // Set again without asking for it to be kept: the copy on disk goes, so the old key can't come back.
+        let (status, text) = put(&f, "tfl", &format!(r#"{{"key": "{KEY}-2"}}"#)).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert_eq!(entry(&text)["remembered"], false);
+        assert!(!file.exists());
+
+        put(
+            &f,
+            "tfl",
+            &format!(r#"{{"key": "{KEY}", "remember": true}}"#),
+        )
+        .await;
+        assert!(file.exists());
+        let (status, text) = raw(&f.socket, Method::DELETE, "/v1/credentials/tfl", None, "").await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert_eq!(entry(&text)["set"], false);
+        assert!(!file.exists());
+    }
+
+    #[tokio::test]
+    async fn taking_away_a_key_that_was_never_set_is_fine() {
+        let f = start().await;
+
+        let (status, text) = raw(&f.socket, Method::DELETE, "/v1/credentials/tfl", None, "").await;
+
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert_eq!(entry(&text)["set"], false);
+    }
+
+    #[tokio::test]
+    async fn setting_and_taking_away_a_key_are_logged_and_the_log_never_holds_the_key() {
+        crate::captured_log::install();
+        let f = start().await;
+
+        put(&f, "tfl", &format!(r#"{{"key": "{KEY}"}}"#)).await;
+        put(&f, "tfl", r#"{"key": "not a key at all"}"#).await;
+        raw(&f.socket, Method::DELETE, "/v1/credentials/tfl", None, "").await;
+
+        assert!(
+            crate::captured_log::lines_containing(KEY).is_empty(),
+            "{:?}",
+            crate::captured_log::lines_containing(KEY)
+        );
+        assert!(
+            !crate::captured_log::lines_containing("The tfl key was set").is_empty(),
+            "setting a key should leave a line saying so"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_client_sets_lists_and_clears_a_key_and_what_it_says_is_not_the_key() {
+        let f = start().await;
+        let key = secrecy::SecretString::from(KEY.to_owned());
+
+        let set = f.client.set_credential("tfl", &key, false).await.unwrap();
+        assert!(set.set && !set.remembered);
+        let listed = f.client.credentials().await.unwrap();
+        let said = format!(
+            "{} {}",
+            present::describe_credentials(&listed, Utc::now()),
+            present::credential_changed(&set, false)
+        );
+        assert!(!said.contains(KEY), "{said}");
+        assert!(said.contains("in memory only"), "{said}");
+
+        let cleared = f.client.clear_credential("tfl").await.unwrap();
+        assert!(!cleared.set);
+        assert!(present::credential_changed(&cleared, true).contains("requests go without one"));
+
+        // A name that can't be a key's is caught before anything is sent.
+        assert!(matches!(
+            f.client.set_credential("weather", &key, false).await,
+            Err(CallError::Invalid(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_table_says_what_each_key_is_for_where_it_came_from_and_that_it_will_be_gone() {
+        let f = start().await;
+        f.client
+            .set_credential(
+                "open-weather",
+                &secrecy::SecretString::from(WEATHER_KEY.to_owned()),
+                false,
+            )
+            .await
+            .unwrap();
+
+        let table =
+            present::describe_credentials(&f.client.credentials().await.unwrap(), Utc::now());
+
+        assert!(
+            table.contains("open-weather") && table.contains("set"),
+            "{table}"
+        );
+        assert!(table.contains("gone when the server stops"), "{table}");
+        assert!(table.contains("unavailable until it is set"), "{table}");
+        assert!(table.contains("works without one"), "{table}");
+        assert!(!table.contains(WEATHER_KEY), "{table}");
+    }
 }

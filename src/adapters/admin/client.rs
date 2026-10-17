@@ -8,14 +8,17 @@ use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, HOST};
 use hyper::{Method, Request, StatusCode};
 use hyper_util::rt::TokioIo;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::api::{
-    ApiError, ApproveRequest, ChooseLayout, DisplayEntry, DisplayList, IssueViewer, LayoutList,
-    OpenWindow, ViewerEntry, ViewerIssued, ViewerList, WindowState,
+    ApiError, ApproveRequest, ChooseLayout, CredentialEntry, CredentialList, DisplayEntry,
+    DisplayList, IssueViewer, LayoutList, OpenWindow, ViewerEntry, ViewerIssued, ViewerList,
+    WindowState,
 };
 use super::transport;
+use crate::domain::models::credential::CredentialName;
 use crate::domain::models::device_id::DeviceId;
 
 /// Why a call failed: the server could not be reached, or it answered that the request was no good.
@@ -228,6 +231,45 @@ impl AdminClient {
 
     pub async fn forget_viewer(&self, id: &str) -> Result<ViewerEntry, CallError> {
         self.call(Method::DELETE, &Self::viewer_path(id, "")?, None::<&()>)
+            .await
+    }
+
+    /// Every key the server can hold, and where each stands. Never a key.
+    pub async fn credentials(&self) -> Result<CredentialList, CallError> {
+        self.call(Method::GET, "/v1/credentials", None::<&()>).await
+    }
+
+    /// The path of a key, after checking `name` is one (so a typo is caught here, with a clear message).
+    fn credential_path(name: &str) -> Result<String, CallError> {
+        let name = CredentialName::parse(name).map_err(|e| CallError::Invalid(e.to_string()))?;
+        Ok(format!("/v1/credentials/{name}"))
+    }
+
+    /// Sets the key for `name`, and keeps it for a restart if `remember`. The key is held for as short a time as it can be
+    /// and is not shown by anything here.
+    pub async fn set_credential(
+        &self,
+        name: &str,
+        key: &SecretString,
+        remember: bool,
+    ) -> Result<CredentialEntry, CallError> {
+        /// What goes over the socket. Not `SetCredential`, whose key cannot be written out, by design.
+        #[derive(Serialize)]
+        struct Body<'a> {
+            key: &'a str,
+            remember: bool,
+        }
+        let body = Body {
+            key: key.expose_secret(),
+            remember,
+        };
+        self.call(Method::PUT, &Self::credential_path(name)?, Some(&body))
+            .await
+    }
+
+    /// Takes away the key set for `name`.
+    pub async fn clear_credential(&self, name: &str) -> Result<CredentialEntry, CallError> {
+        self.call(Method::DELETE, &Self::credential_path(name)?, None::<&()>)
             .await
     }
 

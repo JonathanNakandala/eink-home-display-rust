@@ -54,10 +54,15 @@ pub struct ProvidersConfig {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OpenLdbwsConfig {
-    /// Consumer Key from your raildata.org.uk "Live Arrival and Departure Boards" subscription.
-    #[serde(serialize_with = "secret::serialize")]
-    #[schemars(with = "String")]
-    pub api_key: SecretString,
+    /// Consumer Key from your raildata.org.uk "Live Arrival and Departure Boards" subscription. Left out, it is set while
+    /// the server runs, with `displayctl credential set open-ldbws`, and until then the boards show as unavailable.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "secret::serialize_option"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub api_key: Option<SecretString>,
     /// Base path up to and including the operation name; the CRS code is appended as the final path segment.
     pub host_url: String,
 }
