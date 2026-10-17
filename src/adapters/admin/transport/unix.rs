@@ -12,21 +12,30 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use interprocess::local_socket::tokio::{Listener, prelude::*};
+use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
 use interprocess::local_socket::{GenericFilePath, ListenerOptions, Name};
 use interprocess::os::unix::local_socket::ListenerOptionsExt;
 
-use super::{connect, unusable};
+use super::unusable;
 
 /// The longest socket path that is certain to fit in a Unix socket address (104 bytes on macOS, 108 on Linux,
 /// less the terminator and some room).
 const MAX_PATH_BYTES: usize = 100;
+
+/// A connection to the socket.
+pub type Connection = Stream;
 
 /// The socket's name: its path.
 pub fn name(path: &Path) -> anyhow::Result<Name<'static>> {
     path.to_path_buf()
         .to_fs_name::<GenericFilePath>()
         .map_err(|e| unusable(path, e))
+}
+
+pub async fn connect(path: &Path) -> anyhow::Result<Connection> {
+    Stream::connect(name(path)?)
+        .await
+        .with_context(|| format!("Failed to connect to {}", path.display()))
 }
 
 pub async fn bind(path: &Path) -> anyhow::Result<Listener> {
