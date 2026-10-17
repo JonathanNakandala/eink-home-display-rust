@@ -436,6 +436,7 @@ pub fn web_routes(
         (images, format)
     };
     let settings = image_server::WebSettings {
+        stream: Default::default(),
         open: web.open,
         layouts: web
             .layouts
@@ -857,6 +858,96 @@ mod tests {
             picture.bytes().await.unwrap().as_ref(),
             b"drawn for the page"
         );
+    }
+
+    /// The stream of changes over the HTTPS side, where a connection is ended after two minutes and where the page, with no
+    /// certificate, is let in: it opens, says the state at once, and goes on without being cut by what the server does to
+    /// connections.
+    #[tokio::test]
+    async fn the_stream_of_changes_works_over_tls_and_is_there_for_a_page_with_no_certificate() {
+        use crate::adapters::published_images::DirectoryImages;
+        use crate::application::devices::DeviceBoard;
+        use crate::application::refresh::RefreshControl;
+        use crate::application::status::StatusBoard;
+        use crate::domain::models::layout::{Layout, LayoutName};
+
+        let pki = tempfile::tempdir().unwrap();
+        let images = tempfile::tempdir().unwrap();
+        let dashboard = LayoutName::parse("dashboard").unwrap();
+        let store = DirectoryImages::new(images.path());
+        for format in [ImageFormat::Png, ImageFormat::Bmp] {
+            store
+                .publish(&dashboard, format, b"a picture")
+                .await
+                .unwrap();
+        }
+        let mut config = config(Transport::Https, pki.path());
+        config.web.enabled = true;
+        config.web.open = true;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let security = open_security(&config, clock.clone(), true)
+            .await
+            .unwrap()
+            .unwrap();
+        let layouts = Layouts::new(vec![Layout::new("dashboard", "Everything")]).unwrap();
+        let handles = Handles {
+            layouts: layouts.clone(),
+            layout_choices: None,
+            viewers: Some(security.viewers.clone()),
+            refresh: RefreshControl::new(std::time::Duration::from_secs(30)),
+            status: StatusBoard::new(clock.now()),
+            devices: DeviceBoard::new(std::time::Duration::from_secs(900)),
+            members: None,
+            handshakes: None,
+        };
+        let web = web_routes(
+            &config,
+            Arc::new(DirectoryImages::new(images.path())),
+            ImageFormat::Bmp,
+            Schedule::parse_every("1h").unwrap(),
+            handles,
+            clock,
+        )
+        .unwrap()
+        .expect("the page is on");
+        let listening = start(
+            &config,
+            stand_in_display(),
+            Some(web),
+            ImageFormat::Bmp,
+            layouts,
+            Some(security),
+        )
+        .await
+        .unwrap();
+        let harness = harness_for(listening, pki);
+
+        let tls = client_config(Trust::Anything, None, &[&rustls::version::TLS13]);
+        let mut stream = connect_with(&harness, tls).await.expect("a TLS connection");
+        stream
+            .write_all(b"GET /view/api/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut received = String::new();
+        let mut buffer = [0u8; 2048];
+        let read = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !received.contains("event: state") {
+                let n = stream.read(&mut buffer).await.unwrap();
+                assert!(n > 0, "closed after {received:?}");
+                received.push_str(&String::from_utf8_lossy(&buffer[..n]));
+            }
+        })
+        .await;
+
+        assert!(read.is_ok(), "no event in {received:?}");
+        assert!(received.starts_with("HTTP/1.1 200"), "{received:?}");
+        assert!(
+            received
+                .to_lowercase()
+                .contains("content-type: text/event-stream"),
+            "{received:?}"
+        );
+        assert!(received.contains("retry: 2000"), "{received:?}");
     }
 
     /// The whole way a viewer gets in over HTTPS: made through the admin socket, signed in over TLS with the link's code, and

@@ -89,6 +89,10 @@
   var memory = {};          // where tokens are kept if the browser will not keep them
   var stopped = false;      // signed out: nothing to ask for until a link is opened
   var ended = false;        // a refresh token was refused: this browser's access has ended
+  var lastFingerprint = null;   // what the last state said, so that a stream saying the same needs no look
+  var streamAbort = null;       // the open stream of changes, if any
+  var streamLive = false;       // a stream is open and has been heard from
+  var streamFailures = 0;
 
   var params = new URLSearchParams(location.search);
   var hash = new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -184,6 +188,8 @@
   function needSignIn(title, text) {
     stopped = true;
     clearTimeout(timer);
+    closeStream();
+    forgetPicture();
     picture.hidden = true; empty.hidden = true; nav.textContent = '';
     document.getElementById('signin-title').textContent = title;
     document.getElementById('signin-text').textContent = text;
@@ -230,6 +236,7 @@
   async function leave() {
     var held = refreshToken() || token();
     keep(null);
+    forgetPicture();
     needSignIn('Signed out', 'This browser no longer has access. Open a new link from the owner to look again.');
     if (held) {
       try {
@@ -277,6 +284,8 @@
     url.searchParams.set('layout', name);
     history.replaceState(null, '', url);
     renderNav();
+    lastFingerprint = null;
+    closeStream();
     refresh();
   }
 
@@ -304,6 +313,123 @@
     picture.hidden = false;
     empty.hidden = true;
     shown = key;
+    remember(blob, state);
+  }
+
+  // The last picture seen, kept in the browser (IndexedDB) so that a page that is reloaded, or opened with the network down, has
+  // something to show at once and says how old it is. It is the viewer's own picture on its own device, and is forgotten when
+  // it signs out or its access ends.
+  function openDatabase() {
+    return new Promise(function (resolve, reject) {
+      var request = indexedDB.open('hd', 1);
+      request.onupgradeneeded = function () { request.result.createObjectStore('last'); };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { reject(request.error); };
+    });
+  }
+
+  async function remember(blob, state) {
+    try {
+      var database = await openDatabase();
+      await new Promise(function (resolve, reject) {
+        var transaction = database.transaction('last', 'readwrite');
+        transaction.objectStore('last').put({
+          blob: blob,
+          layout: state.layout,
+          version: state.version,
+          renderedAt: Date.now() - state.age_seconds * 1000
+        }, 'picture:' + chosen);
+        transaction.oncomplete = resolve;
+        transaction.onerror = function () { reject(transaction.error); };
+      });
+      database.close();
+    } catch (e) { /* nothing kept; the picture is still on screen */ }
+  }
+
+  async function showRemembered() {
+    try {
+      var database = await openDatabase();
+      var found = await new Promise(function (resolve, reject) {
+        var request = database.transaction('last').objectStore('last').get('picture:' + chosen);
+        request.onsuccess = function () { resolve(request.result); };
+        request.onerror = function () { reject(request.error); };
+      });
+      database.close();
+      if (!found || picture.src) return;
+      var url = URL.createObjectURL(found.blob);
+      picture.onload = function () { objectUrl = url; };
+      picture.src = url;
+      picture.hidden = false;
+      empty.hidden = true;
+      shown = found.layout + ':' + found.version;
+      shownAt = found.renderedAt;
+      say(found.layout + ': updated ' + ago((Date.now() - shownAt) / 1000) + ' (checking)', false);
+    } catch (e) { /* none, or not readable: the first look will do */ }
+  }
+
+  function forgetPicture() {
+    try { indexedDB.deleteDatabase('hd'); } catch (e) { /* nothing to forget */ }
+  }
+
+  function fingerprint(state) {
+    return [state.layout, state.version, state.stale, state.pending].join(':');
+  }
+
+  // A stream of changes from the server: it says when a render has finished or the layout on Auto has changed, so that the
+  // picture is on screen a moment after it is drawn and the page need not ask on a timer. It is read with fetch, as a browser's
+  // EventSource can't show a token. It is ended by the server every minute or so and opened again at once; if it can't be had,
+  // the page carries on asking as before.
+  function closeStream() {
+    if (streamAbort) { streamAbort.abort(); streamAbort = null; }
+    streamLive = false;
+  }
+
+  function heard(block) {
+    var name = null, data = null;
+    block.split('\n').forEach(function (line) {
+      if (line.indexOf('event: ') === 0) name = line.slice(7);
+      else if (line.indexOf('data: ') === 0) data = line.slice(6);
+    });
+    if (name !== 'state' || data === null) return;
+    var said;
+    try { said = JSON.parse(data); } catch (e) { return; }
+    if (fingerprint(said) !== lastFingerprint) refresh();
+  }
+
+  async function openStream() {
+    if (streamAbort || stopped || document.hidden || !window.ReadableStream) return;
+    var controller = new AbortController();
+    streamAbort = controller;
+    var delay = 500;
+    try {
+      var response = await api('events?layout=' + encodeURIComponent(chosen), {
+        signal: controller.signal, headers: { Accept: 'text/event-stream' }
+      });
+      if (unauthorised(response)) return;
+      if (!response.ok || !response.body) throw new Error('no stream (' + response.status + ')');
+      streamLive = true;
+      streamFailures = 0;
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      for (;;) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        var blocks = buffer.split('\n\n');
+        buffer = blocks.pop();
+        blocks.forEach(heard);
+      }
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      streamFailures += 1;
+      delay = Math.min(30000, 2000 * Math.pow(2, streamFailures - 1));
+    }
+    streamLive = false;
+    if (streamAbort === controller) {
+      streamAbort = null;
+      setTimeout(openStream, delay);
+    }
   }
 
   function describe(state) {
@@ -349,6 +475,7 @@
       var state = await response.json();
       await showPicture(state);
       describe(state);
+      lastFingerprint = fingerprint(state);
       failures = 0;
       // Back when the server says the next picture is due (a moment after it is drawn, and every moment until it is, if it is
       // not there yet); and, on Auto, when the schedule changes the layout, so that the change is on screen when it happens.
@@ -356,11 +483,15 @@
       if (chosen === 'auto' && typeof state.auto_changes_in_seconds === 'number') {
         next = Math.min(next, state.auto_changes_in_seconds + 1);
       }
-      schedule(next);
+      // With a stream open the server says when to look, so asking is only for the age and for a stream that has quietly stopped.
+      schedule(streamLive ? Math.max(next, 120) : next);
+      openStream();
     } catch (e) {
       failures += 1;
       var wait = Math.min(300, 10 * Math.pow(2, failures - 1));
-      say('Cannot reach the server; trying again in ' + wait + ' s', true);
+      // What is on screen stays, and says how old it is.
+      var old = shownAt === null ? '' : ' Showing the picture from ' + ago((Date.now() - shownAt) / 1000) + '.';
+      say('Cannot reach the server; trying again in ' + wait + ' s.' + old, true);
       problem.textContent = '';
       schedule(wait);
     }
@@ -373,7 +504,9 @@
     if (text !== statusLine.textContent) statusLine.textContent = text;
   }, 30000);
 
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) closeStream(); else refresh();
+  });
   window.addEventListener('online', refresh);
   document.addEventListener('keydown', function (e) {
     if (e.key === 'ArrowRight') cycle(1);
@@ -426,10 +559,16 @@
     if (code) signIn(code).then(function (ok) { if (ok) refresh(); });
   });
 
+  // The shell is kept by a service worker (where the browser has them, which is on a secure page) so that the page opens with
+  // the network down. It keeps nothing private: the picture is kept above, by the page.
+  if ('serviceWorker' in navigator && !params.has('nosw')) {
+    navigator.serviceWorker.register('/view/sw.js', { scope: '/view' }).catch(function () { /* the page works without */ });
+  }
+
   signout.hidden = !token();
   var code = hash.get('code');
   if (code) signIn(code).then(function (ok) { if (ok) refresh(); });
-  else refresh();
+  else showRemembered().then(refresh);
 })();
 </script>
 </body>

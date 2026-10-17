@@ -831,6 +831,94 @@
         }
       }
     },
+    "/view/api/events": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Tells the page when the picture it is looking at changes, as it happens, so that it need not ask on a timer.",
+        "description": "`text/event-stream`: an event is sent at the start, and again whenever a render finishes that changes the picture, the late\nor due state, or what `auto` means. Between, a comment line is sent now and then so that nothing on the way closes it. It\nends after a minute and a half (`event: bye`), and the page opens another at once; a token that has been revoked or has run\nout in the meantime ends it at the next look. The page still asks now and then, so a stream that fails costs only speed.",
+        "operationId": "events",
+        "parameters": [
+          {
+            "name": "layout",
+            "in": "query",
+            "description": "One of the names `/view/api/layouts` lists, or `auto`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "departures"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A stream of events: `state` with the layout, the render's `version`, `stale`, `pending` and `next_seconds` whenever any of the first four changes, `: keepalive` comments, and a last `bye` when the stream ends and should be opened again. Send the token as `Authorization`, which a browser's `EventSource` cannot, so read it with `fetch`.",
+            "headers": {
+              "cache-control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A viewer token is needed, or the one shown is not good.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token does not allow that layout (`insufficient_scope`).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing has been rendered yet, or there is no such layout.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests that were not good from this source.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/view/api/image": {
       "get": {
         "tags": [
@@ -1279,6 +1367,27 @@
             "description": "The web app manifest, as `application/manifest+json`.",
             "content": {
               "application/manifest+json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/view/sw.js": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "The service worker, which keeps the shell of the page so that it opens with the network down. It keeps nothing private.",
+        "operationId": "worker",
+        "responses": {
+          "200": {
+            "description": "The service worker script. Its scope is the page (`/view`), which `Service-Worker-Allowed` says may be wider than the script's own folder.",
+            "content": {
+              "text/javascript": {
                 "schema": {
                   "type": "string"
                 }

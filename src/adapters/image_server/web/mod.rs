@@ -31,7 +31,7 @@ use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
@@ -56,6 +56,8 @@ use crate::domain::models::layout::{Layout, LayoutName};
 use crate::domain::models::viewer::LayoutScope;
 
 const PAGE: &str = include_str!("view.html");
+/// The service worker that keeps the page's shell.
+const WORKER: &str = include_str!("sw.js");
 
 /// What the realm of a challenge is called.
 const REALM: &str = "home-display";
@@ -71,6 +73,25 @@ const WEB_WAKE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 /// A token request is two short fields.
 const MAX_FORM: usize = 2048;
 
+/// How long a stream of changes (`/view/api/events`) goes on, and how often it looks again when nothing has told it to. A
+/// stream is ended after a while and the page opens another at once, as server-sent events are meant to be used: no proxy, and
+/// no connection limit of the server's own (the HTTPS side ends a connection after two minutes), has to be waited out, and a
+/// token that has since been revoked or has run out is found out within a moment.
+#[derive(Debug, Clone, Copy)]
+pub struct StreamTiming {
+    pub lifetime: std::time::Duration,
+    pub tick: std::time::Duration,
+}
+
+impl Default for StreamTiming {
+    fn default() -> Self {
+        Self {
+            lifetime: std::time::Duration::from_secs(90),
+            tick: std::time::Duration::from_secs(20),
+        }
+    }
+}
+
 /// Who the page and its API are for.
 #[derive(Debug, Clone, Default)]
 pub struct WebSettings {
@@ -78,6 +99,7 @@ pub struct WebSettings {
     pub layouts: Vec<LayoutName>,
     /// Whether anyone who can reach the server may use it. Otherwise a viewer token is needed.
     pub open: bool,
+    pub stream: StreamTiming,
 }
 
 /// The layouts `settings` allows out of those there are, or the name of one that isn't among them.
@@ -144,6 +166,7 @@ pub(super) struct WebState {
     policy: HeaderValue,
     /// The icon in each size it is served in.
     icons: Vec<(u32, Vec<u8>)>,
+    stream: StreamTiming,
     access: Access,
 }
 
@@ -151,6 +174,8 @@ pub(super) struct WebState {
 #[derive(Clone)]
 struct Principal {
     scope: LayoutScope,
+    /// What was shown, so that a stream that goes on for a while can check it is still good.
+    token: String,
 }
 
 /// Why a request for a layout is refused.
@@ -184,7 +209,12 @@ impl IntoResponse for Refusal {
 }
 
 impl WebState {
-    pub(super) fn new(published: Arc<Published>, allowed: Vec<Layout>, access: Access) -> Self {
+    pub(super) fn new(
+        published: Arc<Published>,
+        allowed: Vec<Layout>,
+        stream: StreamTiming,
+        access: Access,
+    ) -> Self {
         assert!(!allowed.is_empty(), "the page has a layout to show");
         Self {
             published,
@@ -195,6 +225,7 @@ impl WebState {
                 .iter()
                 .map(|size| (*size, icons::png(*size)))
                 .collect(),
+            stream,
             access,
         }
     }
@@ -304,7 +335,7 @@ fn hash_source(text: &str) -> String {
 /// talk to this server: nothing else.
 fn content_security_policy(page: &str) -> String {
     format!(
-        "default-src 'none'; script-src {}; style-src {}; img-src blob: 'self'; connect-src 'self'; manifest-src 'self'; \
+        "default-src 'none'; script-src {}; style-src {}; img-src blob: 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; \
          base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         hash_source(inline_block(page, "script")),
         hash_source(inline_block(page, "style")),
@@ -419,9 +450,10 @@ async fn authenticate(
     match viewers.authenticate(&token).await {
         Ok(who) => {
             failures.succeeded(source);
-            request
-                .extensions_mut()
-                .insert(Principal { scope: who.scope });
+            request.extensions_mut().insert(Principal {
+                scope: who.scope,
+                token,
+            });
             let mut response = next.run(request).await;
             // What is answered depends on who asks.
             response
@@ -483,6 +515,7 @@ fn open_routes() -> OpenApiRouter<Arc<WebState>> {
         .routes(routes!(manifest))
         .routes(routes!(icon_svg))
         .routes(routes!(icon_png))
+        .routes(routes!(worker))
 }
 
 /// What gives the picture away: behind `authenticate`.
@@ -490,6 +523,7 @@ fn protected_routes() -> OpenApiRouter<Arc<WebState>> {
     OpenApiRouter::new()
         .routes(routes!(layouts))
         .routes(routes!(state))
+        .routes(routes!(events))
         .routes(routes!(image))
 }
 
@@ -621,6 +655,31 @@ async fn icon_svg() -> Response {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         icons::SVG,
+    )
+        .into_response()
+}
+
+/// The service worker, which keeps the shell of the page so that it opens with the network down. It keeps nothing private.
+#[utoipa::path(
+    get,
+    path = "/view/sw.js",
+    tag = "web",
+    responses((
+        status = 200,
+        description = "The service worker script. Its scope is the page (`/view`), which `Service-Worker-Allowed` says may be wider than the script's own folder.",
+        content_type = "text/javascript",
+        body = String
+    ))
+)]
+async fn worker() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            // Always checked, so that a changed worker is found at once.
+            (header::CACHE_CONTROL, "no-cache"),
+            (HeaderName::from_static("service-worker-allowed"), "/view"),
+        ],
+        WORKER,
     )
         .into_response()
 }
@@ -787,21 +846,42 @@ async fn state(
     Query(which): Query<WhichLayout>,
     Query(have): Query<Have>,
 ) -> Response {
-    let scope = scope_of(principal);
-    let layout = match state.resolve(&scope, which.layout.as_deref()) {
-        Ok(layout) => layout,
-        Err(refusal) => return refusal.into_response(),
-    };
-    let automatic = which.layout.as_deref().is_none_or(|name| name == "auto");
+    match view_state(
+        &state,
+        &scope_of(principal),
+        which.layout.as_deref(),
+        have.have,
+    )
+    .await
+    {
+        Ok(view) => ([(header::CACHE_CONTROL, "no-store")], Json(view)).into_response(),
+        Err(refusal) => *refusal,
+    }
+}
+
+/// The state of the picture of the layout asked for (`auto`, or none, is the one for now), or the answer to give if there is
+/// none to say anything of.
+async fn view_state(
+    state: &WebState,
+    scope: &LayoutScope,
+    wanted: Option<&str>,
+    have: Option<u32>,
+) -> Result<ViewState, Box<Response>> {
+    let layout = state
+        .resolve(scope, wanted)
+        .map_err(IntoResponse::into_response)?;
+    let automatic = wanted.is_none_or(|name| name == "auto");
     let published = &state.published;
     let rendered_at = match image_written_at(published, layout).await {
         Ok(Some(rendered_at)) => rendered_at,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response();
+            return Err(Box::new(
+                (StatusCode::NOT_FOUND, "No image has been rendered yet").into_response(),
+            ));
         }
-        Err(e) => return server_error("inspect", e),
+        Err(e) => return Err(Box::new(server_error("inspect", e))),
     };
-    match compute(
+    let plan = compute(
         published.clock.now(),
         rendered_at,
         &published.schedule,
@@ -809,22 +889,180 @@ async fn state(
             wake_delay: WEB_WAKE_DELAY,
             ..published.timing
         },
-        have.have,
-    ) {
-        Ok(plan) => (
-            [(header::CACHE_CONTROL, "no-store")],
-            Json(ViewState {
-                layout: layout.name.to_string(),
-                auto_changes_in_seconds: if automatic {
-                    state.automatic_changes_in(&scope)
+        have,
+    )
+    .map_err(|e| Box::new(server_error("plan", e)))?;
+    Ok(ViewState {
+        layout: layout.name.to_string(),
+        auto_changes_in_seconds: if automatic {
+            state.automatic_changes_in(scope)
+        } else {
+            None
+        },
+        plan,
+    })
+}
+
+/// What the page needs to know has changed: which layout it is looking at, which render of it, and whether it is late or due.
+/// A stream says so when this is not what it said last.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fingerprint {
+    layout: String,
+    version: u32,
+    stale: bool,
+    pending: bool,
+}
+
+impl Fingerprint {
+    fn of(view: &ViewState) -> Self {
+        Self {
+            layout: view.layout.clone(),
+            version: view.plan.version,
+            stale: view.plan.stale,
+            pending: view.plan.pending,
+        }
+    }
+}
+
+/// What one event says: the same facts as `/view/api/state`, less what changes with the time.
+fn event_of(view: &ViewState) -> String {
+    let data = serde_json::json!({
+        "layout": view.layout,
+        "version": view.plan.version,
+        "stale": view.plan.stale,
+        "pending": view.plan.pending,
+        "next_seconds": view.plan.next_seconds,
+    });
+    format!("event: state\ndata: {data}\n\n")
+}
+
+/// Tells the page when the picture it is looking at changes, as it happens, so that it need not ask on a timer.
+///
+/// `text/event-stream`: an event is sent at the start, and again whenever a render finishes that changes the picture, the late
+/// or due state, or what `auto` means. Between, a comment line is sent now and then so that nothing on the way closes it. It
+/// ends after a minute and a half (`event: bye`), and the page opens another at once; a token that has been revoked or has run
+/// out in the meantime ends it at the next look. The page still asks now and then, so a stream that fails costs only speed.
+#[utoipa::path(
+    get,
+    path = "/view/api/events",
+    tag = "web",
+    security((), ("bearerAuth" = [])),
+    params(WhichLayout),
+    responses(
+        (
+            status = 200,
+            description = "A stream of events: `state` with the layout, the render's `version`, `stale`, `pending` and `next_seconds` whenever any of the first four changes, `: keepalive` comments, and a last `bye` when the stream ends and should be opened again. Send the token as `Authorization`, which a browser's `EventSource` cannot, so read it with `fetch`.",
+            content_type = "text/event-stream",
+            body = String,
+            headers(("cache-control" = String, description = "Always `no-store`."))
+        ),
+        (status = 401, description = "A viewer token is needed, or the one shown is not good.", body = String, content_type = "text/plain"),
+        (status = 403, description = "The token does not allow that layout (`insufficient_scope`).", body = String, content_type = "text/plain"),
+        (status = 404, description = "Nothing has been rendered yet, or there is no such layout.", body = String, content_type = "text/plain"),
+        (status = 429, description = "Too many requests that were not good from this source.", body = OAuthError)
+    )
+)]
+async fn events(
+    State(state): State<Arc<WebState>>,
+    principal: Option<Extension<Principal>>,
+    Query(which): Query<WhichLayout>,
+) -> Response {
+    let (scope, token) = match principal {
+        Some(Extension(principal)) => (principal.scope, Some(principal.token)),
+        None => (LayoutScope::All, None),
+    };
+    // Refused as `state` would, before anything is streamed: a stream that can't start says why in a status.
+    let first = match view_state(&state, &scope, which.layout.as_deref(), None).await {
+        Ok(first) => first,
+        Err(refusal) => return *refusal,
+    };
+    let wanted = which.layout;
+    let (sender, receiver) =
+        tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(4);
+    tokio::spawn(stream_changes(state, scope, token, wanted, first, sender));
+    let body = axum::body::Body::from_stream(futures_util::stream::unfold(
+        receiver,
+        |mut receiver| async move { receiver.recv().await.map(|item| (item, receiver)) },
+    ));
+    (
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-store"),
+            // Not held up by a proxy that waits to fill a buffer (nginx honours this).
+            (HeaderName::from_static("x-accel-buffering"), "no"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// Sends events down `sender` until the stream's time is up, the page has gone, or the token is no longer good.
+async fn stream_changes(
+    state: Arc<WebState>,
+    scope: LayoutScope,
+    token: Option<String>,
+    wanted: Option<String>,
+    first: ViewState,
+    sender: tokio::sync::mpsc::Sender<Result<Bytes, std::convert::Infallible>>,
+) {
+    let mut finishes = state.published.handles.refresh.finishes();
+    let ends = tokio::time::Instant::now() + state.stream.lifetime;
+    let mut last = Fingerprint::of(&first);
+    let mut view = first;
+    // `retry` is how soon a browser's own reconnecting would try again, which the page does itself but a plain client may rely on.
+    let opening = format!("retry: 2000\n\n{}", event_of(&view));
+    if sender.send(Ok(Bytes::from(opening))).await.is_err() {
+        return;
+    }
+    loop {
+        // When to look again: when told a render finished, or when the picture is due or the schedule changes what auto is,
+        // or after a tick, whichever is first, and never past the stream's end.
+        let mut wait = state.stream.tick;
+        wait = wait.min(std::time::Duration::from_secs(
+            view.plan.next_seconds.saturating_add(1),
+        ));
+        if let Some(changes) = view.auto_changes_in_seconds {
+            wait = wait.min(std::time::Duration::from_secs(changes.saturating_add(1)));
+        }
+        let wake = (tokio::time::Instant::now() + wait).min(ends);
+        tokio::select! {
+            _ = finishes.changed() => {}
+            _ = tokio::time::sleep_until(wake) => {}
+            _ = sender.closed() => return,
+        }
+        if tokio::time::Instant::now() >= ends {
+            let _ = sender
+                .send(Ok(Bytes::from("event: bye\ndata: {}\n\n")))
+                .await;
+            return;
+        }
+        // Still good? A revoked token, or one that has run out, ends the stream, and the page finds out when it opens another.
+        if let (Some(token), Access::Tokens { viewers, .. }) = (&token, &state.access)
+            && viewers.authenticate(token).await.is_err()
+        {
+            let _ = sender
+                .send(Ok(Bytes::from("event: bye\ndata: {}\n\n")))
+                .await;
+            return;
+        }
+        let message = match view_state(&state, &scope, wanted.as_deref(), None).await {
+            Ok(now) => {
+                let fingerprint = Fingerprint::of(&now);
+                view = now;
+                if fingerprint != last {
+                    last = fingerprint;
+                    event_of(&view)
                 } else {
-                    None
-                },
-                plan,
-            }),
-        )
-            .into_response(),
-        Err(e) => server_error("plan", e),
+                    ": keepalive\n\n".to_owned()
+                }
+            }
+            // Gone since (the picture, the layout, the permission): the page is told to start again and find out why.
+            Err(_) => "event: bye\ndata: {}\n\n".to_owned(),
+        };
+        let done = message.starts_with("event: bye");
+        if sender.send(Ok(Bytes::from(message))).await.is_err() || done {
+            return;
+        }
     }
 }
 
@@ -1160,6 +1398,7 @@ mod tests {
         WebSettings {
             layouts: vec![],
             open: true,
+            stream: StreamTiming::default(),
         }
     }
 
@@ -1170,6 +1409,7 @@ mod tests {
                 .iter()
                 .map(|n| LayoutName::parse(n).unwrap())
                 .collect(),
+            stream: StreamTiming::default(),
         }
     }
 
@@ -1727,6 +1967,7 @@ mod tests {
         WebSettings {
             layouts: vec![],
             open: false,
+            stream: StreamTiming::default(),
         }
     }
 
@@ -2155,6 +2396,7 @@ mod tests {
             &WebSettings {
                 layouts: vec![LayoutName::parse("departures").unwrap()],
                 open: false,
+                stream: StreamTiming::default(),
             },
         )
         .await;
@@ -2985,7 +3227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_policy_lets_the_manifest_and_icons_load_and_nothing_more() {
+    async fn the_policy_lets_the_manifest_icons_and_worker_load_and_nothing_more() {
         let tmp = tempfile::tempdir().unwrap();
         let base = serve(tmp.path(), &open_all()).await;
 
@@ -3004,8 +3246,9 @@ mod tests {
             policy.contains("default-src 'none'") && policy.contains("connect-src 'self'"),
             "{policy}"
         );
+        assert!(policy.contains("worker-src 'self'"), "{policy}");
         assert!(
-            !policy.contains("worker-src") && !policy.contains("unsafe"),
+            !policy.contains("unsafe") && !policy.contains("script-src 'self'"),
             "{policy}"
         );
     }
@@ -3097,6 +3340,466 @@ mod tests {
                 .and_then(|v| v.as_str().map(str::to_owned))
                 .unwrap_or_default();
             anyhow::ensure!(manifest == "fullscreen /view#kiosk", "the manifest says {manifest:?}");
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        outcome.unwrap();
+    }
+
+    // --- a stream of changes ---------------------------------------------------------------------------------
+
+    use crate::domain::services::render_observer::RenderObserver;
+
+    /// Settings with a stream that is quick about everything, so a test need not wait a minute.
+    fn quick(open: bool) -> WebSettings {
+        WebSettings {
+            layouts: vec![],
+            open,
+            stream: StreamTiming {
+                lifetime: std::time::Duration::from_millis(1500),
+                tick: std::time::Duration::from_millis(100),
+            },
+        }
+    }
+
+    /// Reads from `response` until `done` says the text so far is enough, or a few seconds pass.
+    async fn read_until(response: &mut reqwest::Response, done: impl Fn(&str) -> bool) -> String {
+        let mut text = String::new();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !done(&text) {
+                match response.chunk().await.unwrap() {
+                    Some(bytes) => text.push_str(&String::from_utf8_lossy(&bytes)),
+                    None => break,
+                }
+            }
+        })
+        .await;
+        assert!(outcome.is_ok(), "timed out with {text:?}");
+        text
+    }
+
+    fn state_events(text: &str) -> Vec<serde_json::Value> {
+        text.split("\n\n")
+            .filter_map(|block| {
+                block
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "))
+                    .filter(|_| block.contains("event: state"))
+            })
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect()
+    }
+
+    /// Finishes a render as the render loop would, which is what tells a stream to look.
+    fn render_finished(handles: &crate::adapters::image_server::Handles) {
+        handles.refresh.render_succeeded(
+            chrono::Utc::now().with_timezone(&London),
+            &crate::domain::models::render_report::RenderReport::default(),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stream_starts_with_the_state_and_says_what_it_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"a").await;
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &quick(true),
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+
+        let mut response = reqwest::get(format!("{base}/view/api/events"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["content-type"], "text/event-stream");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["x-accel-buffering"], "no");
+        let text = read_until(&mut response, |t| t.contains("event: state")).await;
+        assert!(text.starts_with("retry: 2000\n\n"), "{text:?}");
+        let first = &state_events(&text)[0];
+        assert_eq!(first["layout"], FIRST);
+        assert!(first["version"].as_u64().unwrap() > 0);
+        assert_eq!(first["stale"], false);
+    }
+
+    #[tokio::test]
+    async fn a_new_picture_is_sent_as_soon_as_the_render_that_made_it_finishes() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"old").await;
+        crate::adapters::image_server::testing::set_age(tmp.path(), 120);
+        // A long tick, so what is seen here is the render's finishing and not a look on a timer.
+        let settings = WebSettings {
+            stream: StreamTiming {
+                lifetime: std::time::Duration::from_secs(30),
+                tick: std::time::Duration::from_secs(20),
+            },
+            ..open_all()
+        };
+        let (base, handles) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &settings,
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+        let mut response = reqwest::get(format!("{base}/view/api/events"))
+            .await
+            .unwrap();
+        let text = read_until(&mut response, |t| t.contains("event: state")).await;
+        let before = state_events(&text)[0]["version"].as_u64().unwrap();
+
+        // A render ends having drawn a new picture.
+        publish_both(tmp.path(), FIRST, b"new").await;
+        let started = std::time::Instant::now();
+        render_finished(&handles);
+
+        let text = read_until(&mut response, |t| t.contains("event: state")).await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        let after = state_events(&text)[0]["version"].as_u64().unwrap();
+        assert!(after > before, "{after} after {before}");
+    }
+
+    #[tokio::test]
+    async fn nothing_changing_is_a_keepalive_and_not_an_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"a").await;
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &quick(true),
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+        let mut response = reqwest::get(format!("{base}/view/api/events"))
+            .await
+            .unwrap();
+
+        let text = read_until(&mut response, |t| t.matches(": keepalive").count() >= 2).await;
+
+        assert_eq!(state_events(&text).len(), 1, "{text:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stream_ends_with_a_bye_after_its_time_so_the_page_opens_another() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"a").await;
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &quick(true),
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+        let started = std::time::Instant::now();
+        let mut response = reqwest::get(format!("{base}/view/api/events"))
+            .await
+            .unwrap();
+
+        let text = read_until(&mut response, |_| false).await;
+
+        assert!(text.ends_with("event: bye\ndata: {}\n\n"), "{text:?}");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= std::time::Duration::from_millis(1400)
+                && elapsed < std::time::Duration::from_secs(4),
+            "{elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn on_auto_a_stream_says_when_the_schedule_changes_the_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"all").await;
+        publish_both(tmp.path(), "departures", b"trains").await;
+        let clock = FixedClock::at(at(6, 0));
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            with_a_morning_rule(),
+            &quick(true),
+            clock.clone(),
+        )
+        .await
+        .unwrap();
+        let mut response = reqwest::get(format!("{base}/view/api/events"))
+            .await
+            .unwrap();
+        let text = read_until(&mut response, |t| t.contains("event: state")).await;
+        assert_eq!(state_events(&text)[0]["layout"], FIRST);
+
+        // The morning window opens; a stream on auto moves to departures without being asked.
+        clock.set(at(6, 31));
+
+        let text = read_until(&mut response, |t| t.contains("event: state")).await;
+        assert_eq!(state_events(&text)[0]["layout"], "departures");
+    }
+
+    #[tokio::test]
+    async fn a_stream_for_a_layout_by_name_stays_on_it_whatever_the_schedule_does() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_both(tmp.path(), FIRST, b"all").await;
+        publish_both(tmp.path(), "departures", b"trains").await;
+        let clock = FixedClock::at(at(6, 0));
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            with_a_morning_rule(),
+            &quick(true),
+            clock.clone(),
+        )
+        .await
+        .unwrap();
+        let mut response = reqwest::get(format!("{base}/view/api/events?layout=dashboard"))
+            .await
+            .unwrap();
+        read_until(&mut response, |t| t.contains("event: state")).await;
+
+        clock.set(at(6, 31));
+        let text = read_until(&mut response, |t| t.contains("event: bye")).await;
+
+        assert!(state_events(&text).is_empty(), "{text:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_cannot_be_given_is_refused_in_a_status_as_the_state_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (base, _) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &quick(true),
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+
+        // Nothing drawn yet; then a layout there is not.
+        assert_eq!(
+            reqwest::get(format!("{base}/view/api/events"))
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+        publish_both(tmp.path(), FIRST, b"a").await;
+        let missing = reqwest::get(format!("{base}/view/api/events?layout=nonesuch"))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), 404);
+        assert_eq!(
+            reqwest::get(format!("{base}/view/api/events"))
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stream_wants_a_token_when_the_page_does_and_ends_when_the_token_is_revoked() {
+        let g = guarded_for_streams().await;
+        let token = g.token(&[]).await;
+
+        assert_eq!(g.with("/view/api/events", None).await.status(), 401);
+        let mut response = g.bearing("/view/api/events", &token).await;
+        assert_eq!(response.status(), 200);
+        read_until(&mut response, |t| t.contains("event: state")).await;
+
+        // The owner revokes the viewer: within a tick the stream says bye, and the page's next try is refused.
+        let id = g.viewers.authenticate(&token).await.unwrap().viewer;
+        g.viewers.revoke(&id).await.unwrap();
+        let text = read_until(&mut response, |t| t.contains("event: bye")).await;
+        assert!(text.contains("event: bye"), "{text:?}");
+        assert_eq!(g.bearing("/view/api/events", &token).await.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn a_stream_is_for_the_layouts_the_token_allows() {
+        let g = guarded_for_streams().await;
+        let token = g.token(&["departures"]).await;
+
+        let forbidden = g.bearing("/view/api/events?layout=dashboard", &token).await;
+        assert_eq!(forbidden.status(), 403);
+        assert!(challenge_of(&forbidden).contains("insufficient_scope"));
+        // On auto it is the one it may see.
+        let mut allowed = g.bearing("/view/api/events", &token).await;
+        let text = read_until(&mut allowed, |t| t.contains("event: state")).await;
+        assert_eq!(state_events(&text)[0]["layout"], "departures");
+    }
+
+    /// A server that wants a token, with a stream that is quick about everything.
+    async fn guarded_for_streams() -> Guarded {
+        guarded_by(None, &quick(false)).await
+    }
+
+    #[tokio::test]
+    async fn the_service_worker_is_served_to_anyone_with_the_scope_the_page_needs_and_keeps_nothing_private()
+     {
+        let g = guarded().await;
+
+        let response = g.with("/view/sw.js", None).await;
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/javascript; charset=utf-8"
+        );
+        // A page at `/view` is outside the folder the script is in (`/view/`), so the scope is allowed to reach it.
+        assert_eq!(response.headers()["service-worker-allowed"], "/view");
+        assert_eq!(response.headers()["cache-control"], "no-cache");
+        let script = response.text().await.unwrap();
+        // It keeps the shell, and answers nothing from the API: that is the viewer's, and a revoked token must be refused.
+        for kept in [
+            "'/view'",
+            "'/view/manifest.webmanifest'",
+            "'/view/icons/192.png'",
+        ] {
+            assert!(script.contains(kept), "{kept}");
+        }
+        assert!(
+            !script.contains("/view/api"),
+            "the worker must leave the API to the network"
+        );
+        // And the page registers it with that scope.
+        let page = g.with("/view", None).await.text().await.unwrap();
+        assert!(page.contains("register('/view/sw.js', { scope: '/view' })"));
+    }
+
+    #[test]
+    fn the_page_asks_for_a_stream_keeps_its_last_picture_and_forgets_it_on_leaving() {
+        // The stream: read with fetch (a token can't go in an EventSource), reopened when it ends, and not held open while hidden.
+        assert!(PAGE.contains("api('events?layout='"));
+        assert!(PAGE.contains("response.body.getReader()"));
+        assert!(PAGE.contains("if (document.hidden) closeStream()"));
+        assert!(!PAGE.contains("new EventSource"));
+        // The last picture: remembered per layout choice, shown at once on load, forgotten on sign-out and when access ends.
+        assert!(PAGE.contains("indexedDB.open('hd', 1)"));
+        assert!(PAGE.contains("showRemembered().then(refresh)"));
+        let forgets = PAGE.matches("forgetPicture()").count();
+        assert!(forgets >= 3, "{forgets}");
+        assert!(PAGE.contains("indexedDB.deleteDatabase('hd')"));
+    }
+
+    /// Needs a real Chrome, so run with `--ignored`. A page left open on a wall: a new picture is on screen within seconds of the
+    /// render that made it finishing (pushed by the stream: the page's own timer is an hour away), and with the network gone the
+    /// page, reloaded, still opens and shows the last picture it saw and says how old it is.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn a_page_on_a_wall_is_pushed_new_pictures_and_survives_the_network_going_in_a_browser() {
+        let tmp = tempfile::tempdir().unwrap();
+        publish_picture(tmp.path(), FIRST, 40).await;
+        crate::adapters::image_server::testing::set_age(tmp.path(), 120);
+        let (base, handles) = start_web(
+            tmp.path().to_path_buf(),
+            two_layouts(),
+            &open_all(),
+            Arc::new(SystemClock::new(London)),
+        )
+        .await
+        .unwrap();
+        let directory = tmp.path().to_path_buf();
+        let notified = handles.clone();
+
+        let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let browser = headless_chrome::Browser::new(
+                headless_chrome::LaunchOptions::default_builder()
+                    .headless(true)
+                    .path(headless_chrome::browser::default_executable().ok())
+                    .build()?,
+            )?;
+            let tab = browser.new_tab()?;
+            let number = |script: &str| -> anyhow::Result<f64> {
+                Ok(tab.evaluate(script, false)?.value.and_then(|v| v.as_f64()).unwrap_or(-1.0))
+            };
+            let text = |script: &str, promise: bool| -> anyhow::Result<String> {
+                Ok(tab
+                    .evaluate(script, promise)?
+                    .value
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_default())
+            };
+            let waits = |script: &str, wanted: f64, seconds: u32| -> anyhow::Result<()> {
+                for _ in 0..(seconds * 10) {
+                    if number(script)? >= wanted {
+                        return Ok(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                anyhow::bail!("{script} never reached {wanted}")
+            };
+            let width = "document.getElementById('picture').naturalWidth";
+            let handle = tokio::runtime::Handle::current();
+
+            tab.navigate_to(&format!("{base}/view?layout=dashboard"))?.wait_until_navigated()?;
+            waits(width, 40.0, 10)?;
+            // The shell is kept by the worker, and the picture by the page.
+            let mut kept = String::new();
+            for _ in 0..50 {
+                kept = text(
+                    "caches.keys().then(async (names) => { for (const n of names) { if ((await (await caches.open(n)).keys()).length) return 'yes'; } return 'no'; })",
+                    true,
+                )?;
+                if kept == "yes" {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            anyhow::ensure!(kept == "yes", "the worker kept no shell");
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+
+            // A render ends with a new picture. Nothing asks: the stream says so, and the picture is there in a moment.
+            handle.block_on(publish_picture(&directory, FIRST, 30));
+            let started = std::time::Instant::now();
+            notified.refresh.render_succeeded(
+                chrono::Utc::now().with_timezone(&London),
+                &crate::domain::models::render_report::RenderReport::default(),
+            );
+            waits("document.getElementById('picture').naturalWidth == 30 ? 1 : 0", 1.0, 8)?;
+            anyhow::ensure!(started.elapsed() < std::time::Duration::from_secs(8), "pushed too slowly");
+
+            // The network goes. The page is reloaded: the shell comes from the worker, and the last picture from the page's own
+            // memory, with no word from the server.
+            tab.call_method(headless_chrome::protocol::cdp::Network::Enable {
+                max_total_buffer_size: None,
+                max_resource_buffer_size: None,
+                max_post_data_size: None,
+                report_direct_socket_traffic: None,
+                enable_durable_messages: None,
+            })?;
+            tab.call_method(headless_chrome::protocol::cdp::Network::EmulateNetworkConditions {
+                offline: true,
+                latency: 0.0,
+                download_throughput: -1.0,
+                upload_throughput: -1.0,
+                connection_Type: None,
+                packet_loss: None,
+                packet_queue_length: None,
+                packet_reordering: None,
+            })?;
+            // An ordinary reload: a hard one (ignoring caches) skips the worker by design.
+            tab.reload(false, None)?;
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            if number(width)? != 30.0 {
+                let seen = text(
+                    "location.href + ' | ' + document.title + ' | controller=' + !!(navigator.serviceWorker && navigator.serviceWorker.controller) + ' | status=' + (document.getElementById('status') ? document.getElementById('status').textContent : 'none') + ' | width=' + (document.getElementById('picture') ? document.getElementById('picture').naturalWidth : 'none')",
+                    false,
+                )?;
+                anyhow::bail!("the last picture was not shown with the network down: {seen}");
+            }
+            let said = text("document.getElementById('status').textContent", false)?;
+            anyhow::ensure!(said.contains("Cannot reach the server"), "the page says {said:?}");
+            anyhow::ensure!(said.contains("Showing the picture from"), "the page does not say how old it is: {said:?}");
             Ok(())
         })
         .await
