@@ -161,10 +161,20 @@ and leaves its last picture, as for any output besides the display.
 
 ### For a screen on a wall
 
-- **Coming back at the right time.** The page comes back about two seconds after the next render is due (a display is told to wait
-  thirty, for its radio and panel), and every couple of seconds while it is not there yet, so a new picture is on screen a few
-  seconds after it is drawn. On **Auto** it also looks again exactly when the layout schedule changes the layout, so a change at
-  06:30 is on screen at 06:30 and not at the next render.
+- **Pushed, not polled.** The page opens a stream of changes (`/view/api/events`, server-sent events) and the server says the moment a
+  render finishes that changes the picture, or the layout on **Auto** changes because the schedule says so, so the new picture is on
+  screen about a second after it is drawn. Between, the server sends a quiet comment every 20 seconds so that nothing on the way closes
+  it, and it ends the stream after 90 seconds (`event: bye`) for the page to open another at once: that keeps it under the HTTPS
+  side's two-minute limit on a connection, finds a token that has been revoked within moments (the stream is ended and the next try
+  refused), and means no proxy has to be waited out. The stream is read with `fetch`, because a browser's `EventSource` can't show a
+  token. The page is closed while hidden to spare the battery, and if a stream can't be had at all it carries on asking as before:
+  about two seconds after the next render is due (a display is told to wait thirty, for its radio and panel), and every couple of
+  seconds while it is not there yet; on **Auto** it also looks again exactly when the schedule changes the layout.
+- **Without the network.** The page keeps the last picture it saw, on the device (IndexedDB), and shows it at once when it is opened
+  or reloaded, saying how old it is and that it cannot reach the server; it is forgotten when the viewer signs out or its access
+  ends. Where the browser has service workers (a secure page: HTTPS, or `localhost`) the page itself, its manifest and its icons are
+  kept too (`/view/sw.js`, which never touches the API), so an installed page opens with the network down. A revoked token is
+  refused the moment the network is back, since the API is never answered from a cache.
 - **Keeping the screen on.** *Keep screen on* in the bar (and automatically in a kiosk, unless you turned it off) asks the browser
   not to let the screen sleep while the page shows, with the Screen Wake Lock. It needs a secure page: HTTPS, or `localhost`. Over
   plain HTTP the button isn't offered, and the tablet's own screen timeout applies; set it to never.
@@ -175,9 +185,7 @@ and leaves its last picture, as for any output besides the display.
 - **Locking it.** `/view#kiosk&lock` (or `?lock`) takes away the layout buttons and turns off the arrow keys and swipes, so a
   touched wall tablet stays on the layout it was set to. Pin the layout with `?layout=departures`, or give the viewer only that
   layout (`displayctl viewer create --layout departures`).
-- **Still to come.** A service worker to show the last picture across a reload with no network, a push of each new picture the
-  instant it is drawn (server-sent events), and signing a tablet in by a short code it shows (RFC 8628), for one that can't scan
-  a QR code.
+- **Still to come.** Signing a tablet in by a short code it shows (RFC 8628), for one that can't scan a QR code.
 
 ## Layouts
 

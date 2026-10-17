@@ -46,6 +46,11 @@ impl RefreshControl {
         &self.wake
     }
 
+    /// Changes each time a render ends, so that whoever shows what renders make can look again when one has.
+    pub fn finishes(&self) -> watch::Receiver<u64> {
+        self.finished.subscribe()
+    }
+
     /// Called when a render ends, whether or not it worked.
     fn render_finished(&self) {
         self.finished.send_modify(|count| *count += 1);

@@ -28,7 +28,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 pub use self::advertise::{Advertisement, SecureOffer, mdns_host_name};
-pub use self::web::{WebSettings, allowed_layouts};
+pub use self::web::{StreamTiming, WebSettings, allowed_layouts};
 use crate::adapters::listen::{self, Bound};
 use crate::application::devices::{DeviceBoard, TelemetryLimits, telemetry_limits};
 use crate::application::plan::PlanTiming;
@@ -242,7 +242,12 @@ pub fn web_router(
         handles,
         clock,
     });
-    Ok(web::router(web::WebState::new(published, allowed, access)))
+    Ok(web::router(web::WebState::new(
+        published,
+        allowed,
+        settings.stream,
+        access,
+    )))
 }
 
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
@@ -691,6 +696,7 @@ mod api_description {
             ("/status", "get"),
             // Served only when [server.web] is on, by `web_router`; the web tests check they are there.
             ("/view", "get"),
+            ("/view/api/events", "get"),
             ("/view/api/image", "get"),
             ("/view/api/layouts", "get"),
             ("/view/api/revoke", "post"),
@@ -699,6 +705,7 @@ mod api_description {
             ("/view/icon.svg", "get"),
             ("/view/icons/{file}", "get"),
             ("/view/manifest.webmanifest", "get"),
+            ("/view/sw.js", "get"),
         ];
         assert_eq!(routes.len(), expected.len(), "{routes:?}");
         for (path, method) in expected {
