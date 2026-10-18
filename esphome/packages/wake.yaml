@@ -76,6 +76,26 @@ script:
   - id: start_wake
     then:
       - wifi.enable
+      # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
+      - lambda: |-
+          id(force_refresh) = home_display_button::woken_by_key0();
+          if (id(force_refresh))
+            ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
+      # A refresh takes a minute or so (the server renders, then the picture comes down and is drawn), so say so in the
+      # corner at once: before Wi-Fi is up, which takes 4 s and which the notice does not need, so the panel draws while the
+      # radio joins. Only that corner is redrawn; the picture is replaced when it arrives, or this by what went wrong.
+      - if:
+          condition:
+            lambda: 'return id(force_refresh);'
+          then:
+            - lambda: |-
+                id(notice_text) = home_display_format::refreshing_notice();
+                id(show_notice) = true;
+                id(notice_on_panel) = true;
+                id(refreshing_on_panel) = true;
+                id(prompt_on_panel) = false;
+            - logger.log: "Showing the refreshing notice in the corner"
+            - component.update: eink_display
       - wait_until:
           condition:
             wifi.connected:
@@ -85,27 +105,11 @@ script:
             wifi.connected:
           then:
             - lambda: 'home_display_phases::mark("wifi");'
-            # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
-            - lambda: |-
-                id(force_refresh) = home_display_button::woken_by_key0();
-                if (id(force_refresh))
-                  ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
-            # A refresh takes a minute or so (the server renders, then the picture comes down and is drawn), so say so in
-            # the corner at once. Only that corner is redrawn; the picture is replaced when it arrives, or this by what went
-            # wrong.
             - if:
                 condition:
                   lambda: 'return id(force_refresh);'
                 then:
-                  - lambda: |-
-                      id(notice_text) = home_display_format::refreshing_notice();
-                      id(show_notice) = true;
-                      id(notice_on_panel) = true;
-                      id(refreshing_on_panel) = true;
-                      id(prompt_on_panel) = false;
-                  - logger.log: "Showing the refreshing notice in the corner"
-                  - component.update: eink_display
-                  # The panel finishes this before the wake goes on: left running beside the server request and the
+                  # The driver finishes this before the wake goes on: left running beside the server request and the
                   # download, both would crawl and the watchdog would end the wake with the notice still up.
                   - wait_until:
                       condition:
@@ -114,6 +118,15 @@ script:
                   - logger.log: "Refreshing notice is on the panel"
             - script.execute: begin_server
           else:
+            - if:
+                condition:
+                  lambda: 'return id(force_refresh);'
+                then:
+                  # Whatever the failure says is drawn after the notice, not into it.
+                  - wait_until:
+                      condition:
+                        lambda: 'return eink_notice::idle(*id(eink_display));'
+                      timeout: 15s
             # Without Wi-Fi there is no point asking the server, or looking for it.
             - lambda: 'home_display_state::fail_reason = home_display_report::Failure::WIFI;'
             - script.execute: give_up
@@ -162,6 +175,10 @@ script:
             - lambda: |-
                 home_display_telemetry::record_wake(millis(), home_display_secure::context().first_handshake_ms);
                 home_display_phases::summary();
+            # Leave the access point properly. Going to sleep without a word leaves it holding this session until its inactivity
+            # timer ends it (about 5 minutes), and a display that joins again in that time pays about 1.8 s for it.
+            - wifi.disable
+            - delay: 100ms
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: !lambda |-
