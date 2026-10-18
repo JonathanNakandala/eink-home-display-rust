@@ -8,10 +8,22 @@
 
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
+#include "esp_idf_version.h"
+#include "esp_sleep.h"
 
 namespace home_display_button {
 
 constexpr gpio_num_t KEY0 = GPIO_NUM_3;
+
+// Whether this wake was KEY0 pulling the pin low in deep sleep, and not the timer or a reset. ESP-IDF 6 replaced the single
+// cause by a bitmap of them (a wake can have several), and deprecated the old call.
+inline bool woken_by_key0() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+  return (esp_sleep_get_wakeup_causes() & (1u << ESP_SLEEP_WAKEUP_EXT1)) != 0;
+#else
+  return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+#endif
+}
 
 // Whether KEY0 is held down now (the button pulls the pin to ground).
 inline bool key0_down() {

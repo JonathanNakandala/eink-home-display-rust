@@ -13,6 +13,8 @@
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/x509_csr.h"
 
+#include "home_display/tls/mbedtls_compat.h"
+
 #include "check.h"
 #include "fake_store.h"
 #include "memory_identity.h"
@@ -139,8 +141,7 @@ inline int ctl(const std::string &arguments) {
 inline home_display_ports::Bytes someone_elses_root() {
   mbedtls_pk_context key;
   mbedtls_pk_init(&key);
-  mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
-  mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key), home_display_tls::Random::generate, nullptr);
+  home_display_tls::compat::generate_p256_key(&key);
   mbedtls_x509write_cert crt;
   mbedtls_x509write_crt_init(&crt);
   mbedtls_x509write_crt_set_subject_key(&crt, &key);
@@ -154,7 +155,11 @@ inline home_display_ports::Bytes someone_elses_root() {
   unsigned char serial[] = {1};
   mbedtls_x509write_crt_set_serial_raw(&crt, serial, sizeof serial);
   unsigned char buffer[1024];
-  const int n = mbedtls_x509write_crt_der(&crt, buffer, sizeof buffer, home_display_tls::Random::generate, nullptr);
+#if HOME_DISPLAY_MBEDTLS_PSA
+  const int n = mbedtls_x509write_crt_der(&crt, buffer, sizeof buffer);
+#else
+  const int n = mbedtls_x509write_crt_der(&crt, buffer, sizeof buffer, home_display_tls::compat::Random::generate, nullptr);
+#endif
   mbedtls_x509write_crt_free(&crt);
   mbedtls_pk_free(&key);
   return n > 0 ? home_display_ports::Bytes(buffer + sizeof buffer - n, buffer + sizeof buffer) : home_display_ports::Bytes();

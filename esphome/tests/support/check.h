@@ -2,6 +2,7 @@
 // CHECK / CHECK_EQ record a failure with its line and carry on. `run_all()` returns the number of failures.
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <sstream>
