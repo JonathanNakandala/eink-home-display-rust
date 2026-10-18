@@ -175,6 +175,18 @@ class Stream {
       }
       response_.feed(raw, static_cast<size_t>(n), pending_);
     }
+    // The caller asks once for as much as it has room for, and ESPHome's `online_image` asks once for each pass of the
+    // main loop. A TLS read gives a thousand bytes at a time, so a caller that took only that was back 170 times for a
+    // picture of 170 KB, a pass of the loop each. What mbedTLS has already decrypted costs nothing to take (it never
+    // waits on the network), so take it now, up to what was asked for.
+    while (pending_.size() - taken_ < max && response_.state() == home_display_body::State::BODY && session_ &&
+           session_->buffered() > 0) {
+      uint8_t raw[1024];
+      const int got = session_->read_some(raw, sizeof raw);
+      if (got <= 0)
+        break;  // not expected with bytes waiting; the next call says what went wrong
+      response_.feed(raw, static_cast<size_t>(got), pending_);
+    }
     const size_t available = pending_.size() - taken_;
     const size_t n = max < available ? max : available;
     std::memcpy(out, pending_.data() + taken_, n);

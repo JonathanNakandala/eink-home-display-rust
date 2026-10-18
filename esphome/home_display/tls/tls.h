@@ -249,6 +249,9 @@ class Session {
     }
   }
 
+  // Bytes that are already decrypted and waiting. Reading them does not touch the network, so it never waits.
+  size_t buffered() const { return mbedtls_ssl_get_bytes_avail(&ssl_); }
+
   // The 32 bytes RFC 9266 binds a request to its connection with (tls-exporter): empty if the library cannot make them.
   Bytes channel_binding() {
     Bytes out(home_display_wire::BINDING_LENGTH);
