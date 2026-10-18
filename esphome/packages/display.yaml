@@ -26,6 +26,7 @@ image:
     update_interval: never
     # The panel is 1872x1404 and the image is rendered at that size, so no resize.
     on_download_finished:
+      - lambda: 'home_display_phases::mark(cached ? "not-downloaded" : "download+decode");'
       # Downloaded, or not needed: either way what is left takes a known time, and must not be cut short.
       - script.stop: wake_watchdog
       - if:
@@ -43,6 +44,7 @@ image:
             - lambda: 'id(show_notice) = false;'
             - component.update: eink_display
             - delay: ${eink_refresh_settle}
+            - lambda: 'home_display_phases::mark("panel-settle");'
             # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
             # refresh would leave the device believing it shows an image it doesn't, and the next wake would
             # skip it. Recorded here, an interrupted refresh leaves the old version, so the next wake downloads again.

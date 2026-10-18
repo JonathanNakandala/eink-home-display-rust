@@ -84,6 +84,7 @@ script:
           condition:
             wifi.connected:
           then:
+            - lambda: 'home_display_phases::mark("wifi");'
             # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
             - lambda: |-
                 id(force_refresh) = home_display_button::woken_by_key0();
@@ -157,7 +158,9 @@ script:
             lambda: 'return !id(maintenance);'
           then:
             # How long this wake was awake, which the next one tells the server (it costs battery).
-            - lambda: 'home_display_telemetry::record_wake(millis(), home_display_secure::context().first_handshake_ms);'
+            - lambda: |-
+                home_display_telemetry::record_wake(millis(), home_display_secure::context().first_handshake_ms);
+                home_display_phases::summary();
             - deep_sleep.enter:
                 id: deep_sleep_1
                 sleep_duration: !lambda |-

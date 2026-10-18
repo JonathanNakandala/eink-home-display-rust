@@ -92,11 +92,13 @@ script:
       # needs the answer, so it waits for the script to end (without this the clock was never ready, and every attempt fell
       # back to plain HTTP with "Not secure: clock").
       - script.wait: ensure_clock
+      - lambda: 'home_display_phases::mark("clock");'
       - if:
           condition:
             lambda: 'return id(server_ip) == 0 || id(server_tls_port) == 0;'
           then:
             - script.execute: discover
+            - lambda: 'home_display_phases::mark("server-search");'
       - lambda: |-
           constexpr auto transport = home_display_service::transport_from("${server_transport}");
           // What the display says it is when it asks to join (core/profile.h): the owner sees it before approving.
@@ -110,6 +112,7 @@ script:
           home_display_state::prompt_wanted = begun.verdict.prompt;
           home_display_state::prompt_text = begun.prompt;
           home_display_state::wait_retry_s = begun.retry_after_s;
+          home_display_phases::mark("tls-begin");
           if (begun.verdict.failure != home_display_report::Failure::NONE)
             ESP_LOGW("secure", "Not secure: %s", home_display_report::failure_label(begun.verdict.failure));
       - if:
