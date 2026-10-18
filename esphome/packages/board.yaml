@@ -10,6 +10,8 @@ esp32:
   board: seeed_xiao_esp32s3
   framework:
     type: esp-idf
+    # ESP-IDF 6.1 (mbedTLS 4): steadier transfers than 5.5. The TLS layer builds on either (tls/mbedtls_compat.h).
+    version: 6.1.0
     advanced:
       # Lets lwIP's resolver look up .local names (ESPHome's own mDNS only advertises).
       # Some versions default it off to save flash, so set it explicitly.
