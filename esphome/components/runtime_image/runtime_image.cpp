@@ -1,5 +1,7 @@
 #include "runtime_image.h"
 #include "image_decoder.h"
+#include "decode_profile.h"
+#include "esp_rom_crc.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include <algorithm>
@@ -102,22 +104,7 @@ void RuntimeImage::draw_pixel(int x, int y, const Color &color) {
     }
     case image::IMAGE_TYPE_GRAYSCALE: {
       uint32_t pos = this->get_position_(x, y);
-      // Whole-number weights (54 + 183 + 19 = 256) in place of 0.2125, 0.7154 and 0.0721: those are doubles, which the ESP32-S3
-      // works out in software, three multiplies and two adds for each of the 2.6 million pixels of a picture. A grey comes out as
-      // itself exactly (the doubles are a level short for 8 of the 256 greys), and any other colour is within one level of
-      // what they gave. (A local change; see the README beside this file.)
-      auto gray = static_cast<uint8_t>((54u * color.r + 183u * color.g + 19u * color.b) >> 8);
-      if (this->transparency_ == image::TRANSPARENCY_CHROMA_KEY) {
-        if (gray == 1) {
-          gray = 0;
-        }
-        if (color.w < 0x80) {
-          gray = 1;
-        }
-      } else if (this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL) {
-        if (color.w != 0xFF)
-          gray = color.w;
-      }
+      const uint8_t gray = this->gray_of_(color);
       this->buffer_[pos] = gray;
       break;
     }
@@ -205,6 +192,7 @@ bool RuntimeImage::begin_decode(size_t expected_size, ImageFormat format) {
 
   this->decoded_bytes_ = 0;
   this->decode_us_ = 0;
+  RUNTIME_IMAGE_PROFILE_DO(decode_profile.reset());
 
   int result = this->decoder_->prepare(expected_size);
   if (result < 0) {
@@ -223,6 +211,7 @@ int RuntimeImage::feed_data(uint8_t *data, size_t len) {
 
   // Timed, so that a download's log can say how much of it was the decoder and how much was waiting for the network. (A local
   // change; see the README beside this file.)
+  RUNTIME_IMAGE_PROFILE_DO(decode_profile.note_decode_call(len));
   const uint32_t started = micros();
   int consumed = this->decoder_->decode(data, len);
   this->decode_us_ += micros() - started;
@@ -252,6 +241,11 @@ bool RuntimeImage::end_decode() {
 
   ESP_LOGI(TAG, "Decoding complete: %dx%d, %zu bytes, %u ms in the decoder", this->width_, this->height_,
            this->decoded_bytes_, (unsigned) (this->decode_us_ / 1000));
+  RUNTIME_IMAGE_PROFILE_DO(decode_profile.log(TAG, this->decode_us_));
+  // A checksum of the picture as decoded, to show that a change to how it is painted has not changed it.
+  RUNTIME_IMAGE_PROFILE_DO(ESP_LOGI(TAG, "Decoded picture checksum (CRC-32): %08x",
+                                    (unsigned) esp_rom_crc32_le(0, this->buffer_, (size_t) this->buffer_width_ *
+                                                                                     this->buffer_height_ * this->get_bpp() / 8)));
   return true;
 }
 
@@ -363,6 +357,51 @@ size_t RuntimeImage::get_buffer_size(int width, int height) const {
     return static_cast<size_t>(width) * height * 3;
   }
   return (static_cast<size_t>(this->get_bpp()) * width + 7u) / 8u * height;
+}
+
+// The grey that a colour is painted as in a grey picture. Whole-number weights (54 + 183 + 19 = 256) in place of 0.2125, 0.7154 and
+// 0.0721: those are doubles, which the ESP32-S3 works out in software, three multiplies and two adds for each of the 2.6 million
+// pixels of a picture. A grey comes out as itself exactly (the doubles are a level short for 8 of the 256 greys), and any other
+// colour is within one level of what they gave. (A local change; see the README beside this file.)
+uint8_t RuntimeImage::gray_of_(const Color &color) const {
+  auto gray = static_cast<uint8_t>((54u * color.r + 183u * color.g + 19u * color.b) >> 8);
+  if (this->transparency_ == image::TRANSPARENCY_CHROMA_KEY) {
+    if (gray == 1) {
+      gray = 0;
+    }
+    if (color.w < 0x80) {
+      gray = 1;
+    }
+  } else if (this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL) {
+    if (color.w != 0xFF)
+      gray = color.w;
+  }
+  return gray;
+}
+
+void RuntimeImage::fill_run(int x, int y, size_t count, int row_width, const Color &color) {
+  if (!this->buffer_) {
+    ESP_LOGE(TAG, "Buffer not allocated!");
+    return;
+  }
+  // The same pixels as draw_pixel would paint one at a time, those inside the picture, a row at a time. Only a grey picture has
+  // a byte for each pixel to fill; the other kinds go on pixel by pixel.
+  const bool grey = this->type_ == image::IMAGE_TYPE_GRAYSCALE;
+  const uint8_t gray = grey ? this->gray_of_(color) : 0;
+  while (count > 0 && y < this->buffer_height_) {
+    const size_t in_row = std::min(count, static_cast<size_t>(row_width - x));
+    const int end = std::min(x + static_cast<int>(in_row), this->buffer_width_);
+    if (grey) {
+      if (x < end)
+        memset(this->buffer_ + this->get_position_(x, y), gray, end - x);
+    } else {
+      for (int i = x; i < end; i++)
+        this->draw_pixel(i, y, color);
+    }
+    count -= in_row;
+    x = 0;
+    y++;
+  }
 }
 
 int RuntimeImage::get_position_(int x, int y) const { return (x + y * this->buffer_width_) * this->get_bpp() / 8; }

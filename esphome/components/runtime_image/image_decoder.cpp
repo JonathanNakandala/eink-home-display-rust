@@ -1,5 +1,6 @@
 #include "image_decoder.h"
 #include "runtime_image.h"
+#include "decode_profile.h"
 #include "esphome/core/log.h"
 #include <algorithm>
 #include <cmath>
@@ -16,7 +17,31 @@ bool ImageDecoder::set_size(int width, int height) {
   return success;
 }
 
+void ImageDecoder::draw_run(int x, int y, size_t count, int row_width, const Color &color) {
+  RUNTIME_IMAGE_PROFILE_DO(decode_profile.draw_calls++);
+  RUNTIME_IMAGE_PROFILE_SCOPE(draw_scope, decode_profile.draw_cycles);
+#if RUNTIME_IMAGE_FILL_RUNS
+  if (!this->size_valid_) {
+    return;
+  }
+  if (this->x_scale_ == 1.0 && this->y_scale_ == 1.0) {
+    this->image_->fill_run(x, y, count, row_width, color);
+    return;
+  }
+#endif
+  // Scaled, or filling is off: a call for each pixel, which is what a run was.
+  for (size_t i = 0; i < count; i++) {
+    this->draw(x, y, 1, 1, color);
+    if (++x == row_width) {
+      x = 0;
+      y++;
+    }
+  }
+}
+
 void ImageDecoder::draw(int x, int y, int w, int h, const Color &color) {
+  RUNTIME_IMAGE_PROFILE_DO(decode_profile.draw_calls++);
+  RUNTIME_IMAGE_PROFILE_SCOPE(draw_scope, decode_profile.draw_cycles);
   if (!this->size_valid_) {
     return;
   }
@@ -29,6 +54,7 @@ void ImageDecoder::draw(int x, int y, int w, int h, const Color &color) {
     const int bottom = std::min(this->image_->get_buffer_height(), y + h);
     for (int i = x; i < right; i++) {
       for (int j = y; j < bottom; j++) {
+        RUNTIME_IMAGE_PROFILE_SCOPE(pixel_scope, decode_profile.pixel_cycles);
         this->image_->draw_pixel(i, j, color);
       }
     }

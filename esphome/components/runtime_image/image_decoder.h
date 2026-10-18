@@ -113,6 +113,13 @@ class ImageDecoder {
   void draw(int x, int y, int w, int h, const Color &color);
 
   /**
+   * @brief Paint a run of `count` pixels of one colour, from (x, y) along the row and on to the next (a row is `row_width`
+   * pixels). The same pixels as a `draw` call for each, filled in one go when the picture is drawn at its own size.
+   * (A local change; see the README beside this file.)
+   */
+  void draw_run(int x, int y, size_t count, int row_width, const Color &color);
+
+  /**
    * @brief Check if the decoder has finished processing.
    *
    * This should be overridden by decoders that can detect completion

@@ -51,6 +51,13 @@ class RuntimeImage : public image::Image {
    */
   int resize(int width, int height);
   void draw_pixel(int x, int y, const Color &color);
+
+  /**
+   * @brief Paint `count` pixels of one colour, from (x, y) along the row and on to the next, which is what a run in a picture
+   * is. The same pixels as `count` calls of draw_pixel, but a grey picture is filled a row at a time. `row_width` is how far a
+   * run goes along a row before it goes on to the next. (A local change; see the README beside this file.)
+   */
+  void fill_run(int x, int y, size_t count, int row_width, const Color &color);
   void map_chroma_key(Color &color);
   int get_buffer_width() const { return this->buffer_width_; }
   int get_buffer_height() const { return this->buffer_height_; }
@@ -181,6 +188,7 @@ class RuntimeImage : public image::Image {
    * @brief Get the position in the buffer for a pixel.
    */
   int get_position_(int x, int y) const;
+  uint8_t gray_of_(const Color &color) const;
 
   /**
    * @brief Create decoder instance for the requested format.
