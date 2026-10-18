@@ -341,6 +341,12 @@ only the AAAA records for a specific IPv6 address. The log line at start-up says
   them, and they rotate: prefer a stable address (a DHCPv6 reservation, or a ULA) for anything that remembers
   the server's address. Check with `dns-sd -G v4v6 <instance-name>.local` (macOS) or
   `avahi-resolve -n <instance-name>.local` (Linux).
+- **When the host sleeps, or its address changes:** the server watches its mDNS responder and starts it again when it stops
+  matching the machine, within about 10 to 30 seconds of the address settling (`Starting the mDNS responder again: ...` in
+  the log says why). Without this, a responder whose network interface came back with a new address (a Windows PC after
+  sleep, in practice) could announce nothing, and answer no query, until the whole server was restarted, and a display
+  that looked for the server found nothing. It starts again at most every 15 seconds, and less often (up to every 5
+  minutes) while starting again does not help. It does nothing while the host has no address at all.
 - Clients may log IPv4 peers as `::ffff:192.168.0.5`; that is the same address.
 
 ## Plain HTTP, HTTPS, or both
