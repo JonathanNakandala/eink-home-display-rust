@@ -89,6 +89,15 @@ format:
 vscode:
 	$(POETRY) run python scripts/vscode_intellisense.py
 
+# Makes the display fetch and draw a fresh picture with nobody at it, and prints what the wake did: asks the server to render, resets
+# the board over its serial cable, and follows the log until it sleeps. Not a press of KEY0 (see the README). The serial port can
+# be used by one program only, so stop `esphome logs` first. Arguments: `make -C esphome refresh REFRESH_ARGS=--all`.
+REFRESH_ARGS ?=
+
+.PHONY: refresh
+refresh:
+	$(POETRY) run python scripts/refresh_display.py $(REFRESH_ARGS)
+
 # mbedTLS built for the computer, from the very source ESPHome builds the chip's with (the ESP-IDF in its cache, so
 # `compile` has to have run once), for the host tests that run the display's TLS against the real server.
 # Needs cmake and cargo. See tests/tls/README.md.
