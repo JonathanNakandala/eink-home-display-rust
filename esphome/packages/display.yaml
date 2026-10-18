@@ -103,7 +103,7 @@ display:
         // Only this corner is refreshed; the rest of the panel keeps its picture.
         eink_notice::draw(*id(eink_display), id(notice_font), id(notice_text));
       } else {
-        it.image(0, 0, id(dashboard));
+        eink_notice::draw_picture(*id(eink_display), *id(dashboard));
         // Drawn into the same refresh as the picture, so it costs nothing extra.
         if (id(battery_low))
           eink_notice::label(it, id(notice_font), "Battery low " + std::to_string(id(battery_pct)) + "% - please charge");
