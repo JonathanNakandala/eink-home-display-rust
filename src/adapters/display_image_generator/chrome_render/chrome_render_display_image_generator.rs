@@ -1,8 +1,9 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use handlebars::Handlebars;
@@ -199,6 +200,9 @@ struct LaunchedBrowser {
 /// viewport is set to each picture's own size (see `capture_in_tab`), which a window as large as this never limits.
 const WINDOW: (u32, u32) = (3840, 2160);
 
+/// The longest a Chrome may take to say its version. Where `--version` works it prints and exits at once.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn find_system_chrome() -> Option<PathBuf> {
     let path = match default_executable() {
         Ok(path) => path,
@@ -207,29 +211,61 @@ fn find_system_chrome() -> Option<PathBuf> {
             return None;
         }
     };
-    match Command::new(&path).arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout);
-            log::info!(
-                "Found system Chrome at {}: {}",
-                path.display(),
-                version.trim()
-            );
+    // `chrome.exe --version` prints nothing on Windows: it starts the browser, a whole one with a window, on the user's own
+    // profile, and that does not exit. Asked here it hung every render until the user's Chrome happened to be running (which
+    // takes the command line and exits), and otherwise left a Chrome window open on their desktop. So it is not asked. The
+    // version is logged when the browser is launched ("Rendering with ..."), and a Chrome that cannot start fails there.
+    if cfg!(windows) {
+        log::info!("Found system Chrome at {}", path.display());
+        return Some(path);
+    }
+    let mut command = Command::new(&path);
+    command.arg("--version");
+    match output_within(command, VERSION_PROBE_TIMEOUT) {
+        Ok(version) => {
+            log::info!("Found system Chrome at {}: {version}", path.display());
             Some(path)
         }
-        Ok(output) => {
-            log::warn!(
-                "{} --version failed ({}); ignoring it",
-                path.display(),
-                output.status
-            );
-            None
-        }
-        Err(e) => {
-            log::warn!("Could not run {}: {e}; ignoring it", path.display());
+        Err(reason) => {
+            log::warn!("{} --version {reason}; ignoring it", path.display());
             None
         }
     }
+}
+
+/// What `command` prints, if it succeeds within `timeout`. A program still running after that is killed: nothing here is
+/// allowed to wait for one for ever, since a render waits on this.
+fn output_within(mut command: Command, timeout: Duration) -> Result<String, String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not be run ({e})"))?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("did not finish in {} s", timeout.as_secs()));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("could not be waited for ({e})"));
+            }
+        }
+    };
+    if !status.success() {
+        return Err(format!("failed ({status})"));
+    }
+    let mut printed = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.read_to_end(&mut printed);
+    }
+    Ok(String::from_utf8_lossy(&printed).trim().to_owned())
 }
 
 impl ChromeRenderDisplayImageGenerator {
@@ -584,6 +620,64 @@ mod tests {
             .unwrap_err();
 
         assert!(format!("{error}").contains("nonesuch"), "{error}");
+    }
+
+    /// A program that prints `words` and exits, on any platform.
+    fn printing(words: &str) -> Command {
+        let mut command;
+        if cfg!(windows) {
+            command = Command::new("cmd");
+            command.args(["/C", "echo", words]);
+        } else {
+            command = Command::new("echo");
+            command.arg(words);
+        }
+        command
+    }
+
+    /// A program that does nothing for half a minute, on any platform.
+    fn sleeping() -> Command {
+        let mut command;
+        if cfg!(windows) {
+            command = Command::new("cmd");
+            command.args(["/C", "ping", "-n", "30", "127.0.0.1", ">", "nul"]);
+        } else {
+            command = Command::new("sleep");
+            command.arg("30");
+        }
+        command
+    }
+
+    #[test]
+    fn what_a_program_prints_is_given_without_the_line_break() {
+        let printed = output_within(printing("Chrome-1.2.3"), Duration::from_secs(20)).unwrap();
+
+        assert_eq!(printed, "Chrome-1.2.3");
+    }
+
+    #[test]
+    fn a_program_that_does_not_finish_is_given_up_on_and_stopped_and_does_not_hold_the_render() {
+        let began = Instant::now();
+
+        let result = output_within(sleeping(), Duration::from_millis(300));
+
+        let reason = result.unwrap_err();
+        assert!(reason.contains("did not finish"), "{reason}");
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "waited {:?} for a program that was to be given up on after 0.3 s",
+            began.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_program_that_is_not_there_is_an_error_and_not_a_wait() {
+        let result = output_within(
+            Command::new("a-program-that-does-not-exist"),
+            Duration::from_secs(20),
+        );
+
+        assert!(result.unwrap_err().contains("could not be run"));
     }
 
     #[test]
