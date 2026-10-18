@@ -17,6 +17,12 @@
 #define RUNTIME_IMAGE_FILL_RUNS 1
 #endif
 
+// 1 logs a CRC-32 of the decoded picture, to show that a change to how it is painted has not changed it. It reads the whole
+// picture (157 ms for 2.6 MB), so it is off unless a bench build wants it.
+#ifndef RUNTIME_IMAGE_CHECKSUM
+#define RUNTIME_IMAGE_CHECKSUM 0
+#endif
+
 #if RUNTIME_IMAGE_PROFILE
 
 #include <cstddef>

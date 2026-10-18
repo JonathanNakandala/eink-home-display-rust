@@ -242,10 +242,13 @@ bool RuntimeImage::end_decode() {
   ESP_LOGI(TAG, "Decoding complete: %dx%d, %zu bytes, %u ms in the decoder", this->width_, this->height_,
            this->decoded_bytes_, (unsigned) (this->decode_us_ / 1000));
   RUNTIME_IMAGE_PROFILE_DO(decode_profile.log(TAG, this->decode_us_));
-  // A checksum of the picture as decoded, to show that a change to how it is painted has not changed it.
-  RUNTIME_IMAGE_PROFILE_DO(ESP_LOGI(TAG, "Decoded picture checksum (CRC-32): %08x",
-                                    (unsigned) esp_rom_crc32_le(0, this->buffer_, (size_t) this->buffer_width_ *
-                                                                                     this->buffer_height_ * this->get_bpp() / 8)));
+#if RUNTIME_IMAGE_CHECKSUM
+  // A checksum of the picture as decoded, to show that a change to how it is painted has not changed it. It reads all 2.6 MB of
+  // the picture, which took 157 ms on the ESP32-S3, so it is for bench builds.
+  ESP_LOGI(TAG, "Decoded picture checksum (CRC-32): %08x",
+           (unsigned) esp_rom_crc32_le(0, this->buffer_,
+                                       (size_t) this->buffer_width_ * this->buffer_height_ * this->get_bpp() / 8));
+#endif
   return true;
 }
 
