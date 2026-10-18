@@ -1,13 +1,16 @@
-// The places where mbedTLS 3.6 (ESP-IDF 5.5) and mbedTLS 4 (ESP-IDF 6.1) differ, behind one name each, so that the rest of
-// the TLS code is the same for both and carries no `#if`.
+// The places where mbedTLS 3.6 (ESP-IDF 5.5) and mbedTLS 4 (ESP-IDF 6.1) differ, behind one name each, so that the rest
+// of the TLS code is the same for both and carries no `#if`.
 //
 // What changed in 4, as far as this code is concerned:
-//  - The cryptography is PSA (psa/crypto.h). It has to be started (`psa_crypto_init`) before anything uses it, and it has
+//  - The cryptography is PSA (psa/crypto.h). It has to be started (`psa_crypto_init`) before anything uses it, and it
+//  has
 //    its own random numbers and hashes: there is no entropy or DRBG module any more, no `mbedtls_sha256`, and no random
 //    callback to give to `mbedtls_ssl_conf_rng`, `mbedtls_pk_sign` or `mbedtls_pk_parse_key`.
-//  - A key is made by PSA, and copied into a pk context if it has to be written out: there is no `mbedtls_pk_setup` with an
+//  - A key is made by PSA, and copied into a pk context if it has to be written out: there is no `mbedtls_pk_setup`
+//  with an
 //    EC key, and no `mbedtls_ecp_gen_key`.
-//  - A TLS 1.3 client is always told when a session ticket arrives (`MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET`); in 3.6
+//  - A TLS 1.3 client is always told when a session ticket arrives (`MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET`);
+//  in 3.6
 //    it had to ask first.
 //
 // Everything is inline and header-only, like the rest of tls/, and nothing here throws.
@@ -44,13 +47,16 @@ inline bool init() {
 }
 
 // `length` random bytes.
-inline bool random(unsigned char *out, size_t length) { return init() && psa_generate_random(out, length) == PSA_SUCCESS; }
+inline bool random(unsigned char *out, size_t length) {
+  return init() && psa_generate_random(out, length) == PSA_SUCCESS;
+}
 
 // The SHA-256 of `data`, 32 bytes. 0 if it worked.
 inline int sha256(const unsigned char *data, size_t length, unsigned char out[32]) {
   size_t written = 0;
-  return init() && psa_hash_compute(PSA_ALG_SHA_256, data, length, out, 32, &written) == PSA_SUCCESS && written == 32 ? 0
-                                                                                                                      : -1;
+  return init() && psa_hash_compute(PSA_ALG_SHA_256, data, length, out, 32, &written) == PSA_SUCCESS && written == 32
+             ? 0
+             : -1;
 }
 
 // The library takes its random numbers from PSA, so there is nothing to give it.
@@ -65,13 +71,13 @@ inline int parse_private_key(mbedtls_pk_context *key, const unsigned char *der, 
 }
 
 // Signs a SHA-256 hash with the key, as a DER ECDSA signature. 0 if it worked.
-inline int sign_sha256(mbedtls_pk_context *key, const unsigned char hash[32], unsigned char *signature,
-                       size_t capacity, size_t *length) {
+inline int sign_sha256(mbedtls_pk_context *key, const unsigned char hash[32], unsigned char *signature, size_t capacity,
+                       size_t *length) {
   return init() ? mbedtls_pk_sign(key, MBEDTLS_MD_SHA256, hash, 32, signature, capacity, length) : -1;
 }
 
-// Makes a P-256 key in `key`, which must be freshly initialised. The key is made by PSA and copied in, so that it can be
-// written out (it is exportable for that and nothing else is done with the PSA copy, which is destroyed at once).
+// Makes a P-256 key in `key`, which must be freshly initialised. The key is made by PSA and copied in, so that it can
+// be written out (it is exportable for that and nothing else is done with the PSA copy, which is destroyed at once).
 inline bool generate_p256_key(mbedtls_pk_context *key) {
   if (!init())
     return false;
@@ -133,8 +139,8 @@ inline int parse_private_key(mbedtls_pk_context *key, const unsigned char *der, 
   return mbedtls_pk_parse_key(key, der, length, nullptr, 0, Random::generate, nullptr);
 }
 
-inline int sign_sha256(mbedtls_pk_context *key, const unsigned char hash[32], unsigned char *signature,
-                       size_t capacity, size_t *length) {
+inline int sign_sha256(mbedtls_pk_context *key, const unsigned char hash[32], unsigned char *signature, size_t capacity,
+                       size_t *length) {
   return mbedtls_pk_sign(key, MBEDTLS_MD_SHA256, hash, 32, signature, capacity, length, Random::generate, nullptr);
 }
 

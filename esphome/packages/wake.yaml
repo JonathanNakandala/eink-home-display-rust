@@ -8,9 +8,10 @@ substitutions:
   # After repeated failures the sleep doubles each time, up to this.
   max_backoff_ms: "3600000"
   # A wake that hasn't finished by now is treated as failed: it counts towards the backoff and sleeps.
-  # Longer than the slowest normal wait for the server (a button refresh waits for it to render), and
-  # shorter than the `run_duration` that backs it up.
-  wake_timeout: 110s
+  # Longer than the slowest normal wake: Wi-Fi (up to 30 s) and the clock (up to `clock_wait`, 60 s) before the server is asked
+  # at all, then the slowest wait for the server (a button refresh waits for it to render, up to 40 s), and shorter than the
+  # `run_duration` that backs it up.
+  wake_timeout: 150s
 
 binary_sensor:
   # KEY1, the middle button: held at wake to stay awake for updates.
@@ -28,7 +29,7 @@ deep_sleep:
   # the normal exit is deep_sleep.enter above.
   # Longer than the watchdog, with room for the failure path it leaves running: two /plan timeouts, a
   # lookup and then the notice.
-  run_duration: 180s
+  run_duration: 210s
   sleep_duration: ${sleep_duration}
   # KEY0, the right green button, wakes it early for an immediate refresh.
   esp32_ext1_wakeup:
