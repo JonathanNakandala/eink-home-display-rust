@@ -74,6 +74,14 @@ esphome:
       - script.execute: wake_watchdog
       - script.execute: battery_gate
 
+# ESPHome's picture decoders, changed to decode a full-screen picture much faster, to keep QOI from resetting the chip, and to
+# time the decoder (components/runtime_image/README.md). A local component of the same name takes the place of the built-in one.
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [runtime_image]
+
 packages:
   version: !include packages/version.yaml
   board: !include packages/board.yaml

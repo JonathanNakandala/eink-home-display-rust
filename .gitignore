@@ -13,6 +13,8 @@ config/custom.toml
 /esphome/secrets.yaml
 /esphome/.esphome
 /esphome/build
+# Made by ESPHome when it loads the component in esphome/components/
+/esphome/components/**/__pycache__/
 # ESPHome writes its own on every run, repeating the lines above
 /esphome/.gitignore
 # Made by `make -C esphome vscode`: paths on this machine
