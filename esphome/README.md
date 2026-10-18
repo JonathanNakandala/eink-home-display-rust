@@ -149,9 +149,16 @@ it downloads and draws the new image, then sleeps until the next scheduled rende
   (30), and then just answers with the image it has. A held or repeated press can't cause a stream of
   API calls.
 - A forced render doesn't change the schedule: the next scheduled slot still happens.
-- The panel doesn't change until the render is done, a few seconds in the log timings I saw on a laptop
-  (2.4 s), longer on a Raspberry Pi or a cold Chrome. There is no on-screen "refreshing" message.
+- The picture doesn't change until the render is done, a few seconds in the log timings I saw on a laptop
+  (2.4 s), longer on a Raspberry Pi or a cold Chrome. Meanwhile the bottom-right corner says "Refreshing..." and only that corner is
+  redrawn, so the old picture stays; the new picture replaces it, or a failure notice does if the wake does not finish.
 - If the server can't be reached, the usual lookup, retry and failure notice apply.
+
+**Without pressing it:** `make -C esphome refresh` asks the server to render, resets the board over its serial cable and prints
+what the wake did (`scripts/refresh_display.py`), for trying a change on a display that is plugged in. A reset is a power-on, not
+a press of KEY0: it makes the display download and draw the new picture, but it does not draw "Refreshing..." and it does not
+ask the server to render itself (the script does), because only the button wakes the chip from deep sleep. Stop `esphome logs`
+first, since a serial port can be open in one program only.
 
 ### What the display says it is
 
