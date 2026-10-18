@@ -1,8 +1,8 @@
 // The display's identity as it is kept in flash: the interface core/join.h and tls/est_client.h use, over the record
 // in core/credentials.h. The key is a real mbedTLS key, loaded from the record and written to it when it is made.
 //
-// Written against mbedTLS 3.6 and tested on a computer (tests/tls/), with a stand-in for flash that can lose power in
-// any write. The chip uses it with the NVS store in esp/nvs.h.
+// Written for mbedTLS 3.6 and 4 (see tls/mbedtls_compat.h) and tested on a computer (tests/tls/), with a stand-in for flash
+// that can lose power in any write. The chip uses it with the NVS store in esp/nvs.h.
 //
 // What the server last said (waiting, turned away) is not kept here, and not in flash: it changes with every wake while
 // a display is waiting, and flash does not take that many writes. The caller gives a place to keep it that survives
@@ -10,11 +10,11 @@
 // again.
 #pragma once
 
-#include "mbedtls/ecp.h"
 #include "mbedtls/pk.h"
 
 #include "home_display/core/credentials.h"
 #include "home_display/tls/csr.h"
+#include "home_display/tls/mbedtls_compat.h"
 #include "home_display/tls/tls.h"
 
 namespace home_display_flash {
@@ -64,9 +64,7 @@ class FlashIdentity : public home_display_tls::TlsIdentity {
     mbedtls_pk_context fresh;
     mbedtls_pk_init(&fresh);
     unsigned char der[200];
-    bool ok = mbedtls_pk_setup(&fresh, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) == 0 &&
-              mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(fresh), home_display_tls::Random::generate,
-                                  nullptr) == 0;
+    const bool ok = home_display_tls::compat::generate_p256_key(&fresh);
     int length = ok ? mbedtls_pk_write_key_der(&fresh, der, sizeof der) : -1;  // written at the end of the buffer
     mbedtls_pk_free(&fresh);
     if (length <= 0)
@@ -110,8 +108,7 @@ class FlashIdentity : public home_display_tls::TlsIdentity {
   bool loaded_ = false;
 
   bool parse_key(const Bytes &der) {
-    return mbedtls_pk_parse_key(&key_, der.data(), der.size(), nullptr, 0, home_display_tls::Random::generate,
-                                nullptr) == 0;
+    return home_display_tls::compat::parse_private_key(&key_, der.data(), der.size()) == 0;
   }
 };
 

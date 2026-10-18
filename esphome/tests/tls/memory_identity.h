@@ -3,7 +3,6 @@
 // (tls/csr.h), so the server sees exactly what it would from the chip.
 #pragma once
 
-#include "mbedtls/ecp.h"
 #include "mbedtls/pk.h"
 
 #include "home_display/tls/csr.h"
@@ -35,9 +34,7 @@ class MemoryIdentity : public home_display_tls::TlsIdentity {
 
   bool has_key() override { return has_the_key; }
   bool make_key() override {
-    if (mbedtls_pk_setup(&key_, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) != 0)
-      return false;
-    if (mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key_), home_display_tls::Random::generate, nullptr) != 0)
+    if (!home_display_tls::compat::generate_p256_key(&key_))
       return false;
     has_the_key = true;
     return true;

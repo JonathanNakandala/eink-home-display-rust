@@ -1,5 +1,5 @@
 /* The mbedTLS configuration for building the library on a computer, to test the firmware's TLS code against the same
- * library the chip runs (mbedTLS 3.6.x, from the ESP-IDF that ESPHome builds with).
+ * library the chip runs (mbedTLS 3.6.x for ESP-IDF 5.5, 4.x for ESP-IDF 6.1, from the ESP-IDF that ESPHome builds with).
  *
  * It starts from upstream's defaults, which already have TLS 1.3, session tickets and CSR writing, and adds what the
  * chip's build (esphome/.esphome/build, sdkconfig) has to turn on for the firmware too: the keying-material exporter
@@ -8,4 +8,7 @@
  */
 #include "mbedtls/mbedtls_config.h"
 
+/* On for mbedTLS 4, whose defaults have it; 3.6's do not. */
+#if !defined(MBEDTLS_SSL_KEYING_MATERIAL_EXPORT)
 #define MBEDTLS_SSL_KEYING_MATERIAL_EXPORT
+#endif

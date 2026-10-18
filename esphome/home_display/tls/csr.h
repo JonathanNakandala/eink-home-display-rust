@@ -6,10 +6,10 @@
 
 #include "mbedtls/md.h"
 #include "mbedtls/pk.h"
-#include "mbedtls/sha256.h"
 
 #include "home_display/core/base64.h"
 #include "home_display/core/der.h"
+#include "home_display/tls/mbedtls_compat.h"
 #include "home_display/tls/tls.h"
 
 namespace home_display_csr {
@@ -36,12 +36,11 @@ inline Bytes request(mbedtls_pk_context &key, const std::string &name, const Byt
   const Bytes info =
       home_display_der::request_info(name, spki, binding.empty() ? "" : home_display_base64::encode(binding), profile);
   unsigned char hash[32];
-  if (mbedtls_sha256(info.data(), info.size(), hash, 0) != 0)
+  if (home_display_tls::compat::sha256(info.data(), info.size(), hash) != 0)
     return {};
   unsigned char signature[MBEDTLS_PK_SIGNATURE_MAX_SIZE];
   size_t length = 0;
-  if (mbedtls_pk_sign(&key, MBEDTLS_MD_SHA256, hash, sizeof hash, signature, sizeof signature, &length,
-                      home_display_tls::Random::generate, nullptr) != 0)
+  if (home_display_tls::compat::sign_sha256(&key, hash, signature, sizeof signature, &length) != 0)
     return {};
   return home_display_der::request(info, Bytes(signature, signature + length));
 }

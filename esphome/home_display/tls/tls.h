@@ -1,8 +1,9 @@
 // A TLS 1.3 connection to the server with mbedTLS, over BSD sockets (which lwIP has too), one HTTP request on it, and
 // the things the display takes from the connection: the RFC 9266 channel binding and what the server presented.
 //
-// Written against mbedTLS 3.6 and tested on a computer against a real server (tests/tls/), with the same source the
-// chip is built from. Nothing here throws or needs RTTI, since the chip's build has neither.
+// Written for mbedTLS 3.6 and 4 (ESP-IDF 5.5 and 6.1), which differ in a few places that tls/mbedtls_compat.h hides, and
+// tested on a computer against a real server (tests/tls/), with the same source the chip is built from. Nothing here throws
+// or needs RTTI, since the chip's build has neither.
 #pragma once
 
 #include <cerrno>
@@ -18,8 +19,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/platform_time.h"
@@ -30,6 +29,7 @@
 #include "home_display/core/wire.h"
 #include "home_display/core/ports.h"
 #include "home_display/core/session_cache.h"
+#include "home_display/tls/mbedtls_compat.h"
 
 namespace home_display_tls {
 
@@ -43,27 +43,6 @@ constexpr int EXCHANGE_MS = 30000;
 
 // The name the server's certificate always has, and the only one a display checks, whatever address mDNS found.
 constexpr const char *SERVER_NAME = home_display_wire::SERVER_NAME;
-
-// The random numbers for keys, handshakes and signatures. One for the program.
-class Random {
- public:
-  static Random &get() {
-    static Random instance;
-    return instance;
-  }
-  static int generate(void *, unsigned char *out, size_t length) {
-    return mbedtls_ctr_drbg_random(&get().drbg_, out, length);
-  }
-
- private:
-  Random() {
-    mbedtls_entropy_init(&entropy_);
-    mbedtls_ctr_drbg_init(&drbg_);
-    mbedtls_ctr_drbg_seed(&drbg_, mbedtls_entropy_func, &entropy_, nullptr, 0);
-  }
-  mbedtls_entropy_context entropy_;
-  mbedtls_ctr_drbg_context drbg_;
-};
 
 // Where an attempt to open a connection got to.
 enum class Open : uint8_t {
@@ -146,6 +125,8 @@ class Session {
   // are given.
   Open open(uint32_t ip, uint16_t port, const mbedtls_x509_crt *trust, const mbedtls_x509_crt *own_certificate,
             mbedtls_pk_context *own_key, int timeout_ms = WAIT_MS, int total_ms = 0) {
+    if (!compat::init())  // the cryptography has to be started before the library is given a configuration
+      return Open::UNREACHABLE;
     timeout_ms_ = timeout_ms;
     has_deadline_ = total_ms > 0;
     if (has_deadline_)
@@ -157,7 +138,7 @@ class Session {
       return Open::UNREACHABLE;
     mbedtls_ssl_conf_min_tls_version(&conf_, MBEDTLS_SSL_VERSION_TLS1_3);
     mbedtls_ssl_conf_max_tls_version(&conf_, MBEDTLS_SSL_VERSION_TLS1_3);
-    mbedtls_ssl_conf_rng(&conf_, Random::generate, nullptr);
+    compat::use_random(&conf_);
     if (trust != nullptr) {
       mbedtls_ssl_conf_authmode(&conf_, MBEDTLS_SSL_VERIFY_REQUIRED);
       mbedtls_ssl_conf_ca_chain(&conf_, const_cast<mbedtls_x509_crt *>(trust), nullptr);
@@ -172,9 +153,8 @@ class Session {
     if (trust != nullptr && mbedtls_ssl_set_hostname(&ssl_, SERVER_NAME) != 0)
       return Open::UNREACHABLE;
     if (sessions_ != nullptr) {
-      // In TLS 1.3 a ticket arrives after the handshake; the library keeps it only if the application asks to be told.
-      mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets(&conf_,
-                                                               MBEDTLS_SSL_TLS1_3_SIGNAL_NEW_SESSION_TICKETS_ENABLED);
+      // In TLS 1.3 a ticket arrives after the handshake; the library keeps it only if the application is told.
+      compat::ask_for_tickets(&conf_);
       Bytes saved;
       int64_t age_s = 0;
       if (offer_ && sessions_->load(saved, age_s)) {

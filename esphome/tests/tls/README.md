@@ -1,13 +1,29 @@
 # Testing the firmware's TLS on a computer
 
-The display's TLS is mbedTLS 3.6.x. ESPHome builds the chip's copy from the ESP-IDF in its cache, and that is plain
-upstream mbedTLS, so it also builds on a computer. This directory builds that very source (`make -C esphome host-tls`,
-which needs `make -C esphome compile` to have fetched it once) and runs the display's whole conversation with the
-server against a **real** server, so the questions that would otherwise wait for a device are answered here.
+The display's TLS is mbedTLS: 3.6.x with ESP-IDF 5.5, 4.x with ESP-IDF 6.1 (`tls/mbedtls_compat.h` hides the few places the two
+differ). ESPHome builds the chip's copy from the ESP-IDF in its cache, and that is upstream mbedTLS, so it also builds on a
+computer. This directory builds that very source (`make -C esphome host-tls`, which needs `make -C esphome compile` to have
+fetched it once) and runs the display's whole conversation with the server against a **real** server, so the questions that
+would otherwise wait for a device are answered here.
+
+Both generations pass the same 59 tests: 3.6 from ESP-IDF 5.5.5's copy, and 4.1.0 from the upstream release (below). That was
+run on Linux (Ubuntu 24.04 under WSL, GCC 13).
 
 ```sh
 make -C esphome host-test      # needs cmake and cargo
 ```
+
+**mbedTLS 4 (ESP-IDF 6):** ESP-IDF's copy of mbedTLS 4 is cut down, and its CMake cannot configure without the `framework`
+folder that upstream has and ESP-IDF leaves out. So unpack the matching upstream release instead (the version is in the
+ESP-IDF's `components/mbedtls/mbedtls/include/mbedtls/build_info.h`; it needs Python 3 to configure) and point at it:
+
+```sh
+curl -LO https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.1.0/mbedtls-4.1.0.tar.bz2
+tar -xjf mbedtls-4.1.0.tar.bz2
+make -C esphome host-test MBEDTLS_SRC=$PWD/mbedtls-4.1.0
+```
+
+With no `MBEDTLS_SRC`, the newest ESP-IDF copy that *can* be built is used, and a copy that cannot says so.
 
 The same from VS Code: the CMake panel uses `tests/tls/CMakePresets.json`, so it needs no kit. Choose the `host` preset, then
 configure, build, and run the `host-tests` entry in the test panel (it runs `make host-test`). The mbedTLS source is found by

@@ -6,7 +6,7 @@
 // HTTP component in esp/secure_http.h, which reads the same place. One place means the script says where the server is
 // once.
 //
-// Written against mbedTLS 3.6 and tested on a computer against a real server (tests/tls/).
+// Written for mbedTLS 3.6 and 4 (see tls/mbedtls_compat.h) and tested on a computer against a real server (tests/tls/).
 #pragma once
 
 #include <string>

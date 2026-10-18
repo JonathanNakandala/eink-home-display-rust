@@ -86,7 +86,7 @@ script:
           then:
             # KEY0 wakes the device from deep sleep: that wake asks for a fresh render.
             - lambda: |-
-                id(force_refresh) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
+                id(force_refresh) = home_display_button::woken_by_key0();
                 if (id(force_refresh))
                   ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
             # A refresh takes a minute or so (the server renders, then the picture comes down and is drawn), so say so in
