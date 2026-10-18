@@ -50,6 +50,7 @@ esphome:
   on_boot:
     priority: -100
     then:
+      - lambda: 'home_display_phases::mark("app-started");'
       # Battery measurement circuit
       - output.turn_on: bsp_battery_enable
       - delay: 200ms

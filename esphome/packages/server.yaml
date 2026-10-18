@@ -184,6 +184,7 @@ script:
           if (!ok)
             ESP_LOGW("plan", "No usable plan (HTTP %d): %s", code, body.c_str());
           id(plan_ok) = ok;
+          home_display_phases::mark("plan");
           if (ok) {
             // Not `failed_wakes = 0` here: the plan answering isn't the wake succeeding. The image can still
             // fail to download, and resetting now would keep that failure at the first backoff step forever.
@@ -237,6 +238,7 @@ script:
                     return std::string("https://") + home_display_tls::SERVER_NAME + "${image_path}?device=" + App.get_name().str();
                   std::string base = home_display_format::server_base(id(server_ip), id(server_port), "${fallback_base}");
                   return base + "${image_path}?device=" + App.get_name().str();
+            - lambda: 'home_display_phases::mark("download-start");'
             - component.update: dashboard
           else:
             # Not the server's fault, so don't go looking for it.
