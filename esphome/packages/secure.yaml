@@ -88,6 +88,10 @@ script:
   - id: secure_attempt
     then:
       - script.execute: ensure_clock
+      # `script.execute` does not wait for a script that waits itself, and this one waits for SNTP to set the clock: what follows
+      # needs the answer, so it waits for the script to end (without this the clock was never ready, and every attempt fell
+      # back to plain HTTP with "Not secure: clock").
+      - script.wait: ensure_clock
       - if:
           condition:
             lambda: 'return id(server_ip) == 0 || id(server_tls_port) == 0;'
@@ -178,4 +182,6 @@ script:
             lambda: 'return !id(prompt_on_panel);'
           then:
             - script.execute: show_prompt
+            # Sleeping before the panel has drawn the code leaves the owner nothing to type in: waited for.
+            - script.wait: show_prompt
       - script.execute: sleep_now

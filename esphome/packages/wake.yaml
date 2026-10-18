@@ -131,6 +131,8 @@ script:
             lambda: 'return home_display_state::prompt_wanted && !id(prompt_on_panel);'
           then:
             - script.execute: show_prompt
+            # The wake must not go on to sleep while the code is still being drawn: waited for, as with the clock.
+            - script.wait: show_prompt
       - if:
           condition:
             # Once per spell: the text has an age in it, which would otherwise redraw every wake. "Refreshing..." does not count
