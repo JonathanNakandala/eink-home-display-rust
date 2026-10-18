@@ -24,6 +24,12 @@ esp32:
       CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE: "y"
       CONFIG_MBEDTLS_SSL_PROTO_TLS1_3: "y"
       CONFIG_MBEDTLS_SSL_KEYING_MATERIAL_EXPORT: "y"
+      # No ARP probe of the leased address before using it. lwIP's DHCP client defaults to one, which holds the address back for
+      # a second after the server has agreed to it (measured: ACK, then bind a full 1.0 s later). The server hands out the
+      # addresses and keeps its own leases, so a duplicate is not what this check is for here. A choice in Kconfig: the one
+      # that was on has to be turned off for the other to take.
+      CONFIG_LWIP_DHCP_DOES_ARP_CHECK: "n"
+      CONFIG_LWIP_DHCP_DOES_NOT_CHECK_OFFERED_IP: "y"
 
 # OPI PSRAM holds the decoded image and the 16-level framebuffer.
 psram:
