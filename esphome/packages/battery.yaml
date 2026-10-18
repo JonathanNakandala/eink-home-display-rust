@@ -124,7 +124,8 @@ script:
                 id(notice_on_panel) = true;
                 id(prompt_on_panel) = false;
             - component.update: eink_display
-            - delay: ${eink_refresh_settle}
+            - script.execute: settle_panel
+            - script.wait: settle_panel
             - script.execute: battery_sleep
           else:
             - if:
