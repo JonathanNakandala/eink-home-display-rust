@@ -88,8 +88,8 @@ Maintenance mode:
 - [ ] Stop the server and wake the display a few times: a label `Last update failed @ HH:MM` appears **once** in the bottom-right corner,
   the right way round, with nothing else refreshed. The log says `Failure 1 in a row (server); sleeping ...`, and the sleeps run 10, 20, 40, then 60 minutes.
 - [ ] Start the server: the next wake redraws the picture and the label goes. `/status` then shows `last_failure: server` once, from the wake before.
-- [ ] Make the server accept the connection and never answer (`nc -l 8080` in its place): after 110 s the log shows
-  `The wake didn't finish in 110s` and `Failure 1 in a row (timeout)`.
+- [ ] Make the server accept the connection and never answer (`nc -l 8080` in its place): after 150 s the log shows
+  `The wake didn't finish in 150s` and `Failure 1 in a row (timeout)`.
 
 ## Stage 3: join over HTTPS
 
@@ -97,7 +97,7 @@ Server: `[server] transport = "prefer-https"` (so plain HTTP is still served for
 `server_transport: prefer-https`, flashed over USB or OTA.
 
 - [ ] `Found '...' (http 8080, https N, ...)`: the HTTPS port is announced.
-- [ ] No `The clock is not set` line. If it appears on the first wake it is SNTP not having answered yet (the display waits up to 20 s for it, does nothing that
+- [ ] No `The clock is not set` line. If it appears on the first wake it is SNTP not having answered yet (the display waits up to `clock_wait`, 60 s, for it, does nothing that
   needs a certificate, and tries again at the next wake; `last_failure: clock` is reported). It should not persist: check Wi-Fi and the NTP servers in `clock.yaml`.
 - [ ] Open the window: `displayctl -c config.toml window open`.
 - [ ] After the picture, the panel shows `Waiting for approval: XXXX-XXXX-XXXX` in the corner (prefer-https goes on over plain HTTP meanwhile).

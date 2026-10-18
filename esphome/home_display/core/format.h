@@ -66,8 +66,8 @@ inline std::string failure_notice(home_display_report::Failure reason, bool cloc
   return (clock_set && offset_known) ? what + " @ " + clock_text(unix_seconds, utc_offset_s) : what;
 }
 
-// The notice for a refresh the owner asked for with the button, which takes a minute: the server renders, then the picture
-// comes down and is drawn. It is replaced by the picture, or by the notice of whatever went wrong.
+// The notice for a refresh the owner asked for with the button, which takes a minute: the server renders, then the
+// picture comes down and is drawn. It is replaced by the picture, or by the notice of whatever went wrong.
 inline std::string refreshing_notice() { return "Refreshing..."; }
 
 // The notice for an image the server says is out of date.

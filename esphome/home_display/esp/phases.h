@@ -41,7 +41,8 @@ inline void summary() {
   uint32_t before = 0;
   for (uint8_t i = 0; i < count; i++) {
     const uint32_t took = marks[i].at_ms - before;
-    ESP_LOGI(TAG, "%-16s %6u ms  %3u%%", marks[i].name, (unsigned) took, total ? (unsigned) (took * 100ULL / total) : 0);
+    ESP_LOGI(TAG, "%-16s %6u ms  %3u%%", marks[i].name, (unsigned) took,
+             total ? (unsigned) (took * 100ULL / total) : 0);
     before = marks[i].at_ms;
   }
 }

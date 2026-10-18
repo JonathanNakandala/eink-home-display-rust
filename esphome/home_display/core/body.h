@@ -179,6 +179,17 @@ class Response {
       at = end + 2;
     }
 
+    // The same header said twice with different values is a reply that cannot be followed: which length is true?
+    // (Another way to smuggle a request past a proxy.) Said twice the same, it is one.
+    for (const char *name : {"content-length", "transfer-encoding"}) {
+      const std::string first = header(name);
+      for (const Header &h : headers_) {
+        if (h.name == name && h.value != first) {
+          state_ = State::FAILED;
+          return;
+        }
+      }
+    }
     const std::string transfer = lower(header("transfer-encoding"));
     const std::string length = header("content-length");
     if ((status_ >= 100 && status_ < 200) || status_ == 204 || status_ == 304) {

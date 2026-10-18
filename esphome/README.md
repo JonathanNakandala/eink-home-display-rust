@@ -461,7 +461,7 @@ Limits worth knowing:
 
 - A display set to `prefer-https` against a server that does not serve HTTPS **remembers that for a day**
   ([core/no_https.h](home_display/core/no_https.h)). The first search that finds the server without an HTTPS port is
-  remembered, in RTC memory; the wakes after it go to plain HTTP at once, without waiting for the clock (up to 20 s of radio),
+  remembered, in RTC memory; the wakes after it go to plain HTTP at once, without waiting for the clock (up to `clock_wait`, 60 s, of radio),
   without the search (about 2.5 s) and without reporting a failure; a day later it looks again, so a server that has been set up
   for HTTPS since is found. The day is counted in sleep, so it needs no clock, and a power loss forgets it (one more search).
   Only a search that *found* the server and saw no HTTPS port is remembered: a server that was not found, or whose HTTPS did not
@@ -584,7 +584,7 @@ right path:
 | `/plan` didn't answer, or answered badly | `server` | Look for the server once, then ask again. Notice: `Last update failed @ ...` |
 | Not enough PSRAM for the image | `memory` | Checked before the download ([esp/health.h](home_display/esp/health.h)); no lookup. Notice: `Out of memory @ ...` |
 | The download or decode failed after `/plan` answered | `download` | No lookup, since the server just answered. Notice: `Last update failed @ ...` |
-| The wake hadn't finished after `wake_timeout` (110 s) | `timeout` | A hang, such as a server that accepts the connection and goes quiet. No notice, since the panel's state is unknown. It stands down once the image has downloaded, the wake has succeeded or it has given up for another reason. |
+| The wake hadn't finished after `wake_timeout` (150 s) | `timeout` | A hang, such as a server that accepts the connection and goes quiet. No notice, since the panel's state is unknown. It stands down once the image has downloaded, the wake has succeeded or it has given up for another reason. |
 
 Four more reasons are reserved for the secure transport, which does not exist in the firmware yet. The server
 already understands them (`FailureReason` in `src/application/devices.rs`, listed in `/status` and `/metrics`), and both
@@ -661,7 +661,7 @@ where `/plan` answered):
 Over TLS a request is also held to a **deadline** from the connect to the last byte: 50 s for the plan (the server waits up
 to 40 s to render when the button asks), 45 s for the picture, 30 s for the enrolment. The waits inside it
 (`timeout`, 15 s) end only when the server goes quiet; a server that answers a little at a time never lets one run out, and
-without a deadline would hold the wake until the watchdog (`wake_timeout`, 110 s) cut it off and counted it as a timeout. A
+without a deadline would hold the wake until the watchdog (`wake_timeout`, 150 s) cut it off and counted it as a timeout. A
 deadline that runs out is a failed request with its own reason, and a saved TLS session is kept, since the network is what
 failed.
 

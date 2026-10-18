@@ -179,3 +179,18 @@ TEST(a_length_or_chunk_too_big_for_the_chip_is_refused_here_too) {
   CHECK(ok.state() == State::BODY);  // the largest accepted
   CHECK_EQ(ok.content_length(), (size_t) 2147483647);
 }
+
+TEST(a_length_or_coding_said_twice_differently_is_refused_and_said_twice_the_same_is_one) {
+  for (const char *bad : {"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+                          "HTTP/1.1 200 OK\r\nContent-Length: 5\r\ncontent-length: 50\r\n\r\nhello",
+                          "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: gzip\r\n\r\n"}) {
+    for (size_t step : {1u, 5u, 1000u}) {
+      Response r;
+      run(r, bad, step);
+      CHECK(r.state() == State::FAILED);
+    }
+  }
+  Response same;
+  CHECK_EQ(run(same, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello", 3), "hello");
+  CHECK(same.state() == State::DONE);
+}
