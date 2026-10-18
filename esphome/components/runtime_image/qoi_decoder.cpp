@@ -6,6 +6,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#include "decode_profile.h"
 
 #include <cinttypes>
 
@@ -140,13 +141,9 @@ int HOT QoiDecoder::decode(uint8_t *buffer, size_t size) {
       // The position as a column and a row, stepped along, in place of dividing the pixel number by the width for each pixel.
       size_t x = this->paint_index_ % this->width_;
       size_t y = this->paint_index_ / this->width_;
-      for (size_t i = 0; i < run_length; i++) {
-        this->draw(x, y, 1, 1, color);
-        if (++x == this->width_) {
-          x = 0;
-          y++;
-        }
-      }
+      RUNTIME_IMAGE_PROFILE_DO(decode_profile.run_chunks++);
+      RUNTIME_IMAGE_PROFILE_DO(decode_profile.run_pixels += run_length);
+      this->draw_run(x, y, run_length, this->width_, color);
       this->paint_index_ += run_length;
       index++;
     } else if ((byte & QOI_MASK_OP) == QOI_OP_LUMA) {
@@ -176,6 +173,7 @@ int HOT QoiDecoder::decode(uint8_t *buffer, size_t size) {
       this->paint_index_++;
       index++;
     }
+    RUNTIME_IMAGE_PROFILE_DO(if ((byte & QOI_MASK_OP) != QOI_OP_RUN || byte >= QOI_OP_RGB) decode_profile.other_chunks++);
     this->last_pixel_ = color;
     this->color_table_[qoi_color_table_index(color)] = color;
   }
