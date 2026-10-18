@@ -13,8 +13,10 @@ substitutions:
   # How long the panel needs to finish drawing before power is cut.
   eink_refresh_settle: 15s
 
-online_image:
-  - id: dashboard
+# `online_image` is a platform of the `image` component (the top-level `online_image:` is deprecated, and goes in ESPHome 2027.1.0).
+image:
+  - platform: online_image
+    id: dashboard
     url: ${fallback_base}${image_path}
     # Decoded by the response's Content-Type (image/bmp, image/png or image/qoi), so the server decides which to send.
     format: AUTO
