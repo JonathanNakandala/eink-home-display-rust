@@ -98,6 +98,10 @@ script:
   # Asks the server what is current: whether the image changed, whether it is stale, and when to come back.
   # After a button wake it asks for a render first (POST /refresh), which answers the same way.
   - id: check_plan
+    # Queued, not the default (single). When asking fails, `server_failed` looks for the server again and asks again from
+    # inside this very run, and a script cannot start itself while it is running ("already running"): the second ask was
+    # dropped, and the wake sat there until the watchdog gave up. Queued, it runs as soon as this run has ended.
+    mode: queued
     then:
       # What is asked is the same whichever way it is sent: made once, here.
       - lambda: |-
@@ -131,6 +135,13 @@ script:
                             id: handle_plan
                             code: !lambda 'return response->status_code;'
                             body: !lambda 'return body;'
+                      on_error:
+                        # No connection at all (the server is off, or has moved): the same as a plan that did not come.
+                        # Without this nothing ran, so the wake sat until the watchdog and never looked for the server again.
+                        - script.execute:
+                            id: handle_plan
+                            code: 0
+                            body: ""
                 else:
                   - http_request.get:
                       url: !lambda 'return home_display_format::server_base(id(server_ip), id(server_port), "${fallback_base}") + home_display_state::plan_target;'
@@ -141,6 +152,11 @@ script:
                             id: handle_plan
                             code: !lambda 'return response->status_code;'
                             body: !lambda 'return body;'
+                      on_error:
+                        - script.execute:
+                            id: handle_plan
+                            code: 0
+                            body: ""
 
   # Reads the server's plan, then downloads the image, or skips it when it hasn't changed.
   - id: handle_plan
