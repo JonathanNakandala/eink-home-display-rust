@@ -54,7 +54,8 @@ script:
                       id(notice_on_panel) = true;
                       id(prompt_on_panel) = false;
                   - component.update: eink_display
-                  - delay: ${eink_refresh_settle}
+                  - script.execute: settle_panel
+                  - script.wait: settle_panel
             - delay: 100ms
 
   # The start of a wake's dealings with the server: plain, or after joining.
@@ -167,7 +168,8 @@ script:
           id(notice_on_panel) = true;
           id(prompt_on_panel) = true;
       - component.update: eink_display
-      - delay: ${eink_refresh_settle}
+      - script.execute: settle_panel
+      - script.wait: settle_panel
 
   # https only, and nothing can be done until the owner approves the display: show the code, and sleep for as long as the server
   # said before asking again. Not a failure, so it does not count towards the backoff and the owner is not kept waiting.

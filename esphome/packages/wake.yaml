@@ -147,7 +147,8 @@ script:
                 id(refreshing_on_panel) = false;
                 id(prompt_on_panel) = false;
             - component.update: eink_display
-            - delay: ${eink_refresh_settle}
+            - script.execute: settle_panel
+            - script.wait: settle_panel
       - script.execute: sleep_now
 
   # Sleeps for as long as the server asked, or sleep_duration if it never answered.
@@ -240,7 +241,8 @@ script:
           condition:
             lambda: 'return eink_notice::idle(*id(eink_display));'
           timeout: 40s
-      - delay: ${eink_refresh_settle}
+      - script.execute: settle_panel
+      - script.wait: settle_panel
 
   # Nothing worked: the picture stays on the panel (e-ink keeps it). The first failure in a row
   # writes a notice in the corner saying when; after that it stays quiet and sleeps longer each time

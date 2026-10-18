@@ -10,8 +10,10 @@ substitutions:
   accept_formats: "image/bmp, image/png, image/qoi"
   # How many greys the panel shows (GC16: 16). Said to the server when the display asks to join.
   grey_levels: "16"
-  # How long the panel needs to finish drawing before power is cut.
-  eink_refresh_settle: 15s
+  # How long to wait for the panel to finish drawing before power is cut: after the controller says the waveform is over, a
+  # margin for the panel itself, and a limit for a controller that never says (the whole wait, then).
+  eink_refresh_margin_ms: "1000"
+  eink_refresh_limit_ms: "15000"
 
 # `online_image` is a platform of the `image` component (the top-level `online_image:` is deprecated, and goes in ESPHome 2027.1.0).
 image:
@@ -43,7 +45,8 @@ image:
             # An earlier notice in this wake ("Refreshing...") must not be drawn again in place of the picture.
             - lambda: 'id(show_notice) = false;'
             - component.update: eink_display
-            - delay: ${eink_refresh_settle}
+            - script.execute: settle_panel
+            - script.wait: settle_panel
             - lambda: 'home_display_phases::mark("panel-settle");'
             # Only now is the picture on the panel. Recorded any earlier, a reset or power loss during the
             # refresh would leave the device believing it shows an image it doesn't, and the next wake would
@@ -71,6 +74,17 @@ image:
             - script.execute: fetch_image
           else:
             - script.execute: give_up
+
+script:
+  # Waits for what `component.update: eink_display` started to be on the panel. Run it, then `script.wait` for it.
+  - id: settle_panel
+    mode: single
+    then:
+      - while:
+          condition:
+            lambda: 'return eink_notice::waveform_running(*id(eink_display), ${eink_refresh_margin_ms}, ${eink_refresh_limit_ms});'
+          then:
+            - delay: 50ms
 
 font:
   # The dashboard's own font, from the Rust app's templates; only the glyphs the notice needs.

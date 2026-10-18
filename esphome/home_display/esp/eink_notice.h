@@ -112,6 +112,80 @@ template struct Reach<DirtyYHigh, &Display::y_high_>;
 // 81 seconds, and slowed the download until the watchdog gave up. So the wake waits for this first.
 inline bool idle(Display &display) { return display.*reach(UpdatePhase()) == esphome::it8951::Phase::IDLE; }
 
+// What the waveform probe needs: the driver's own SPI steps and its HW_RDY test.
+struct SpiCmd {
+  using type = void (Display::*)(uint16_t);
+  friend type reach(SpiCmd);
+};
+template struct Reach<SpiCmd, &Display::spi_cmd_>;
+struct SpiWriteWord {
+  using type = void (Display::*)(uint16_t);
+  friend type reach(SpiWriteWord);
+};
+template struct Reach<SpiWriteWord, &Display::spi_write_word_>;
+struct SpiReadWord {
+  using type = uint16_t (Display::*)();
+  friend type reach(SpiReadWord);
+};
+template struct Reach<SpiReadWord, &Display::spi_read_word_>;
+struct IsBusy {
+  using type = bool (Display::*)() const;
+  friend type reach(IsBusy);
+};
+template struct Reach<IsBusy, &Display::is_busy_>;
+
+// The LUT-engine status register, read as the driver reads it before it starts the next update: non-zero while a
+// waveform is running. -1 if the controller is busy (HW_RDY low) or the driver is still working through the update, so
+// not to be spoken to. Only while the driver is idle, so the two never share the SPI bus.
+inline int lut_status(Display &display) {
+  if (display.*reach(UpdatePhase()) != esphome::it8951::Phase::IDLE || (display.*reach(IsBusy()))())
+    return -1;
+  (display.*reach(SpiCmd()))(esphome::it8951::TCON_REG_RD);
+  (display.*reach(SpiWriteWord()))(esphome::it8951::LUTAFSR);
+  return (display.*reach(SpiReadWord()))();
+}
+
+// Whether to go on waiting for the panel to finish what it was asked to draw. For `while:` in place of a fixed
+// `delay:`.
+//
+// HW_RDY does not say: on this board it stays high through the waveform (the driver does not sleep the controller, and
+// the host interface is free while the display engine works). The engine's own status register does. The driver reads
+// it before starting the next update, for the same reason. So: wait for the driver to finish sending (it runs a step
+// for each pass of the main loop), for the register to read non-zero (the waveform has started; read before that, it is
+// zero too) and then zero again (it has finished), and then `margin_ms` more, for the panel to settle. If the register
+// never shows a waveform or never ends, `limit_ms` from the first call is the end of it, which is the fixed wait this
+// replaces.
+inline bool waveform_running(Display &display, uint32_t margin_ms, uint32_t limit_ms) {
+  static uint32_t started = 0;
+  static uint32_t finished = 0;
+  static bool seen_running = false;
+  const uint32_t now = esphome::millis();
+  if (started == 0) {
+    started = now;
+    finished = 0;
+    seen_running = false;
+  }
+  bool keep_waiting = true;
+  if (now - started >= limit_ms) {
+    ESP_LOGW("waveform", "No end to the waveform reported after %u ms; going on", (unsigned) (now - started));
+    keep_waiting = false;
+  } else {
+    const int lut = lut_status(display);
+    if (lut > 0 && !seen_running) {
+      seen_running = true;
+      ESP_LOGI("waveform", "Waveform running %u ms after the draw began", (unsigned) (now - started));
+    } else if (lut == 0 && seen_running && finished == 0) {
+      finished = now;
+      ESP_LOGI("waveform", "Waveform finished %u ms after the draw began", (unsigned) (now - started));
+    }
+    if (finished != 0 && now - finished >= margin_ms)
+      keep_waiting = false;
+  }
+  if (!keep_waiting)
+    started = 0;
+  return keep_waiting;
+}
+
 // 1 to log both ways of drawing the picture and their checksums, and say whether they made the same framebuffer: the
 // picture is drawn the slow way, the framebuffer checksummed and wiped, drawn the fast way, and checksummed again. For
 // a bench build; the result is ~8 s slower.
