@@ -32,11 +32,12 @@ All six are marked `A local change` in the code. Nothing else is touched, and wh
    and the download and decode together 4.7 s became 1.1 s. The picture is the same: its checksum (below) matched that of a reference
    decoder written for the check (a Python QOI decoder with the same grey sum, run on the server's file) for the old path and the new
    one. `RUNTIME_IMAGE_FILL_RUNS` set to 0 (in `decode_profile.h`) goes back to a call for each pixel.
-6. **`decode_profile.h`: the decoder's time is split up, and the picture is checksummed.** CPU cycle counts (a one-instruction read) are
+6. **`decode_profile.h`: the decoder's time is split up, and the picture can be checksummed.** CPU cycle counts (a one-instruction read) are
    added up for the call into `draw`, the call into `draw_pixel`, and the rest (reading chunks, the colour table), and logged with
    "Decoding complete", with how many runs and other chunks the picture was made of and how large the pieces handed over by the network
-   were. A CRC-32 of the decoded grey buffer is logged too: the same bytes through a reference decoder give the same number, so a
-   change to how pixels are painted can be checked against the picture itself. `RUNTIME_IMAGE_PROFILE` set to 0 leaves all of it out.
+   were. `RUNTIME_IMAGE_PROFILE` set to 0 leaves all of it out. A CRC-32 of the decoded grey buffer can be logged as well
+   (`RUNTIME_IMAGE_CHECKSUM` set to 1): the same bytes through a reference decoder give the same number, so a change to how pixels are
+   painted can be checked against the picture itself. It reads the whole picture and took 157 ms on the chip, so it is off by default.
 
 ## When ESPHome is upgraded
 

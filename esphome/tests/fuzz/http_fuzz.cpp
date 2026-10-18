@@ -1,5 +1,7 @@
 // The small-reply parser (core/http.h): the head of a reply, chunked coding, a header's value, the path of a URL. This
 // is what reads the answer to the first request, on a connection that verifies nothing.
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "fuzz.h"
