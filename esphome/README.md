@@ -51,7 +51,11 @@ one network need different `instance_name`s (a clash is resolved by adding a num
 1. `cp secrets.example.yaml secrets.yaml` and fill it in.
 2. `esphome run reterminal-e1003.yaml` over USB the first time. There is no address to set: the
    device finds the server itself.
-3. To update later over the air, hold the middle button (KEY1) while waking. It is read once, at boot,
+3. The display speaks **HTTPS** to the server by default (`server_transport: https`). A display the server does not know yet
+   shows a pairing code in the corner and sleeps; open the pairing window and approve it at the server
+   (`displayctl window open`, then `displayctl approve NAME CODE`; FIRST_FLASH.md, stage 3, goes through it). Set
+   `server_transport: http` for a server without HTTPS, or `prefer-https` to move over without a gap.
+4. To update later over the air, hold the middle button (KEY1) while waking. It is read once, at boot,
    and then the device stays awake until it is reset, so you can let go.
 
 ### How the YAML is laid out
@@ -270,16 +274,18 @@ finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
 
 ### Secure transport (what the firmware has to do)
 
-*Status: built, and in the wake script (`server_transport`, [packages/secure.yaml](packages/secure.yaml)), but **not yet run on a
-device**. Everything that can be run on a computer has been, against the real server and the same mbedTLS the chip uses
-([tests/tls/](tests/tls/README.md)): the pairing code, joining, renewal, the flash record and a power cut in the middle of writing it, the
-TLS and EST client, the image streaming in megabytes, and the choice of route in each of the three transports. What has not been
-tried is the chip itself: heap during a handshake, time and battery per wake, NVS, RTC memory through deep sleep, and the panel.
-Treat `https` as untested hardware until it has been, and keep `http` (the default) until then.*
+*Status: built, in the wake script (`server_transport`, [packages/secure.yaml](packages/secure.yaml)), and the default. **Run on the
+chip** (2026-10-18): joining and the owner's approval, the plan and the picture over TLS 1.3, session resumption (the server counts
+the display's `resumed` connections), a wake from deep sleep with the clock and the session kept in RTC memory, NVS, and the
+panel. **Not yet run on the chip:** [FIRST_FLASH.md](FIRST_FLASH.md) stages 5 to 8 (the 304, the reset button, a renewing
+certificate, the ways it falls back), and the heap and battery cost of a wake. Everything that can be run on a computer has been,
+against the real server and the same mbedTLS the chip uses ([tests/tls/](tests/tls/README.md)): the pairing code, joining,
+renewal, the flash record and a power cut in the middle of writing it, the TLS and EST client, the image streaming in megabytes,
+and the choice of route in each of the three transports.*
 
 The server can offer HTTPS (see `[server] transport` in [deploy/README.md](../deploy/README.md)). The display
-has the same three choices, as a substitution, and its choice matters as much as the server's: the server can
-only offer, and only a display set to HTTPS-only is certain not to fall back.
+has the same three choices, as a substitution (`server_transport`, default `https`), and its choice matters as much as the
+server's: the server can only offer, and only a display set to HTTPS-only is certain not to fall back.
 
 | display `transport` | does | when HTTPS can't be used |
 |---|---|---|
@@ -310,7 +316,8 @@ ECDSA on P-256, and the display builds the path to the root it pins. The interme
 years, and nothing on the display changes when it is. The name matters: a display's own certificate
 has none, so it can't pass for the server to another display. (mbedTLS can check a name other than the address
 connected to, with `mbedtls_ssl_set_hostname`: shown by [tests/tls/](tests/tls/README.md), which runs the display's side of this
-against the real server on a computer. Heap and speed on the chip are still to be measured.)
+against the real server on a computer. On the chip a full handshake plus the plan took about 1.7 s; with the session resumed,
+0.6 s. The heap it needs is in `last_heap_min_bytes` on `/status`, and has not been written down.)
 
 **Which root the display trusts.** There are two ways, and only the first step of joining differs:
 
@@ -400,7 +407,7 @@ approve. And report which in the telemetry's `last_failure`, so `/status` says w
 hardware is pure and is tested on the host (`make -C esphome test`); what touches the radio, the flash or mbedTLS is
 thin and does as little deciding as it can.
 
-| Layer | File (proposed) | Does | Tested |
+| Layer | File | Does | Tested |
 |---|---|---|---|
 | Pure logic | [core/pairing.h](home_display/core/pairing.h) (**built**) | the pairing code (hash, Crockford encoding), and which step comes next from what is stored, the clock and the answer last received | on the host, against the pinned test vector `JGWP-14YW-3BT0`, the same one the server pins |
 | Pure logic | [core/trust.h](home_display/core/trust.h) (**built**) | which root to trust (compiled in, stored, or none yet), whether a certificate has expired or is due to renew | on the host |
@@ -686,7 +693,9 @@ fraction of that for a flat dashboard (about 135 KB for a real render), but the 
 `Qoi` is about 160 KB for the same render, a little larger than PNG, and decodes in one cheap pass with no inflate
 step; it has no greyscale form, so the greys are stored as RGB and the firmware reads them back as grey. ESPHome's
 `online_image` decodes all three (checked in 2026.9.1: it recognises `image/qoi`).
-None has been measured on the device. To compare them, set `accept_formats` to one type (or set the server
+Measured on the device so far: QOI only, for a real dashboard (160 to 172 KB). The decoder takes about 0.47 s for it, about
+half reading the format and half painting; the download and decode together take about 1.05 s over plain HTTP and about 1.4 s
+over TLS. BMP and PNG have not been measured. To compare them, set `accept_formats` to one type (or set the server
 default), run each for a day, and compare `home_display_device_last_wake_seconds` in `/metrics` at a similar
 `home_display_device_wifi_rssi_dbm`, rather than assuming.
 
@@ -739,6 +748,52 @@ as in `tests/core/report_test.cpp`, so a field renamed on one side fails a test 
 The device sleeps for the `next_seconds` the server reports: the next scheduled render plus
 `server.wake_delay_seconds`, so it wakes just after each render. A cron with quiet hours, such as
 `*/10 6-22 * * *`, keeps it asleep overnight.
+
+### Where a wake's time goes
+
+The log (at its default level, INFO) has a line as each phase of a wake ends, and a table of them just before the display sleeps
+([home_display/esp/phases.h](home_display/esp/phases.h)):
+
+```
+[I][phase:031]: wifi               1507 ms  (+1300)
+[I][phase:044]: ---- where the 1613 ms of this wake went ----
+[I][phase:044]: wifi               1300 ms   80%
+```
+
+Phases, in order: `app-started`, `wifi`, `clock` and `server-search` and `tls-begin` (HTTPS only), `plan`, `download-start`,
+`download+decode`, `panel-settle`, `before-sleep`. The times are milliseconds since boot; the first ~300 ms, the bootloader's, are
+not counted. Measured on the bench (2026-10-18; strong signal, a QOI dashboard, a wake after a reset or from deep sleep as noted):
+
+| Wake | Awake | Where it went |
+|---|---|---|
+| Picture unchanged, plain HTTP | about 1.6 s | Wi-Fi 1.3 to 1.5 s, plan 0.1 s |
+| Picture changed and drawn, plain HTTP | about 6.3 s when measured, about a second less since the DHCP change | Wi-Fi 2.4 s, plan 0.1 to 0.2 s, download and decode 1.05 s, panel 2.5 s |
+| Picture changed and drawn, HTTPS, from deep sleep | about 10 s when measured, before the TLS read change below | Wi-Fi 2.4 s, clock 8 ms, plan 0.6 s, download and decode 4.2 s, panel 2.5 s |
+
+What those numbers rest on, so that it is not undone by accident:
+
+- **The panel.** The IT8951's HW_RDY pin stays high while it draws, so it cannot say when the picture is on the panel. The display
+  waits on the controller's LUT status register instead (`eink_notice::waveform_running`, the `settle_panel` script): the waveform
+  took 0.56 s, and a margin of `eink_refresh_margin_ms` (1 s) follows. `eink_refresh_limit_ms` (15 s, the wait it replaced) is the
+  limit if the register never says. The picture is written into the driver's framebuffer a row at a time
+  (`eink_notice::draw_picture`, 0.23 s; the driver's pixel-by-pixel path took 8 s) and falls back to that path for anything it
+  was not checked against.
+- **Wi-Fi.** The display sends a deauthentication before it sleeps (`wifi.disable` in `sleep_now`). Without it the access point
+  keeps the session until its inactivity timer ends it (about 5 minutes) and the next join in that time takes 1.8 s longer.
+  lwIP's ARP check of the address the server leased is off (`board.yaml`): it held the address back for a second after the ACK. After
+  changing `sdkconfig_options`, run `esphome clean` first; a plain compile did not regenerate ESP-IDF's configuration.
+- **TLS.** `Stream::read` takes what mbedTLS has already decrypted in one go. `online_image` makes one read for each pass of the
+  main loop and asks for its whole buffer; with one record of a thousand bytes at a time the picture took 170 passes and 3.5 s,
+  now 12 reads and 1 s.
+- **The decoder.** A run of one colour in a QOI picture is filled with a `memset` a row at a time, not a call for each pixel
+  (2.9 s to 0.47 s). [components/runtime_image/README.md](components/runtime_image/README.md) says how to switch the profile of
+  where its time goes back on.
+
+### Log level
+
+The logger is at INFO. The messages that say which way a wake went (`Image changed, downloading`, `Image unchanged, skipping
+refresh`, `Image downloaded, drawing`, `Same picture, keeping the panel`, the notices) are logged at INFO for that reason. For more,
+set `level: DEBUG` under `logger:` in `packages/board.yaml`, or one tag only, e.g. `logs: {online_image: DEBUG}`.
 
 ## Verify on first flash
 

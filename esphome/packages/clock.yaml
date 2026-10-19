@@ -11,7 +11,9 @@ substitutions:
   ntp_server_2: time.cloudflare.com
   ntp_server_3: time.google.com
   # How long to wait for the clock to be set before giving up on this wake (it is tried again on the next). SNTP has taken
-  # 1 to 52 s after Wi-Fi came up on a bench, so this is generous; it is only spent when the clock is not already set.
+  # 1 to 52 s after Wi-Fi came up on a bench (about 28 s each time after a reset that cleared the clock), so this is
+  # generous. It is only spent when the clock is not already set: the clock survives deep sleep, and a wake from sleep waited
+  # 8 ms for it.
   clock_wait: 60s
 
 time:

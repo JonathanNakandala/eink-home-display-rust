@@ -38,6 +38,10 @@ psram:
 # The CH340K USB bridge is on UART0, not the default USB_CDC.
 logger:
   hardware_uart: UART0
+  # INFO: what a wake did (the phase table, the notices, failures) without the per-request chatter. The messages that say which
+  # way a wake went (image changed, drawn, unchanged) are logged at INFO for that reason. For the detail, set `level: DEBUG`,
+  # or `DEBUG` for one tag only under `logs:`, e.g. `logs: {online_image: DEBUG, it8951: DEBUG}`.
+  level: INFO
 
 ota:
   - platform: esphome

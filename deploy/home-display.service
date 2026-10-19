@@ -26,6 +26,10 @@ Environment=RUST_LOG=info
 #     --cron "*/15 22-23,0-6 * * 1-5" --cron "0 8-21 * * 6,0"
 # --restart-cooldown is a second line of defence that holds under any supervisor: after a
 # restart, no render starts until this long after the previous attempt.
+# With `[server] transport = "https"` (what the display firmware speaks by default), the certificate authority is made only when
+# asked. Before enabling this unit, run the server once by hand as the service user, in WorkingDirectory, with --init-pki, and
+# stop it; do NOT put --init-pki in ExecStart. A missing authority later is a volume that was not mounted, and the refusal to start
+# is what protects every display paired to the real one. Back up the whole directory (the keys and pairings are in it).
 ExecStart=/opt/home-display/home-display-server \
     --config-file /opt/home-display/config.toml \
     --cron "*/10 * * * *" \

@@ -80,7 +80,9 @@ script:
                                                                   home_display_no_https::remembers()) &&
                      id(server_ip) != 0;
           then:
-            - logger.log: "The server has no HTTPS (remembered): plain HTTP, and not looking again yet"
+            - logger.log:
+                level: INFO
+                format: "The server has no HTTPS (remembered): plain HTTP, and not looking again yet"
             - script.execute: check_plan
           else:
             - script.execute: secure_attempt

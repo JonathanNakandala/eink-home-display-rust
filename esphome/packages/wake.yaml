@@ -83,7 +83,7 @@ script:
           if (id(force_refresh))
             ESP_LOGI("button", "Woken by the button: asking the server for a fresh render");
       # A refresh takes a minute or so (the server renders, then the picture comes down and is drawn), so say so in the
-      # corner at once: before Wi-Fi is up, which takes 4 s and which the notice does not need, so the panel draws while the
+      # corner at once: before Wi-Fi is up, which takes a second or two and which the notice does not need, so the panel draws while the
       # radio joins. Only that corner is redrawn; the picture is replaced when it arrives, or this by what went wrong.
       - if:
           condition:
@@ -95,7 +95,9 @@ script:
                 id(notice_on_panel) = true;
                 id(refreshing_on_panel) = true;
                 id(prompt_on_panel) = false;
-            - logger.log: "Showing the refreshing notice in the corner"
+            - logger.log:
+                level: INFO
+                format: "Showing the refreshing notice in the corner"
             - component.update: eink_display
       - wait_until:
           condition:
@@ -116,7 +118,9 @@ script:
                       condition:
                         lambda: 'return eink_notice::idle(*id(eink_display));'
                       timeout: 15s
-                  - logger.log: "Refreshing notice is on the panel"
+                  - logger.log:
+                      level: INFO
+                      format: "Refreshing notice is on the panel"
             - script.execute: begin_server
           else:
             - if:
@@ -234,7 +238,9 @@ script:
   # the watchdog, which both end a wake that failed.
   - id: show_failure
     then:
-      - logger.log: "Failure, showing notice"
+      - logger.log:
+          level: INFO
+          format: "Failure, showing notice"
       # The clock survives deep sleep; this just gives a fresh start a moment to sync.
       - if:
           condition:

@@ -35,9 +35,25 @@ All six are marked `A local change` in the code. Nothing else is touched, and wh
 6. **`decode_profile.h`: the decoder's time is split up, and the picture can be checksummed.** CPU cycle counts (a one-instruction read) are
    added up for the call into `draw`, the call into `draw_pixel`, and the rest (reading chunks, the colour table), and logged with
    "Decoding complete", with how many runs and other chunks the picture was made of and how large the pieces handed over by the network
-   were. `RUNTIME_IMAGE_PROFILE` set to 0 leaves all of it out. A CRC-32 of the decoded grey buffer can be logged as well
-   (`RUNTIME_IMAGE_CHECKSUM` set to 1): the same bytes through a reference decoder give the same number, so a change to how pixels are
-   painted can be checked against the picture itself. It reads the whole picture and took 157 ms on the chip, so it is off by default.
+   were. **Off by default** (`RUNTIME_IMAGE_PROFILE` is 0): nothing of it is compiled in. A CRC-32 of the decoded grey buffer can be
+   logged as well (`RUNTIME_IMAGE_CHECKSUM` set to 1): the same bytes through a reference decoder give the same number, so a change to
+   how pixels are painted can be checked against the picture itself. It reads the whole picture and took 157 ms on the chip, so it is
+   off by default too.
+
+   **To turn them on**, define the macros for the whole build, in the device's YAML, and rebuild from clean so that every file sees them:
+
+   ```yaml
+   esphome:
+     build_flags:
+       - -DRUNTIME_IMAGE_PROFILE=1    # the split of the decoder's time, logged (INFO) with "Decoding complete"
+       - -DRUNTIME_IMAGE_CHECKSUM=1   # a CRC-32 of the decoded picture, logged too
+   ```
+
+   ```sh
+   esphome clean reterminal-e1003.yaml && esphome compile reterminal-e1003.yaml
+   ```
+
+   The log then has `Decoder time: ...` and `Decoder work: ...` lines after `Decoding complete`.
 
 ## When ESPHome is upgraded
 
