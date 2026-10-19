@@ -47,6 +47,12 @@ esphome:
   # Every header under home_display/ (core/, tls/, esp/): ESPHome copies the tree into the build and includes each one.
   includes:
     - home_display
+  # To see where the picture decoder's time goes, or to check a change to it against a checksum of the picture, build with
+  # these (then `esphome clean` and compile; components/runtime_image/README.md says what they log). Off, nothing of it is
+  # in the firmware.
+  # build_flags:
+  #   - -DRUNTIME_IMAGE_PROFILE=1
+  #   - -DRUNTIME_IMAGE_CHECKSUM=1
   on_boot:
     priority: -100
     then:
@@ -58,7 +64,9 @@ esphome:
           condition:
             binary_sensor.is_on: maintenance_button
           then:
-            - logger.log: "Maintenance mode: staying awake"
+            - logger.log:
+                level: INFO
+                format: "Maintenance mode: staying awake"
             # Latched, so letting go of the button doesn't end it: the sleeps below check this, not the pin.
             - lambda: 'id(maintenance) = true;'
             - deep_sleep.prevent: deep_sleep_1

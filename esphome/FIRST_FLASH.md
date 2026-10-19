@@ -1,8 +1,19 @@
 # First flash: what to check on a real display
 
-Everything in the secure transport has been run against the real server on a computer, with the same mbedTLS the chip uses. None
-of it has run on a chip. This is the order to find out, what to expect at each step, and what to write down. The numbers matter
+Everything in the secure transport has been run against the real server on a computer, with the same mbedTLS the chip uses. This
+is the order to find out how it behaves on a chip, what to expect at each step, and what to write down. The numbers matter
 as much as the pass or fail: the host tests cannot say how much heap a handshake needs on the chip or how long it takes there.
+
+**Where this stands.** Parts of it have run on a reTerminal E1003 (2026-10-18): the join and the owner's approval (the display's
+certificate was issued by the server that day, in a trial under another device name, and has been used since), the plan and the
+picture over TLS 1.3 (stages 3 and 4), session resumption (the server counted `resumed` connections from the display), a wake
+from deep sleep with the clock and the session kept in RTC memory, and the plain-HTTP baseline (stage 1). The heap and
+handshake figures from the join wake were not written down. **Nothing in stages 5 to 8
+has been seen on a chip** (the 304, the reset button, a renewing certificate, the ways it falls back), nor the heap and battery
+numbers below. No box here is ticked on that account: tick one when you have seen the thing.
+
+The firmware's default is now `server_transport: https`. Stage 1 says to set `http` explicitly, and stage 3 `prefer-https`; do
+that for those stages and put it back.
 
 A box is ticked when you have seen the thing, not when you expect it.
 
@@ -27,7 +38,16 @@ A box is ticked when you have seen the thing, not when you expect it.
 
 ## The numbers to write down
 
-Fill this in as you go. None has a known good value yet; the first run is what makes one.
+Fill this in as you go. None has a known good value yet; the first run is what makes one. For a start, what a bench run showed
+(2026-10-18, strong signal, a QOI dashboard; `README.md`, "Where a wake's time goes", has the phases):
+
+| What | Seen |
+|---|---|
+| Awake, picture unchanged, plain HTTP | about 1.6 s |
+| Awake, picture changed and drawn, plain HTTP | about 6.3 s (a second less since the DHCP change) |
+| The plan over TLS: full handshake, and resumed | about 1.7 s, and 0.6 s |
+| Download and decode over TLS, after a reset | about 1.4 s |
+| Heap, battery, the join wake | not written down |
 
 | What | Where it comes from | Value |
 |---|---|---|

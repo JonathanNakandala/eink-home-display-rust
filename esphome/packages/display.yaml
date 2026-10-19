@@ -37,11 +37,15 @@ image:
           then:
             # The server has the picture the panel already shows (304, see home_display_shown): the panel is right as it is. It is not
             # drawn, since the image buffer is empty after a sleep and a draw would blank it, nor waited on.
-            - logger.log: "Same picture, keeping the panel"
+            - logger.log:
+                level: INFO
+                format: "Same picture, keeping the panel"
             - lambda: 'id(shown_version) = id(plan_version);'
             - script.execute: after_image
           else:
-            - logger.log: "Image downloaded, drawing"
+            - logger.log:
+                level: INFO
+                format: "Image downloaded, drawing"
             # An earlier notice in this wake ("Refreshing...") must not be drawn again in place of the picture.
             - lambda: 'id(show_notice) = false;'
             - component.update: eink_display

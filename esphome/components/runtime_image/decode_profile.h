@@ -3,22 +3,33 @@
 // Where a picture's decode time goes, as CPU cycle counts added up over the picture and logged with "Decoding complete".
 // (A local change; see the README beside this file.)
 //
+// OFF BY DEFAULT. To turn it on, define the macro for the build, in the device's YAML (reterminal-e1003.yaml):
+//
+//   esphome:
+//     build_flags:
+//       - -DRUNTIME_IMAGE_PROFILE=1      # the split of the decoder's time, logged with "Decoding complete"
+//       - -DRUNTIME_IMAGE_CHECKSUM=1     # a CRC-32 of the decoded picture, logged on its own (157 ms)
+//
+// then `esphome clean` and compile, so that every file is built with it. (Or change the defaults below, for a build of
+// your own.) The profile is logged at INFO, so it shows at the default log level.
+//
 // The cycle counter is one instruction to read, so timing every pixel costs a few per cent and does not move the answer the way
-// a trace over a serial line does. The shares are what to trust; the totals run a little high. Set RUNTIME_IMAGE_PROFILE to 0
-// to leave all of it out.
+// a trace over a serial line does. The shares are what to trust; the totals run a little high. With the profile off, none
+// of it is compiled in and the decoder is as fast as it can be made here.
 
 #ifndef RUNTIME_IMAGE_PROFILE
-#define RUNTIME_IMAGE_PROFILE 1
+#define RUNTIME_IMAGE_PROFILE 0
 #endif
 
 // A run of one colour (QOI) is filled into the picture in one go, in place of a call for each pixel. 0 goes back to the call for
-// each pixel, which makes the same picture (the profile logs a checksum of it, to compare).
+// each pixel, which makes the same picture (RUNTIME_IMAGE_CHECKSUM logs a checksum of it, to compare). On by default, and
+// not a debugging switch: it is the fast path.
 #ifndef RUNTIME_IMAGE_FILL_RUNS
 #define RUNTIME_IMAGE_FILL_RUNS 1
 #endif
 
 // 1 logs a CRC-32 of the decoded picture, to show that a change to how it is painted has not changed it. It reads the whole
-// picture (157 ms for 2.6 MB), so it is off unless a bench build wants it.
+// picture (157 ms for 2.6 MB), so it is off unless a bench build wants it. It is independent of RUNTIME_IMAGE_PROFILE.
 #ifndef RUNTIME_IMAGE_CHECKSUM
 #define RUNTIME_IMAGE_CHECKSUM 0
 #endif

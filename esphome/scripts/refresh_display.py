@@ -37,7 +37,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # The lines worth reading in a wake: what started it, the server, the picture, and how it ended.
 INTERESTING = re.compile(
     r"rst:0x|\]\[(W|E)\]|Woken|Found|No image server|No usable|Image (changed|downloaded|unchanged|fully)|Decoding complete|Failure|CRASH|"
-    r"Sleeping for|Update took|efreshing|V, \d+%|didn't finish"
+    r"Sleeping for|Update took|efreshing|V, \d+%|didn't finish|\[phase:"
 )
 # The wake is over when the board sleeps, gives up (the backoff line), or the chip resets itself: a second boot, after the
 # one the script caused, is a watchdog or a crash. (The crash report is no use for this: it can describe an older crash.)

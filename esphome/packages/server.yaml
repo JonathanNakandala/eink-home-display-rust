@@ -16,7 +16,11 @@ substitutions:
   # How this display reaches the server: http, prefer-https or https (core/secure_wake.h says what each does). Anything
   # else stops the build. Only `https` looks under `_https._tcp`; the others look under `_http._tcp`. The joining and
   # the TLS are packages/secure.yaml.
-  server_transport: http
+  # `https` is the default: it never falls back to plain HTTP, so the picture and the plan cannot be swapped by someone on the
+  # network. The server must serve HTTPS, and a display that is new to it shows a pairing code for the owner to approve
+  # (`displayctl approve`). `prefer-https` is for moving a display over (it carries on over HTTP until paired and whenever HTTPS
+  # fails); `http` is for a server that has none, and for the plain-HTTP baseline in FIRST_FLASH.md.
+  server_transport: https
 
 http_request:
   # The stock component: plain HTTP. A display that has joined points the image download at esp/secure_http.h instead
@@ -204,10 +208,14 @@ script:
                 condition:
                   lambda: 'return id(plan_changed);'
                 then:
-                  - logger.log: "Image changed, downloading"
+                  - logger.log:
+                      level: INFO
+                      format: "Image changed, downloading"
                   - script.execute: fetch_image
                 else:
-                  - logger.log: "Image unchanged, skipping refresh"
+                  - logger.log:
+                      level: INFO
+                      format: "Image unchanged, skipping refresh"
                   - script.execute: after_image
 
   # Downloads the image from the remembered server, if there is memory to decode it into.

@@ -117,7 +117,9 @@ script:
           condition:
             lambda: 'return home_display_state::battery_action == home_display_battery::Action::HALT_NOW;'
           then:
-            - logger.log: "Battery empty: showing the notice and stopping"
+            - logger.log:
+                level: INFO
+                format: "Battery empty: showing the notice and stopping"
             - lambda: |-
                 id(notice_text) = "Battery empty - charge to resume";
                 id(show_notice) = true;
@@ -132,7 +134,9 @@ script:
                 condition:
                   lambda: 'return home_display_state::battery_action == home_display_battery::Action::STILL_HALTED;'
                 then:
-                  - logger.log: "Battery still empty: sleeping"
+                  - logger.log:
+                      level: INFO
+                      format: "Battery still empty: sleeping"
                   - script.execute: battery_sleep
                 else:
                   - script.execute: start_wake
