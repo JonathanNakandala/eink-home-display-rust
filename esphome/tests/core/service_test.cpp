@@ -139,3 +139,24 @@ TEST(a_failed_accept_leaves_what_the_caller_had) {
   CHECK(!accept(other, "", Transport::HTTP, server));
   CHECK_EQ(server.port, (uint16_t) 8080);
 }
+
+static uint32_t ip4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) { return a | (b << 8) | (c << 16) | (d << 24); }
+
+TEST(of_several_addresses_the_one_on_the_displays_own_network_is_taken) {
+  const uint32_t mask = ip4(255, 255, 254, 0);  // a /23, as the display's network is
+  const uint32_t own = ip4(192, 168, 0, 74);
+  // Order as a machine with a container bridge and a VPN might announce them.
+  const std::vector<uint32_t> all = {ip4(172, 17, 0, 1), ip4(10, 5, 0, 2), ip4(192, 168, 1, 40)};
+  CHECK_EQ(choose_ip(all, own, mask), ip4(192, 168, 1, 40));  // 192.168.1.x is inside the /23
+}
+
+TEST(with_no_address_on_its_network_or_no_network_of_its_own_the_first_address_is_taken) {
+  const std::vector<uint32_t> all = {ip4(172, 17, 0, 1), ip4(10, 5, 0, 2)};
+  CHECK_EQ(choose_ip(all, ip4(192, 168, 0, 74), ip4(255, 255, 255, 0)), ip4(172, 17, 0, 1));
+  CHECK_EQ(choose_ip(all, 0, 0), ip4(172, 17, 0, 1));
+}
+
+TEST(no_addresses_is_no_address_and_a_zero_one_is_skipped) {
+  CHECK_EQ(choose_ip({}, ip4(192, 168, 0, 74), ip4(255, 255, 255, 0)), (uint32_t) 0);
+  CHECK_EQ(choose_ip({0, ip4(10, 0, 0, 5)}, 0, 0), ip4(10, 0, 0, 5));
+}

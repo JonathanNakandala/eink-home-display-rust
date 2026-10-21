@@ -46,6 +46,10 @@ inline bool secure_active = false;
 inline home_display_secure_wake::Route route = home_display_secure_wake::Route::PLAIN;
 inline home_display_report::Failure secure_failure = home_display_report::Failure::NONE;
 
+// The server was where this wake remembered it, nothing answers there, and a search found nothing (core/locate.h): the
+// wake gives up at once, where it used to wait out a request's timeouts first.
+inline bool server_gone = false;
+
 // The owner has to type the pairing code in at the server, so the panel shows it: what it says, and how long the server
 // asked the display to wait before asking again.
 inline bool prompt_wanted = false;
