@@ -3,6 +3,12 @@ name = "home-display-server"
 version = "0.1.0"
 edition = "2024"
 
+# Don't add `panic = "abort"`, however much smaller it makes the binary. If a render panics, the server catches it, counts
+# that one run as failed and carries on with the next. With "abort" the same panic would end the whole process instead.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [dependencies]
 anyhow = "1.0.86"
 axum = { version = "0.8", features = ["http1", "tokio", "macros"] }
