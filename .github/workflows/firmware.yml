@@ -1,0 +1,97 @@
+name: firmware
+
+on:
+  pull_request:
+    paths:
+      - esphome/**
+      - testdata/**
+      - pyproject.toml
+      - poetry.lock
+      - .yamllint.yaml
+      - .github/workflows/firmware.yml
+      - .github/actions/firmware-tools/**
+      # Not what a release changes: it edits the version and the changelog, and release-please.yml runs this workflow for
+      # that commit itself, so running it for the push too would build the same firmware twice.
+      - "!esphome/packages/version.yaml"
+      - "!esphome/**/*.md"
+  push:
+    branches: [main]
+    paths:
+      - esphome/**
+      - testdata/**
+      - pyproject.toml
+      - poetry.lock
+      - .yamllint.yaml
+      - .github/workflows/firmware.yml
+      - .github/actions/firmware-tools/**
+      # Not what a release changes: it edits the version and the changelog, and release-please.yml runs this workflow for
+      # that commit itself, so running it for the push too would build the same firmware twice.
+      - "!esphome/packages/version.yaml"
+      - "!esphome/**/*.md"
+  # Called by release-please.yml when it makes a release of the firmware.
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: firmware-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # What the pre-commit hook runs for the firmware: the C++ and Python style, the layering and release setup, the YAML and
+  # ESPHome's check of it, and the host tests of the logic. Needs no toolchain download, so it is quick.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/firmware-tools
+      - run: make -C esphome lint check test
+
+  # Builds the firmware, which is what catches errors in the C++ of the lambdas and the headers that need the device: the
+  # checks above can't build those. It is built with the example secrets, so what comes out is not for flashing: the
+  # Wi-Fi name and passwords are the owner's own and are not kept anywhere here, which is why a release is the source and
+  # not a binary (esphome/README.md, "To use a release").
+  compile:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # What the first compile downloads, a few GB, and what the cache below keeps. ESP-IDF's version is in board.yaml and
+      # ESPHome's in poetry.lock, so the cache starts again when either changes.
+      TOOLCHAIN_KEY: firmware-toolchain-${{ hashFiles('poetry.lock', 'esphome/packages/board.yaml') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/firmware-tools
+      - id: toolchain
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cache/esphome
+            ~/.platformio
+          key: ${{ env.TOOLCHAIN_KEY }}
+      - run: make -C esphome compile
+      # Saved by main alone, and only when there was none: the toolchain does not change between builds, and a copy for
+      # every branch would push the Rust build's cache out of the repository's 10 GB.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        if: ${{ github.ref == 'refs/heads/main' && steps.toolchain.outputs.cache-hit != 'true' }}
+        with:
+          path: |
+            ~/.cache/esphome
+            ~/.platformio
+          key: ${{ env.TOOLCHAIN_KEY }}
+      - name: Summary
+        run: |
+          bin=$(find esphome/.esphome -name firmware.bin -size +0 | head -n 1)
+          [ -n "$bin" ] || exit 0
+          echo "Firmware: $(du -h "$bin" | cut -f1) ($bin)" >> "$GITHUB_STEP_SUMMARY"

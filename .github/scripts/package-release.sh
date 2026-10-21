@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Packs the release binaries into dist/home-display-server-<version>-x86_64-v3-linux.tar.gz, with its checksum.
+# Run from the repository root after `cargo build --release`. Usage: package-release.sh <version>   (e.g. 0.1.1)
+set -euo pipefail
+
+version="${1:?usage: package-release.sh <version>}"
+name="home-display-server-${version}-x86_64-v3-linux"
+bins=(home-display-server displayctl)
+
+rm -rf dist
+mkdir -p "dist/${name}"
+for bin in "${bins[@]}"; do
+    install -m 0755 "target/release/${bin}" "dist/${name}/"
+done
+cp -r deploy config/example.toml config/quiet_times.toml "dist/${name}/"
+
+# The archive says root, not whoever the runner was, and the same input gives the same bytes: sorted entries, and the
+# time of the commit instead of now.
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git log -1 --format=%ct)" \
+    -czf "dist/${name}.tar.gz" -C dist "${name}"
+(cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
+
+ls -l dist

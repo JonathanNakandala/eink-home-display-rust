@@ -4,15 +4,97 @@ on:
   push:
     branches: [main]
 
+# Two merges close together would otherwise race to make the same release, and the second must not cancel the first.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    outputs:
+      # For the server (the "." package) only: the firmware's are `esphome--release_created` and the like.
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      firmware_release_created: ${{ steps.release.outputs.esphome--release_created }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        id: release
         with:
           config-file: .github/release-please/config.json
           manifest-file: .github/release-please/manifest.json
+
+  # The checks (ci.yml), on the commit about to be released. Release-please makes the release as soon as its pull request
+  # is merged, whatever CI says, so this is what stops a binary being attached to a release made from a failing commit.
+  verify:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/ci.yml
+
+  # The same for a release of the firmware: it builds (firmware.yml), so one that does not is seen here, and not when someone
+  # next compiles that tag. It makes no file to attach: the firmware has the owner's Wi-Fi password compiled in, so a
+  # release is the source at its tag (esphome/README.md, "To use a release").
+  verify-firmware:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.firmware_release_created == 'true' }}
+    uses: ./.github/workflows/firmware.yml
+
+  # Here and not in a workflow of its own that listens for `release: published`: a release made with the workflow's
+  # token does not start other workflows, so that one would never run.
+  build-server:
+    needs: [release-please, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write # to attach the files to the release
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_NET_RETRY: 5
+      # AVX2, FMA and BMI2 (x86-64-v3): every Intel Core since 2013 and AMD since 2017 has them, and so does the N305 this
+      # runs on, but some low-end Pentium, Celeron and old Atom chips don't, and on those the binary dies with "illegal
+      # instruction" on start. So the archive is named for the level and is not a build for any x86-64 machine. Only the
+      # release has it: CI builds and tests the baseline.
+      RUSTFLAGS: -C target-cpu=x86-64-v3
+      VERSION: ${{ needs.release-please.outputs.version }}
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The commit the release was made at, which is the one just pushed.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          # A release build shares nothing with the dev profile that CI caches, so it has a key of its own. Saved, so the
+          # next release recompiles little more than this program.
+          shared-key: release
+      - name: Build
+        run: cargo build --release --locked --bin home-display-server --bin displayctl
+      - name: Smoke test
+        run: bash .github/scripts/smoke-test.sh
+      - name: Package
+        run: bash .github/scripts/package-release.sh "$VERSION"
+      - name: Summary
+        run: |
+          {
+            echo "### ${TAG}"
+            echo '```'
+            cat dist/*.sha256
+            ls -lh dist/*.tar.gz | awk '{print $5, $9}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Attach to the release
+        run: gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber

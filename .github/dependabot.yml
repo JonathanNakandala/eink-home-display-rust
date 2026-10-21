@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # The actions the workflows use. Grouped into one pull request, so a month's updates are one review.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Security fixes and the updates inside Cargo.toml's ranges, in one pull request a month. Anything bigger is a
+  # decision for a person, so is not opened.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      cargo:
+        update-types: ["minor", "patch"]
