@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  pull_request:
+    # The firmware and the documents have nothing here to check.
+    paths-ignore: ["esphome/**", "**/*.md", "deploy/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["esphome/**", "**/*.md", "deploy/**"]
+  # The release runs this first (release-please.yml), so nothing is published from a commit that fails it.
+  workflow_call:
+  workflow_dispatch:
+
+# A newer push to the same branch or PR makes the run in progress pointless, so it is cancelled. Runs on main are
+# never cancelled: each one refreshes the cache that pull requests restore.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Nothing here is built twice, so incremental data would only fill the cache.
+  CARGO_INCREMENTAL: 0
+  # No debug info: the tests don't need it, and it is most of the size of `target/`, which is what is cached.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  # Retry a flaky download from crates.io instead of failing the run.
+  CARGO_NET_RETRY: 5
+
+defaults:
+  run:
+    # Named, so that it runs with `-eo pipefail`: the default `bash -e` lets a failure in the middle of a pipe pass.
+    shell: bash
+
+jobs:
+  # Seconds, and needs no build, so it runs (and fails) first and alone.
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --check
+
+  # Lints and tests share one job, and so one `target/`: the second reuses the dependencies the first built.
+  # What the git hooks run locally (pre-commit: fmt and clippy, pre-push: test), so a push that passed them passes here.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          # Only main writes the cache. A pull request restores main's, and a cache each for a hundred branches would
+          # push the one that matters out of the repository's 10 GB.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      # The tests marked #[ignore] need Chrome or multicast networking, and are run by hand.
+      - run: cargo test --locked
