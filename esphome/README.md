@@ -252,25 +252,41 @@ panel's behaviour while the button is held, need a device.
 
 ### How the device finds the server
 
-[esp/discovery.h](home_display/esp/discovery.h) queries mDNS and takes the first service whose TXT record has `txtvers=1` and a
-`path`, with an IPv4 address and a port. Which service type it browses depends on `server_transport` (a substitution in
-[packages/server.yaml](packages/server.yaml)): `_https._tcp` for `https`, and `_http._tcp` for `http` and `prefer-https`,
-as under "Finding it" below. What to make of an answer is decided in [core/service.h](home_display/core/service.h), which is tested on
-a computer. Besides the HTTP port it remembers the `tlsport` the server announces, for the secure transport; nothing
-uses it yet, so whatever `server_transport` says, the firmware still speaks plain HTTP. An unknown value stops the
-build, so a typo can't quietly leave a display on plain HTTP. The result is remembered in flash, so a normal wake does
-no lookup:
+The display has no address to be told. It finds the server on the network, remembers where, and **checks that it is still
+there at the start of every wake**. The remembered address is only a cache, kept so that a normal wake does no search; nothing
+depends on the network giving the server the same address twice, so a DHCP lease that changes, a server moved to another machine
+or port, or one that comes back behind a different address is found again by the next wake, with no reflash, no setting and
+nothing configured on the router.
 
-1. Download from the remembered address (or `fallback_url` before there is one).
-2. If that fails, look the server up once, remember what is found, and download again.
-3. If that fails too, keep the picture on the panel and sleep until the next wake.
+**Finding it.** [esp/discovery.h](home_display/esp/discovery.h) queries mDNS and takes the first service whose TXT record has
+`txtvers=1` and a `path`, with an IPv4 address and a port. Which service type it browses depends on `server_transport` (a
+substitution in [packages/server.yaml](packages/server.yaml)): `_https._tcp` for `https`, and `_http._tcp` for `http` and
+`prefer-https`, as under "Finding it" below, so **a display set to `https` finds only a server whose `transport` is `https`**.
+What to make of an answer is decided in [core/service.h](home_display/core/service.h), tested on a computer. A machine with more
+than one network (a second adapter, a VPN, a container bridge) announces an address on each; the display takes the one on its
+own network (`choose_ip`), and the first only if none is. Besides the HTTP port it keeps the `tlsport` the server announces, for
+the secure transport. An unknown `server_transport` stops the build, so a typo can't quietly leave a display on plain HTTP.
 
-So a changed IP or port is picked up on the next wake with no reflash. The lookup blocks for
-up to 2.5 seconds, only after a failure.
+**Checking it, every wake** ([core/locate.h](home_display/core/locate.h), tested on a computer with the network replaced by two
+functions; the chip's are [esp/reach.h](home_display/esp/reach.h) and [esp/locate_chip.h](home_display/esp/locate_chip.h)). Before
+any request, `locate_server` ([packages/server.yaml](packages/server.yaml)) opens a TCP connection to the remembered address on the
+port the wake will use (HTTPS if it is to speak TLS, else HTTP) and closes it again:
 
-With several servers on one network, set `server_name` to the Rust app's `instance_name`.
-`fallback_url` (a `.local` name by default) only matters until the first scan succeeds, or if one
-finds nothing; it needs `enable_lwip_mdns_queries`, set in the yaml.
+| What happens | What the display does | Costs |
+|---|---|---|
+| Something accepts the connection | goes on: nothing has changed | 40 to 110 ms |
+| It does not answer (3 s) | searches mDNS, up to 3 queries (a multicast query can be lost) | 3 s, and 2.5 s a query |
+| A search finds the server | remembers the new address and goes on (`The server is now at ...` in the log) | about 5.5 s in all, measured |
+| Nothing answers and nothing is found | tries the old address once more (multicast is not reliable enough to condemn an address on its silence), then **gives up the wake** with `server` as the failure, the usual backoff and notice | about 14 s |
+| There is no address yet and nothing is found | goes on by the server's name (`home-display.local`), as before | up to 7.5 s |
+
+What this replaced: the dead address was used, and the search came only after its request timed out, 15 s over TLS or 50 s over
+plain HTTP, and for a display set to `prefer-https` both (it falls back to plain HTTP before it looks), so a moved server cost a
+wake of 70 to 100 s awake. A display set to `https` that had to join or renew went straight to a failure without looking at all.
+If the address answers but the plan then fails (the server restarted on another port, or something else is listening there), the
+old behaviour is still there as a second line: one search, then ask again.
+
+Phases in the log: `server-located` is the time this step took.
 
 ### Secure transport (what the firmware has to do)
 
@@ -469,7 +485,7 @@ Limits worth knowing:
 - A display set to `prefer-https` against a server that does not serve HTTPS **remembers that for a day**
   ([core/no_https.h](home_display/core/no_https.h)). The first search that finds the server without an HTTPS port is
   remembered, in RTC memory; the wakes after it go to plain HTTP at once, without waiting for the clock (up to `clock_wait`, 60 s, of radio),
-  without the search (about 2.5 s) and without reporting a failure; a day later it looks again, so a server that has been set up
+  without the search (2.5 s a query, up to three) and without reporting a failure; a day later it looks again, so a server that has been set up
   for HTTPS since is found. The day is counted in sleep, so it needs no clock, and a power loss forgets it (one more search).
   Only a search that *found* the server and saw no HTTPS port is remembered: a server that was not found, or whose HTTPS did not
   answer, is tried again at the next wake. A display set to `https` never remembers: it is waiting for the server to offer it.
@@ -729,6 +745,7 @@ make -C esphome test
 | [core/service.h](home_display/core/service.h) | which of the servers a scan found to use, and its HTTP and HTTPS ports | yes |
 | [core/pairing.h](home_display/core/pairing.h), [core/trust.h](home_display/core/trust.h), [core/sha256.h](home_display/core/sha256.h) | the pairing code, what to do next in joining, which root to trust, where a certificate is in its life | yes |
 | [core/join.h](home_display/core/join.h), [core/ports.h](home_display/core/ports.h) | one wake's joining over interfaces (the clock, the key store, the network, the chain check), run against fakes | yes |
+| [core/locate.h](home_display/core/locate.h) | whether the server is still where it was, when to search, and when to give up the wake (the network replaced by two functions) | yes |
 | [core/plan.h](home_display/core/plan.h), [core/clock.h](home_display/core/clock.h) | whether to redraw after a plan; whether the clock can be believed | yes |
 | [esp/state.h](home_display/esp/state.h) | the typed state one wake keeps between its scripts | no: nothing to test but the types |
 | [esp/telemetry.h](home_display/esp/telemetry.h) | the radio signal and RTC memory behind the report | no: needs the chip |
@@ -760,7 +777,7 @@ The log (at its default level, INFO) has a line as each phase of a wake ends, an
 [I][phase:044]: wifi               1300 ms   80%
 ```
 
-Phases, in order: `app-started`, `wifi`, `clock` and `server-search` and `tls-begin` (HTTPS only), `plan`, `download-start`,
+Phases, in order: `app-started`, `wifi`, `server-located`, `clock` and `tls-begin` (HTTPS only), `plan`, `download-start`,
 `download+decode`, `panel-settle`, `before-sleep`. The times are milliseconds since boot; the first ~300 ms, the bootloader's, are
 not counted. Measured on the bench (2026-10-18; strong signal, a QOI dashboard, a wake after a reset or from deep sleep as noted):
 

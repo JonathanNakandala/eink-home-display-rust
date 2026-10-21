@@ -166,6 +166,21 @@ one-day certificate. A display renews with a third of its life left.
 - [ ] Within a day, with nobody at the server, `displays list` shows a **later** end for the certificate, and the profile's firmware is current. Nothing was asked of the owner.
 - [ ] `displays list` does not say the renewal is overdue. Put `device_certificate_days` back to 90.
 
+## Stage 8a: the server moves
+
+The display must find the server wherever it is, with nothing set on the network. Check it without help from the router:
+
+- [ ] **Normal wake**: the log has `server-located` at under a quarter of a second, and no `Found '...'` line (nothing was searched).
+- [ ] **Move the server's address**: give the machine another address (renew the lease on another one, or move the server to
+  another machine on the network) and restart the server if it does not follow by itself. Reset the display. The log shows the old
+  address answering nothing for 3 s, then `Found '...'` and `The server is now at A.B.C.D (was ...)`, and the wake goes on and
+  finishes normally. `server-located` is about 5 to 6 s.
+- [ ] **Stop the server**: the wake ends about 14 s after it started looking, with `Nothing answers where the server was ...`,
+  `Failure 1 in a row (server)`, and the notice on the panel. Not a minute or more.
+- [ ] **Start it again**: the next wake finds it, and the notice goes.
+- [ ] A server with more than one network (a second adapter, a VPN): the display takes the address on its own network, and the log
+  names it.
+
 ## Stage 8: how it fails and how it falls back
 
 - [ ] **A server with no HTTPS** (`transport = "http"`, restart) in front of a `prefer-https` display: the first wake logs `Not secure: server` and goes on over plain HTTP;
