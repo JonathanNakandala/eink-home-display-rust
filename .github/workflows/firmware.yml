@@ -92,6 +92,6 @@ jobs:
           key: ${{ env.TOOLCHAIN_KEY }}
       - name: Summary
         run: |
-          bin=$(find esphome/.esphome -name firmware.bin -size +0 | head -n 1)
+          bin=$(find esphome/.esphome -name firmware.ota.bin -size +0 | head -n 1)
           [ -n "$bin" ] || exit 0
           echo "Firmware: $(du -h "$bin" | cut -f1) ($bin)" >> "$GITHUB_STEP_SUMMARY"
