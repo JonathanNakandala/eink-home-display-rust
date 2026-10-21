@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
+#include "esp_netif.h"
 #include "esphome/core/log.h"
 #include "mdns.h"
 
@@ -31,14 +33,30 @@ inline std::string txt_value(const mdns_result_t *result, const char *key) {
   return "";
 }
 
-inline bool first_ipv4(const mdns_result_t *result, uint32_t &ip) {
-  for (const mdns_ip_addr_t *a = result->addr; a != nullptr; a = a->next) {
-    if (a->addr.type == ESP_IPADDR_TYPE_V4) {
-      ip = a->addr.u_addr.ip4.addr;
-      return true;
-    }
+// The address and netmask of the display's own network, as lwIP stores them (0 and 0 if it has none).
+inline void own_network(uint32_t &ip, uint32_t &netmask) {
+  ip = 0;
+  netmask = 0;
+  esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_ip_info_t info;
+  if (netif != nullptr && esp_netif_get_ip_info(netif, &info) == ESP_OK) {
+    ip = info.ip.addr;
+    netmask = info.netmask.addr;
   }
-  return false;
+}
+
+// The server's address: of those it announced, the one on the display's own network (core/service.h `choose_ip`). A
+// machine with a second adapter, a VPN or a container bridge announces an address on each, and the first is not always
+// one the display can reach.
+inline uint32_t chosen_ipv4(const mdns_result_t *result) {
+  std::vector<uint32_t> all;
+  for (const mdns_ip_addr_t *a = result->addr; a != nullptr; a = a->next) {
+    if (a->addr.type == ESP_IPADDR_TYPE_V4)
+      all.push_back(a->addr.u_addr.ip4.addr);
+  }
+  uint32_t own_ip, netmask;
+  own_network(own_ip, netmask);
+  return home_display_service::choose_ip(all, own_ip, netmask);
 }
 
 // One answer of the scan as the text core/service.h judges.
@@ -47,7 +65,7 @@ inline home_display_service::Announcement announcement(const mdns_result_t *resu
   if (result->instance_name != nullptr)
     a.instance = result->instance_name;
   a.port = result->port;
-  first_ipv4(result, a.ip);
+  a.ip = chosen_ipv4(result);
   a.txtvers = txt_value(result, "txtvers");
   a.path = txt_value(result, "path");
   a.format = txt_value(result, "format");

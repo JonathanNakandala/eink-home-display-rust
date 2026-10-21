@@ -283,14 +283,15 @@ script:
                 else:
                   - script.execute: give_up
 
-  # Asks the network where the server is, and remembers the answer.
+  # Asks the network where the server is, and remembers the answer. A query can be lost, so it is asked up to
+  # home_display_locate::SEARCH_ATTEMPTS times (core/locate.h), and stops at the first answer.
   - id: discover
     then:
       - lambda: |-
           id(searched) = true;
           home_display_service::Server server;
           constexpr auto transport = home_display_service::transport_from("${server_transport}");
-          id(server_found) = home_display_discovery::find(server, "${server_name}", transport);
+          id(server_found) = home_display_locate_chip::search(transport, "${server_name}", server);
           // A server found without HTTPS is remembered for a day by a display that prefers it (core/no_https.h).
           home_display_no_https::apply(
               home_display_secure_wake::after_search(transport, id(server_found), id(server_found) ? server.tls_port : 0));
@@ -299,3 +300,41 @@ script:
           id(server_ip) = server.ip;
           id(server_port) = server.port;
           id(server_tls_port) = server.tls_port;
+
+  # Is the server where this display remembers it? Asked first in every wake (`begin_server`), before any request is spent on
+  # finding out by timing out. The address in flash is only a cache: a DHCP lease that changed, a server moved to another
+  # machine or port, or a container restarted behind another address must all be found again without anyone setting anything.
+  # If something still accepts a connection there, nothing else happens (a few milliseconds). If not, the network is searched
+  # (up to three queries), the new address is remembered, and the wake goes on. If nothing answers at the old address and
+  # nothing is found, the server is gone: the wake gives up at once, about 14 s after it started looking, where it used to wait
+  # out a request's timeouts (15 s over TLS, 50 s over plain HTTP, both for a display that prefers HTTPS). core/locate.h
+  # decides, and is tested on a computer.
+  - id: locate_server
+    then:
+      - lambda: |-
+          constexpr auto transport = home_display_service::transport_from("${server_transport}");
+          const bool https_in_play = transport != home_display_service::Transport::HTTP &&
+                                     !home_display_secure_wake::leaves_https_alone(transport, home_display_no_https::remembers());
+          home_display_service::Server found;
+          const uint32_t was = id(server_ip);
+          const auto where = home_display_locate_chip::run(transport, https_in_play, "${server_name}", id(server_ip),
+                                                           id(server_port), id(server_tls_port), found);
+          id(searched) = where != home_display_locate::Where::REMEMBERED;
+          id(server_found) = where == home_display_locate::Where::FOUND;
+          home_display_state::server_gone = where == home_display_locate::Where::GONE;
+          if (where == home_display_locate::Where::FOUND) {
+            if (found.ip != was)
+              ESP_LOGI("locate", "The server is now at %u.%u.%u.%u (was %u.%u.%u.%u)", (unsigned) (found.ip & 0xFF),
+                       (unsigned) ((found.ip >> 8) & 0xFF), (unsigned) ((found.ip >> 16) & 0xFF), (unsigned) (found.ip >> 24),
+                       (unsigned) (was & 0xFF), (unsigned) ((was >> 8) & 0xFF), (unsigned) ((was >> 16) & 0xFF),
+                       (unsigned) (was >> 24));
+            id(server_ip) = found.ip;
+            id(server_port) = found.port;
+            id(server_tls_port) = found.tls_port;
+            // A server found without HTTPS is remembered for a day by a display that prefers it (core/no_https.h).
+            home_display_no_https::apply(home_display_secure_wake::after_search(transport, true, found.tls_port));
+          } else if (where == home_display_locate::Where::GONE) {
+            ESP_LOGW("locate", "Nothing answers where the server was, and a search found no other: giving up this wake");
+            home_display_state::fail_reason = home_display_report::Failure::SERVER;
+          }
+          home_display_phases::mark("server-located");

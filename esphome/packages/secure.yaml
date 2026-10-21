@@ -61,13 +61,23 @@ script:
   # The start of a wake's dealings with the server: plain, or after joining.
   - id: begin_server
     then:
+      # First, is the server where this display remembers it (packages/server.yaml)? If it has moved it is found again here,
+      # and if it is gone the wake ends now.
+      - script.execute: locate_server
+      - script.wait: locate_server
       - if:
           condition:
-            lambda: 'return home_display_service::transport_from("${server_transport}") != home_display_service::Transport::HTTP;'
+            lambda: 'return home_display_state::server_gone;'
           then:
-            - script.execute: secure_session
+            - script.execute: give_up
           else:
-            - script.execute: check_plan
+            - if:
+                condition:
+                  lambda: 'return home_display_service::transport_from("${server_transport}") != home_display_service::Transport::HTTP;'
+                then:
+                  - script.execute: secure_session
+                else:
+                  - script.execute: check_plan
 
   # A display that prefers HTTPS leaves it alone while it remembers that the server it found has none (core/no_https.h): plain
   # HTTP at once, with no wait for the clock, no search for an HTTPS port that is not there, and no failure to report.
@@ -96,12 +106,6 @@ script:
       # back to plain HTTP with "Not secure: clock").
       - script.wait: ensure_clock
       - lambda: 'home_display_phases::mark("clock");'
-      - if:
-          condition:
-            lambda: 'return id(server_ip) == 0 || id(server_tls_port) == 0;'
-          then:
-            - script.execute: discover
-            - lambda: 'home_display_phases::mark("server-search");'
       - lambda: |-
           constexpr auto transport = home_display_service::transport_from("${server_transport}");
           // What the display says it is when it asks to join (core/profile.h): the owner sees it before approving.

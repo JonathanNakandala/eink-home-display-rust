@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace home_display_service {
 
@@ -44,6 +45,24 @@ constexpr Transport transport_from(const char *name) {
     return Transport::HTTPS;
   unknown_transport();
   return Transport::HTTPS;
+}
+
+// Which of the addresses a server announced to use. A machine with more than one network (a second adapter, a VPN, a
+// container bridge) announces an address on each, and the first is not necessarily one the display can reach: the one
+// on the display's own network is, so that is taken if there is one (`own_ip` and `netmask`, as lwIP stores them, 0 if
+// the display has none), else the first. 0 if there are none.
+inline uint32_t choose_ip(const std::vector<uint32_t> &candidates, uint32_t own_ip, uint32_t netmask) {
+  if (own_ip != 0 && netmask != 0) {
+    for (uint32_t candidate : candidates) {
+      if (candidate != 0 && (candidate & netmask) == (own_ip & netmask))
+        return candidate;
+    }
+  }
+  for (uint32_t candidate : candidates) {
+    if (candidate != 0)
+      return candidate;
+  }
+  return 0;
 }
 
 // What one answer to the scan said, as text: its TXT values (empty if absent), its port and its IPv4 address.
