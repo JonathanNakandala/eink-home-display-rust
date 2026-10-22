@@ -144,6 +144,8 @@ where
     }
 
     /// Fill the panel with white.
+    // Nothing calls it yet, which only the Linux build sees (the rest of the driver is allowed to be unused elsewhere: see the top).
+    #[allow(dead_code)]
     pub fn clear(&mut self) -> Result<(), Error<SPI::Error>> {
         let white = [0x00u8; BUFFER_SIZE];
         self.send_command(0x10)?;
