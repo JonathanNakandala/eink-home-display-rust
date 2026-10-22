@@ -91,6 +91,11 @@ jobs:
         run: cargo build --release --locked --bin home-display-server --bin displayctl
       - name: Smoke test
         run: bash .github/scripts/smoke-test.sh
+      - uses: ./.github/actions/install-cargo-about
+      # Before the archive and the packages, which carry what it makes. Stops the release if a crate has a licence that is not on
+      # the list in about.toml.
+      - name: Licences of what the program contains
+        run: bash .github/scripts/third-party-licences.sh
       - name: Package
         run: bash .github/scripts/package-release.sh "$VERSION"
       - uses: ./.github/actions/install-nfpm

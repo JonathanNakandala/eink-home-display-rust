@@ -13,8 +13,7 @@ description: |
   announced over mDNS. Edit /etc/home-display/config.toml, then
   systemctl enable --now home-display home-display-health.timer.
 homepage: https://github.com/JonathanNakandala/eink-home-display-rust
-# There is no licence file in the repository yet: say so, and replace this when there is one.
-license: Proprietary
+license: MIT OR Apache-2.0
 
 # Built for x86-64-v3 on Ubuntu 24.04, so needs that glibc or newer, and a CPU with AVX2 (preinstall.sh refuses one without).
 depends:
@@ -72,6 +71,20 @@ contents:
     file_info: {mode: 0640, owner: root, group: home-display}
   - src: deploy/INSTALL.md
     dst: /usr/share/doc/home-display-server/INSTALL.md
+    file_info: {mode: 0644}
+  # The licences: ours, the choice of two, and everything the program contains, which asks to go with every copy
+  # (.github/scripts/third-party-licences.sh makes the last, and has to run first).
+  - src: deploy/packaging/copyright
+    dst: /usr/share/doc/home-display-server/copyright
+    file_info: {mode: 0644}
+  - src: LICENSE-MIT
+    dst: /usr/share/doc/home-display-server/LICENSE-MIT
+    file_info: {mode: 0644}
+  - src: LICENSE-APACHE
+    dst: /usr/share/doc/home-display-server/LICENSE-APACHE
+    file_info: {mode: 0644}
+  - src: THIRD_PARTY_LICENSES.txt
+    dst: /usr/share/doc/home-display-server/THIRD_PARTY_LICENSES.txt
     file_info: {mode: 0644}
   - src: config/example.toml
     dst: /usr/share/doc/home-display-server/example.toml

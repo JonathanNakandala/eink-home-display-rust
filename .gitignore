@@ -1,4 +1,6 @@
 /target
+# Made at release time from Cargo.lock (.github/scripts/third-party-licences.sh)
+/THIRD_PARTY_LICENSES.txt
 temp/
 /.idea
 *.png
