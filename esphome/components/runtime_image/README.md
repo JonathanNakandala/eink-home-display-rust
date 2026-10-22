@@ -1,7 +1,7 @@
 # runtime_image, with six changes
 
-**Licence: GPL-3.0-only**, as ESPHome's C++ is, with the copyright of ESPHome's contributors for what is theirs and 2026 Jonathan
-Nakandala for the changes below ([../../LICENSE](../../LICENSE); [../../../REUSE.toml](../../../REUSE.toml) has it file by file). Anyone who
+**Licence: GPL-3.0-only**, as ESPHome's C++ is, with the copyright of ESPHome's contributors for what is theirs and 2026
+home-display-server contributors for the changes below ([../../LICENSE](../../LICENSE); [../../../REUSE.toml](../../../REUSE.toml) has it file by file). Anyone who
 is given a firmware built with this has to be able to have these files.
 
 A copy of ESPHome's `runtime_image` component (the decoders that `online_image` uses), taken from **ESPHome 2026.9.1**, with six

@@ -6,7 +6,7 @@ platform: linux
 version: ${VERSION}
 section: net
 priority: optional
-maintainer: Jonathan Nakandala <JonathanNakandala@users.noreply.github.com>
+maintainer: home-display-server contributors <JonathanNakandala@users.noreply.github.com>
 description: |
   Draws a dashboard (weather, train departures) and serves it to e-ink displays.
   Renders with Chrome on a schedule and serves the picture over HTTP and HTTPS,

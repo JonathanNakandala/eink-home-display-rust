@@ -3,7 +3,7 @@ Upstream-Name: home-display-server
 Source: https://github.com/JonathanNakandala/eink-home-display-rust
 
 Files: *
-Copyright: 2024-2026 Jonathan Nakandala
+Copyright: 2024-2026 home-display-server contributors
 License: Expat or Apache-2.0
  The program may be used under the MIT licence (Expat) or the Apache licence 2.0, as you choose. Their texts are in LICENSE-MIT and
  LICENSE-APACHE in this directory (/usr/share/doc/home-display-server/).
