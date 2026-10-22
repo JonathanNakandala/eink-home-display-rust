@@ -72,8 +72,8 @@ jobs:
       - name: What was put where
         run: |
           id home-display
-          test "$(stat -c '%U:%G %a' /etc/home-display/config.toml)" = "root:home-display 640"
-          test "$(stat -c '%U:%G %a' /var/lib/home-display)" = "home-display:home-display 700"
+          test "$(sudo stat -c '%U:%G %a' /etc/home-display/config.toml)" = "root:home-display 640"
+          test "$(sudo stat -c '%U:%G %a' /var/lib/home-display)" = "home-display:home-display 700"
           # The first install made the certificate authority, as the service's user.
           sudo test -f /var/lib/home-display/pki/root.key
           test -x /usr/bin/home-display-server && test -x /usr/bin/displayctl
@@ -102,7 +102,7 @@ jobs:
           ! systemctl is-active --quiet home-display
           # The data and the configuration are kept.
           sudo test -f /var/lib/home-display/pki/root.key
-          test -f /etc/home-display/config.toml
+          sudo test -f /etc/home-display/config.toml
 
   # Installs the .rpm in Fedora. A container has no systemd running, so the service is not started: what is tried is the user, the
   # files, their owners, and the scripts, which must not need systemd running.
