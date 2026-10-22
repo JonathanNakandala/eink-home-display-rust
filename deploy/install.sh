@@ -77,7 +77,7 @@ if [ "$preflight" -eq 1 ]; then
 fi
 
 say "The user and the folders"
-install -m 0644 "$DEPLOY/home-display.sysusers" /etc/sysusers.d/home-display.conf
+install -D -m 0644 "$DEPLOY/home-display.sysusers" /etc/sysusers.d/home-display.conf
 systemd-sysusers /etc/sysusers.d/home-display.conf
 # Whether this is the first time, decided before anything is put in the folder.
 fresh=0
