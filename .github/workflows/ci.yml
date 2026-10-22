@@ -81,7 +81,7 @@ jobs:
         with:
           persist-credentials: false
       # The runner has shellcheck. Warnings and errors fail the job; style notes do not.
-      - run: shellcheck --severity=warning deploy/*.sh .github/scripts/*.sh
+      - run: shellcheck --severity=warning deploy/*.sh deploy/packaging/*.sh .github/scripts/*.sh
       # systemd's own check of the units: unknown settings, a missing user or program, a timer without its service. The program
       # and the user are made here so that it has something to find; it runs nothing.
       - name: Check the units

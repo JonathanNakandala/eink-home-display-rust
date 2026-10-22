@@ -15,7 +15,36 @@ by the test suite; **not yet run on a real machine**, so treat the first install
 
 `install.sh` checks all of this first (`preflight.sh`, which you can also run on its own) and says what to do about anything.
 
-## Install
+## Install with a package
+
+Each release has a `.deb` (Ubuntu, Debian) and an `.rpm` (Fedora, RHEL and relatives) beside the archive. The package does what
+`install.sh` does, through the package manager, so it is the one to use if you want `apt` or `dnf` to know about it:
+
+```sh
+gh release download home-display-server-vX.Y.Z -R JonathanNakandala/eink-home-display-rust -p '*.deb' -p '*.rpm' -p '*.sha256'
+sha256sum --check home-display-server_*.deb.sha256        # or the .rpm's
+sudo apt install ./home-display-server_*_amd64.deb        # Ubuntu, Debian
+sudo dnf install ./home-display-server-*.x86_64.rpm       # Fedora
+```
+
+It makes the user, puts the program in `/usr/bin`, the configuration in `/etc/home-display/config.toml` (kept on an upgrade, with a
+changed one never replaced) and the certificate authority in `/var/lib/home-display` (first install only). **It does not start
+the service**, since the configuration wants editing first:
+
+```sh
+sudoedit /etc/home-display/config.toml
+sudo systemctl enable --now home-display home-display-health.timer
+sudo home-display-preflight            # what on this machine would stop it: Chrome, the firewall, the clock
+```
+
+An upgrade is the same command from the newer package, and restarts a service that was running. Removing the package keeps the
+configuration, the data and the user: the certificate authority cannot be made again. The rest of this guide applies to both.
+The package is built for x86-64 with AVX2 and Ubuntu 24.04's glibc (2.39) or newer, and will not install on a machine that is
+neither. Its licence field says "Proprietary" until the repository has a licence file.
+
+## Install from the archive
+
+Without a package manager, or on any other systemd distribution:
 
 ```sh
 # From the release (a private repository: with the GitHub CLI, logged in)

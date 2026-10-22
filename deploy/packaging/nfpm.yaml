@@ -1,0 +1,84 @@
+# The .deb and .rpm, made from one description by nfpm (.github/scripts/build-packages.sh stages the files and runs it).
+# ${VERSION} is the release's version, from the environment.
+name: home-display-server
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: Jonathan Nakandala <JonathanNakandala@users.noreply.github.com>
+description: |
+  Draws a dashboard (weather, train departures) and serves it to e-ink displays.
+  Renders with Chrome on a schedule and serves the picture over HTTP and HTTPS,
+  announced over mDNS. Edit /etc/home-display/config.toml, then
+  systemctl enable --now home-display home-display-health.timer.
+homepage: https://github.com/JonathanNakandala/eink-home-display-rust
+# There is no licence file in the repository yet: say so, and replace this when there is one.
+license: Proprietary
+
+# Built for x86-64-v3 on Ubuntu 24.04, so needs that glibc or newer, and a CPU with AVX2 (preinstall.sh refuses one without).
+depends:
+  - systemd
+  - curl
+  - util-linux
+overrides:
+  deb:
+    depends:
+      - systemd
+      - curl
+      - util-linux
+      - libc6 (>= 2.39)
+  rpm:
+    depends:
+      - systemd
+      - curl
+      - util-linux
+      - glibc >= 2.39
+
+contents:
+  - src: dist/pkg/home-display-server
+    dst: /usr/bin/home-display-server
+    file_info: {mode: 0755}
+  - src: dist/pkg/displayctl
+    dst: /usr/bin/displayctl
+    file_info: {mode: 0755}
+  - src: dist/pkg/home-display-health-check
+    dst: /usr/bin/home-display-health-check
+    file_info: {mode: 0755}
+  - src: dist/pkg/home-display-preflight
+    dst: /usr/bin/home-display-preflight
+    file_info: {mode: 0755}
+  # Units in the vendor folder, where a package's go, and so not in /etc, which is the administrator's (and wins).
+  - src: dist/pkg/home-display.service
+    dst: /usr/lib/systemd/system/home-display.service
+    file_info: {mode: 0644}
+  - src: dist/pkg/home-display-health.service
+    dst: /usr/lib/systemd/system/home-display-health.service
+    file_info: {mode: 0644}
+  - src: dist/pkg/home-display-health.timer
+    dst: /usr/lib/systemd/system/home-display-health.timer
+    file_info: {mode: 0644}
+  - src: deploy/home-display.sysusers
+    dst: /usr/lib/sysusers.d/home-display.conf
+    file_info: {mode: 0644}
+  # The user exists by now (preinstall.sh makes it), so the group can be named here.
+  - dst: /etc/home-display
+    type: dir
+    file_info: {mode: 0750, owner: root, group: home-display}
+  # Kept as it is on an upgrade and on removal: a changed copy is the administrator's, and the new one is put beside it.
+  - src: deploy/config.production.toml
+    dst: /etc/home-display/config.toml
+    type: config|noreplace
+    file_info: {mode: 0640, owner: root, group: home-display}
+  - src: deploy/INSTALL.md
+    dst: /usr/share/doc/home-display-server/INSTALL.md
+    file_info: {mode: 0644}
+  - src: config/example.toml
+    dst: /usr/share/doc/home-display-server/example.toml
+    file_info: {mode: 0644}
+
+scripts:
+  preinstall: deploy/packaging/preinstall.sh
+  postinstall: deploy/packaging/postinstall.sh
+  preremove: deploy/packaging/preremove.sh
+  postremove: deploy/packaging/postremove.sh
