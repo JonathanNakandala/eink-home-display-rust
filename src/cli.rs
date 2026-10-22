@@ -43,6 +43,13 @@ pub struct Args {
     #[arg(long)]
     pub init_pki: bool,
 
+    /// Check the configuration, the layouts and the schedule, say so, and exit without serving or rendering: for an
+    /// installer, or before a restart. With `--init-pki` it also makes what is missing of the certificate authority and
+    /// then exits, so the first start needs no server to be run and stopped. Run it as the user the service runs as, in
+    /// its working directory: it makes the cache folder there.
+    #[arg(long)]
+    pub check_config: bool,
+
     /// After a restart, wait until this long has passed since the last render was attempted before
     /// the first one, so a crash loop can't hammer the APIs. e.g. 2m
     #[arg(long, default_value = "2m", value_parser = humantime::parse_duration)]

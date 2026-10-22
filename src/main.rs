@@ -67,6 +67,16 @@ async fn main() -> Result<()> {
         .as_ref()
         .map(|schedule| schedule.to_schedule())
         .transpose()?;
+    if args.check_config {
+        // The flags are checked against the file's schedule as a run would, and an authority is made if asked.
+        args.schedule(configured.clone())?;
+        bootstrap::open_security(&config.server, clock.clone(), credentials, args.init_pki).await?;
+        println!(
+            "The configuration in {} is valid",
+            args.config_file.display()
+        );
+        return Ok(());
+    }
     let Some(schedule) = args.schedule(configured)? else {
         return bootstrap::from_config(
             &config,
