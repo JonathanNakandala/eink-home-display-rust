@@ -1,0 +1,49 @@
+# Who wrote each file, and under what licence, for everything in the repository: the REUSE specification (reuse.software), checked
+# in CI by `reuse lint`. A bulk file like this one, and not a header in every file, so a file's text stays what it was.
+#
+# The licence texts are in LICENSES/, named by their SPDX identifier. LICENSE-MIT and LICENSE-APACHE at the top are the same two
+# for a person (and GitHub) who looks there first; esphome/LICENSE is the GPL for the folder it is in.
+#
+# Which wins: the last annotation that matches a file (precedence "override"), so the general one is first and the exceptions
+# follow it.
+version = 1
+
+# The server, its tools, the tests, the deployment, the configuration: MIT or Apache-2.0, at the user's choice.
+[[annotations]]
+path = "**"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 Jonathan Nakandala"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The display's firmware. It is built with ESPHome, whose C++ is GPL-3.0 ("GPLv3", with no "or later"), and the result is one
+# program, so the firmware's sources are GPL-3.0-only too. Anyone who is given a firmware binary has to be able to have these.
+# The server does not link to any of it: they talk over HTTP, so the server's licence is its own.
+[[annotations]]
+path = "esphome/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 Jonathan Nakandala"
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# A copy of ESPHome's runtime_image (2026.9.1) with changes (its README.md lists them). ESPHome's licence for its C++ is GPL-3.0.
+[[annotations]]
+path = "esphome/components/runtime_image/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["ESPHome contributors", "2026 Jonathan Nakandala (the changes in README.md)"]
+SPDX-License-Identifier = "GPL-3.0-only"
+
+# The Overpass fonts the built-in layouts use, which are inside the server's program: SIL Open Font License 1.1, whose text is
+# kept beside them. It asks that the notice goes with the fonts, which THIRD_PARTY_LICENSES.txt in a release does.
+[[annotations]]
+path = "templates/fonts/Overpass/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 Red Hat, Inc."
+SPDX-License-Identifier = "OFL-1.1"
+
+# The weather icons, which are also inside the server's program. Where they came from was not written down: the file names
+# (013-sun-8.svg) and the "Capa_1" in them are those of an icon pack from a website of free icons, which usually asks for a credit.
+# TODO: find the pack, put its author and licence here, and remove LICENSES/LicenseRef-Provenance-Not-Recorded.txt.
+[[annotations]]
+path = "templates/weather_icons/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Not recorded: see LICENSES/LicenseRef-Provenance-Not-Recorded.txt"
+SPDX-License-Identifier = "LicenseRef-Provenance-Not-Recorded"

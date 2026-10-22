@@ -2,6 +2,9 @@
 name = "home-display-server"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+# Released as programs (see deploy/), not as a crate, so `cargo publish` is not to be run by mistake.
+publish = false
 
 # Don't add `panic = "abort"`, however much smaller it makes the binary. If a render panics, the server catches it, counts
 # that one run as failed and carries on with the next. With "abort" the same panic would end the whole process instead.

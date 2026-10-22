@@ -819,3 +819,17 @@ set `level: DEBUG` under `logger:` in `packages/board.yaml`, or one tag only, e.
 and how it should fail. It starts from plain HTTP as a baseline, then joins over HTTPS, resumes, tries the 304, the reset
 button, a renewing certificate and the ways it falls back. It includes the battery, PSRAM, maintenance-mode, hang and
 backoff checks that were listed here before.
+
+## Licence
+
+Everything in `esphome/` is **GPL-3.0-only** ([LICENSE](LICENSE)). It is built with ESPHome, whose C++ is GPL-3.0 and which has no "or
+later", and the firmware that comes out is one program, so these sources are under the same licence; and
+[components/runtime_image](components/runtime_image/README.md) is a changed copy of an ESPHome component. The server, at the top of the
+repository, is MIT OR Apache-2.0 and is a different program: it shares nothing with this one but what each says over HTTP.
+
+What that asks of you: nothing, to use and change it yourself, which is what a firmware with your own Wi-Fi password in it is. If you
+**give a firmware binary to someone**, you must give them these sources too (this folder, at the version it was built from) under the
+same licence. That is why releases are the source and not a binary (see "To use a release" above).
+
+Who wrote what, file by file, is in [../REUSE.toml](../REUSE.toml) (checked in CI with `reuse lint`); the licence texts are in
+[../LICENSES/](../LICENSES/).
