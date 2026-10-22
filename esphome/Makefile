@@ -1,9 +1,11 @@
 # Tests for the calculations in the headers that don't touch hardware (core/wake.h, core/battery.h,
-# core/format.h, core/report.h, core/clock.h). They need only a C++17 compiler: `make -C esphome test`.
+# core/format.h, core/report.h, core/clock.h). They need only a C++17 compiler, and clang's: `make -C esphome test`.
 # Undefined-behaviour and address sanitizers are on, so a signed overflow or a bad index fails the run
 # instead of passing by luck. The headers that need the device (esp/telemetry.h, esp/discovery.h,
 # esp/health.h, esp/eink_notice.h) are not built here; `esphome compile` covers them.
-CXX ?= c++
+# clang, not whatever `c++` is: on a Mac that is Apple's clang and on Linux it is g++, which has no -fsanitize-coverage=inline-8bit-counters
+# (the fuzz programs below need it). One compiler, so the tests mean the same on a Mac and in CI. Override with `make CXX=...`.
+CXX ?= clang++
 CXXFLAGS ?= -std=c++17 -I. -Itests/support -DVECTORS_DIR=\"$(abspath ../testdata/contract)\" -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/support/main.cpp $(wildcard tests/core/*_test.cpp)
 HEADERS := $(wildcard home_display/core/*.h) $(wildcard tests/support/*.h)

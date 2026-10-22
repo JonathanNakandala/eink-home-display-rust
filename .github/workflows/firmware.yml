@@ -54,6 +54,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/firmware-tools
+      # The Makefile builds the tests with clang, as on a Mac. The runner has it already; this makes sure of it.
+      - run: sudo apt-get install --yes --no-install-recommends clang
       - run: make -C esphome lint check test
 
   # Builds the firmware, which is what catches errors in the C++ of the lambdas and the headers that need the device: the
