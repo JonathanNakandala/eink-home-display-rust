@@ -1,0 +1,3 @@
+# The user the service runs as. Installed as /etc/sysusers.d/home-display.conf and made by `systemd-sysusers`, which every
+# systemd distribution has, so no useradd (whose options differ between them) is needed.
+u home-display - "Home display server" /var/lib/home-display /usr/sbin/nologin

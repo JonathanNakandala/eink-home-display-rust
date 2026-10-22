@@ -28,8 +28,8 @@ curl --silent http://localhost:8080/status | jq '.state, .sources, .last_failure
 | `stale` | A scheduled render is long overdue. `/healthz` returns 503 |
 
 For Docker, `HEALTHCHECK CMD curl --fail --silent http://localhost:8080/healthz`. For a plain systemd
-unit, a timer that runs the same `curl --fail` and restarts the service on failure is enough; I haven't
-tried it, and the unit file here doesn't include one. The endpoints have no authentication, like the
+unit, `home-display-health.timer` runs the same check every few minutes and restarts the service after three
+failures in a row (`install.sh` sets it up; see [INSTALL.md](INSTALL.md)). A service that exits is restarted by systemd itself. The endpoints have no authentication, like the
 image, and the error text can name the failing source, so keep the port on the LAN.
 
 `/status` keeps its history in memory, so a restart starts it again at `starting`. The sources list is
