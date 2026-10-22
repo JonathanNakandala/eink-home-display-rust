@@ -1,0 +1,61 @@
+# The server's configuration for a machine that runs it all the time, for reTerminal E1003 displays that fetch their picture.
+# install.sh puts this at /etc/home-display/config.toml the first time and never replaces it after that, so edit it freely.
+# Every setting there is, with what it does: config/example.toml (made from the code) and config/schema.json.
+#
+# Paths are absolute, under /var/lib/home-display (what the service owns, and the only place it may write: see the unit),
+# so `displayctl` finds the server's socket from wherever it is run:
+#   sudo -u home-display displayctl -c /etc/home-display/config.toml window open
+
+# Where the displays are, for the weather and for what time it is: change all three.
+[location]
+latitude = 51.5
+longitude = -0.12
+timezone = "Europe/London"     # any IANA name; the schedule's hours are in this zone, whatever the machine's is
+
+# Open-Meteo is free and needs no key. For OpenWeather, set provider = "OpenWeather" and give the key afterwards with
+# `displayctl credential set` (it is kept in memory, or on disk with --remember), or put `api_key` under [weather.open_weather].
+[weather]
+enabled = true
+provider = "OpenMeteo"
+
+# Departure boards, in order. Each picks its own provider; the keys they need are set like the weather's (see
+# deploy/README.md, "Keys for other services"). For example:
+#
+# [[departures]]
+# name = "TURNPIKE LANE"
+# enabled = true
+# rows = 4
+# travel_minutes = 15
+# provider = "Tfl"
+# stop_id = "940GZZLUTPN"
+#
+# [providers.tfl]
+# host_url = "https://api.tfl.gov.uk"
+
+[display]
+kind = "ReTerminalE1003"
+
+# How often to refresh. Each one is a wake of every display, which is what drains its battery: the log at start-up says in words
+# what these mean and how many refreshes each day gets. Several can be given, each for its own hours and days, e.g.
+#   cron = ["* 7-8,11-12 * * 1-5", "*/5 9-10,13-21 * * 1-5", "*/15 22-23,0-6 * * 1-5", "0 8-21 * * 6,0"]
+[schedule]
+cron = ["*/10 * * * *"]
+
+[server]
+bind = "[::]:8080"
+instance_name = "Home display"     # what the displays look for on the network; give each server of yours its own
+# "prefer-https": displays that can use HTTPS do (and are known by their certificate once you let them join), the rest carry
+# on over plain HTTP. "https" serves only displays that have joined; it also means /healthz needs a certificate, so the health
+# timer cannot look (see deploy/INSTALL.md). Moving displays over: deploy/README.md, "Plain HTTP, HTTPS, or both".
+transport = "prefer-https"
+directory = "/var/lib/home-display/served"
+
+[server.tls]
+bind = "[::]:8443"
+directory = "/var/lib/home-display/pki"     # the certificate authority and the list of displays: back it up
+
+[file_store]
+save_directory = "/var/lib/home-display/output"
+
+[cache]
+directory = "/var/lib/home-display/cache"   # a downloaded Chrome, if no installed one is used
