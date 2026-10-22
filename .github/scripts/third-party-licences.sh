@@ -20,8 +20,7 @@ cargo about generate --locked about.hbs --output-file "$out"
     printf '%s\n' 'Weather icons (inside the program)'
     printf '%s\n' '================================================================================'
     printf '\n'
-    printf '%s\n' 'Seven SVG icons in templates/weather_icons/. Their source, and so their licence, has not been recorded: see'
-    printf '%s\n' 'LICENSES/LicenseRef-Provenance-Not-Recorded.txt in the source.'
+    cat LICENSES/LicenseRef-Flaticon-Free.txt
 } >> "$out"
 
 wc -c "$out"

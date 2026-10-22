@@ -146,6 +146,7 @@ first gives a copy that cannot be half written; a copy taken while it runs is sa
 
 The server is **MIT OR Apache-2.0**, as you choose (`LICENSE-MIT`, `LICENSE-APACHE`). It contains other people's software, whose licences
 ask that their notices go with it: `THIRD_PARTY_LICENSES.txt`, in the archive and in `/usr/share/doc/home-display-server/` for a package.
+The weather icons are "Icons made by Prosymbols from www.flaticon.com", used under Flaticon's free licence, which asks for that credit.
 The display's firmware (`esphome/` in the source) is GPL-3.0-only, because it is built with ESPHome; it is a separate program.
 
 ## When it does not work

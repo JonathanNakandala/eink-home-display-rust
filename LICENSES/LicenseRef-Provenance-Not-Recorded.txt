@@ -1,5 +1,0 @@
-Where this file came from, and so under what licence it may be used and passed on, has not been recorded.
-
-It is kept in this repository, and is shipped inside the server's program, until its source is found. Do not treat the repository's
-own licence (MIT OR Apache-2.0) as covering it, and do not pass it on as though it did: find its author's licence first, and then
-replace this identifier with theirs, in REUSE.toml, together with the credit it asks for.
