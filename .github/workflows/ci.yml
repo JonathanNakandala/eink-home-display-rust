@@ -3,10 +3,10 @@ name: ci
 on:
   pull_request:
     # The firmware and the documents have nothing here to check.
-    paths-ignore: ["esphome/**", "**/*.md", "deploy/**"]
+    paths-ignore: ["esphome/**", "**/*.md"]
   push:
     branches: [main]
-    paths-ignore: ["esphome/**", "**/*.md", "deploy/**"]
+    paths-ignore: ["esphome/**", "**/*.md"]
   # The release runs this first (release-please.yml), so nothing is published from a commit that fails it.
   workflow_call:
   workflow_dispatch:
@@ -71,3 +71,22 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       # The tests marked #[ignore] need Chrome or multicast networking, and are run by hand.
       - run: cargo test --locked
+
+  # The installer, its scripts and the units, which nothing else here runs.
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # The runner has shellcheck. Warnings and errors fail the job; style notes do not.
+      - run: shellcheck --severity=warning deploy/*.sh .github/scripts/*.sh
+      # systemd's own check of the units: unknown settings, a missing user or program, a timer without its service. The program
+      # and the user are made here so that it has something to find; it runs nothing.
+      - name: Check the units
+        run: |
+          sudo systemd-sysusers deploy/home-display.sysusers
+          sudo install -m 0755 /bin/true /usr/local/bin/home-display-server
+          sudo install -m 0755 /bin/true /usr/local/bin/home-display-health-check
+          systemd-analyze verify deploy/home-display.service deploy/home-display-health.service deploy/home-display-health.timer

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check that the home display server is working
+
+[Timer]
+# Three failed checks in a row restart it (health-check.sh), so a stuck service is restarted within about ten minutes, plus
+# the five /healthz allows before it calls a render stale.
+OnBootSec=10min
+OnUnitActiveSec=3min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

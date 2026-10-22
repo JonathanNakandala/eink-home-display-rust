@@ -1,0 +1,15 @@
+# Run by home-display-health.timer. Installed by install.sh next to home-display.service.
+[Unit]
+Description=Restart the home display server if it is running but not working
+After=home-display.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/home-display-health-check
+# Needs to be root to restart a service; otherwise as little as that takes. The count of failures in a row is kept in /run.
+RuntimeDirectory=home-display-health
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
