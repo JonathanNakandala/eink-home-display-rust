@@ -1,5 +1,9 @@
 # runtime_image, with six changes
 
+**Licence: GPL-3.0-only**, as ESPHome's C++ is, with the copyright of ESPHome's contributors for what is theirs and 2026 Jonathan
+Nakandala for the changes below ([../../LICENSE](../../LICENSE); [../../../REUSE.toml](../../../REUSE.toml) has it file by file). Anyone who
+is given a firmware built with this has to be able to have these files.
+
 A copy of ESPHome's `runtime_image` component (the decoders that `online_image` uses), taken from **ESPHome 2026.9.1**, with six
 changes: four make a full-screen picture decode in a fraction of the time, and two say where the decoder's time goes. `reterminal-e1003.yaml`
 loads it as a local external component, which takes the place of the built-in one.
