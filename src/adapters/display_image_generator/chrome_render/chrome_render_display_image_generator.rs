@@ -77,27 +77,27 @@ const ASSETS: &[(&str, &[u8])] = &[
 const ICONS: &[(&str, &str)] = &[
     (
         "clear",
-        include_str!("../../../../templates/weather_icons/013-sun-8.svg"),
+        include_str!("../../../../templates/weather_icons/clear-day.svg"),
     ),
     (
         "clouds",
-        include_str!("../../../../templates/weather_icons/051-cloud-3.svg"),
+        include_str!("../../../../templates/weather_icons/cloudy.svg"),
     ),
     (
         "drizzle",
-        include_str!("../../../../templates/weather_icons/099-rain-4.svg"),
+        include_str!("../../../../templates/weather_icons/drizzle.svg"),
     ),
     (
         "rain",
-        include_str!("../../../../templates/weather_icons/067-storm-6.svg"),
+        include_str!("../../../../templates/weather_icons/rain.svg"),
     ),
     (
         "thunderstorm",
-        include_str!("../../../../templates/weather_icons/057-storm-7.svg"),
+        include_str!("../../../../templates/weather_icons/thunderstorms.svg"),
     ),
     (
         "snow",
-        include_str!("../../../../templates/weather_icons/047-snow-4.svg"),
+        include_str!("../../../../templates/weather_icons/snow.svg"),
     ),
 ];
 

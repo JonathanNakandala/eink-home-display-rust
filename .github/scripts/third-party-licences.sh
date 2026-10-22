@@ -17,10 +17,10 @@ cargo about generate --locked about.hbs --output-file "$out"
     cat templates/fonts/Overpass/OFL.txt
     printf '\n\n'
     printf '%s\n' '================================================================================'
-    printf '%s\n' 'Weather icons (inside the program)'
+    printf '%s\n' 'Weather icons: Meteocons by Bas Milius (inside the program)'
     printf '%s\n' '================================================================================'
     printf '\n'
-    cat LICENSES/LicenseRef-Flaticon-Free.txt
+    cat templates/weather_icons/LICENSE
 } >> "$out"
 
 wc -c "$out"
