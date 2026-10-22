@@ -617,12 +617,14 @@ mod socket {
         let (enrollment, _, clock) = enrollment_in(directory.path()).await;
         let choices = Arc::new(FileLayoutChoices::open(directory.path()).await.unwrap());
         let viewers = viewers_in(directory.path(), clock.clone()).await;
+        let credentials = Credentials::new(clock.clone(), []);
         let app = router(
             enrollment,
             choices,
             Layouts::default(),
             clock,
             viewers,
+            credentials,
             WebFacts::new(VIEW_BASE),
         );
         let server = tokio::spawn(async move {

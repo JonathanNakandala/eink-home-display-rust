@@ -83,6 +83,8 @@ pub fn load_layouts(config: &LayoutsConfig, directory: Option<&Path>) -> anyhow:
 /// The service as it runs: rendered by Chrome, shown on the configured display, and saved to the
 /// configured folder. `images` is where displays that fetch their image have it published, and `templates` are the
 /// layouts it draws (see `load_layouts`).
+// Everything it is made of is given, so that a test can give any of it; a struct to carry them would only move the list.
+#[allow(clippy::too_many_arguments)]
 pub fn from_config(
     config: &ApplicationConfig,
     cache: &CachePaths,
