@@ -721,7 +721,7 @@ default), run each for a day, and compare `home_display_device_last_wake_seconds
 
 | Directory | Tests | Run with |
 |---|---|---|
-| `tests/core/` | the calculations, with fakes for the interfaces, built with a bare C++17 compiler and sanitizers | `make -C esphome test` |
+| `tests/core/` | the calculations, with fakes for the interfaces, built with clang (a bare C++17 compiler) and sanitizers | `make -C esphome test` |
 | `tests/tls/` | the TLS, EST, stream and join code, with the same mbedTLS the chip is built with, against the real Rust server ([tests/tls/README.md](tests/tls/README.md) says what that shows and what it does not) | `make -C esphome host-test` |
 | (none for `home_display/esp/`) | needs the chip's headers; `esphome compile` is the check | `make -C esphome compile` |
 
