@@ -81,12 +81,15 @@ async fn start() -> Server {
         clock.clone(),
         Arc::new(home_display_server::adapters::entropy::OsEntropy),
     ));
+    let credentials =
+        home_display_server::application::credentials::Credentials::new(clock.clone(), []);
     let app = admin::router(
         enrollment.clone(),
         choices.clone(),
         layouts,
         clock,
         viewers,
+        credentials,
         home_display_server::adapters::admin::WebFacts::new("https://display.test:8443"),
     );
     let task = tokio::spawn(async move {
