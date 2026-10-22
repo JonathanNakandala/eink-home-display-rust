@@ -4,8 +4,11 @@
 # instead of passing by luck. The headers that need the device (esp/telemetry.h, esp/discovery.h,
 # esp/health.h, esp/eink_notice.h) are not built here; `esphome compile` covers them.
 # clang, not whatever `c++` is: on a Mac that is Apple's clang and on Linux it is g++, which has no -fsanitize-coverage=inline-8bit-counters
-# (the fuzz programs below need it). One compiler, so the tests mean the same on a Mac and in CI. Override with `make CXX=...`.
-CXX ?= clang++
+# (the fuzz programs below need it). One compiler, so the tests mean the same on a Mac and in CI. `?=` would not do: make defines CXX
+# itself (as g++, or c++), so it counts as set. This replaces only that default; `make CXX=...` and the environment still win.
+ifeq ($(origin CXX),default)
+CXX := clang++
+endif
 CXXFLAGS ?= -std=c++17 -I. -Itests/support -DVECTORS_DIR=\"$(abspath ../testdata/contract)\" -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 SOURCES := tests/support/main.cpp $(wildcard tests/core/*_test.cpp)
 HEADERS := $(wildcard home_display/core/*.h) $(wildcard tests/support/*.h)
