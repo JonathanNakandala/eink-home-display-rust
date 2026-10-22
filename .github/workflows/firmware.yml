@@ -64,22 +64,20 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    env:
-      # What the first compile downloads, a few GB, and what the cache below keeps. ESP-IDF's version is in board.yaml and
-      # ESPHome's in poetry.lock, so the cache starts again when either changes.
-      TOOLCHAIN_KEY: firmware-toolchain-${{ hashFiles('poetry.lock', 'esphome/packages/board.yaml') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/firmware-tools
+      # What the first compile downloads, a few GB, and what the cache keeps. ESP-IDF's version is in board.yaml and ESPHome's
+      # in poetry.lock, so the cache starts again when either changes. (hashFiles can't be used in a job's `env`, only here.)
       - id: toolchain
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cache/esphome
             ~/.platformio
-          key: ${{ env.TOOLCHAIN_KEY }}
+          key: firmware-toolchain-${{ hashFiles('poetry.lock', 'esphome/packages/board.yaml') }}
       - run: make -C esphome compile
       # Saved by main alone, and only when there was none: the toolchain does not change between builds, and a copy for
       # every branch would push the Rust build's cache out of the repository's 10 GB.
@@ -89,7 +87,7 @@ jobs:
           path: |
             ~/.cache/esphome
             ~/.platformio
-          key: ${{ env.TOOLCHAIN_KEY }}
+          key: firmware-toolchain-${{ hashFiles('poetry.lock', 'esphome/packages/board.yaml') }}
       - name: Summary
         run: |
           bin=$(find esphome/.esphome -name firmware.ota.bin -size +0 | head -n 1)
