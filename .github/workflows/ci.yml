@@ -86,7 +86,8 @@ jobs:
       # and the user are made here so that it has something to find; it runs nothing.
       - name: Check the units
         run: |
-          sudo systemd-sysusers deploy/home-display.sysusers
+          sudo install -m 0644 deploy/home-display.sysusers /etc/sysusers.d/home-display.conf
+          sudo systemd-sysusers /etc/sysusers.d/home-display.conf
           sudo install -m 0755 /bin/true /usr/local/bin/home-display-server
           sudo install -m 0755 /bin/true /usr/local/bin/home-display-health-check
           systemd-analyze verify deploy/home-display.service deploy/home-display-health.service deploy/home-display-health.timer
