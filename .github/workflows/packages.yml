@@ -1,0 +1,131 @@
+name: packages
+
+on:
+  pull_request:
+    paths:
+      - deploy/**
+      - "!deploy/**/*.md"
+      - src/main.rs
+      - src/cli.rs
+      - .github/scripts/build-packages.sh
+      - .github/actions/install-nfpm/**
+      - .github/workflows/packages.yml
+  # The release runs this first (release-please.yml), so a package that does not install is not attached to a release.
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: packages-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 5
+  # As the release is built, so what is tried is what is shipped.
+  RUSTFLAGS: -C target-cpu=x86-64-v3
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Builds the program and the packages once, for the two jobs below to try.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --release --locked --bin home-display-server --bin displayctl
+      - uses: ./.github/actions/install-nfpm
+      - run: bash .github/scripts/build-packages.sh 0.0.0-test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          retention-days: 1
+
+  # Installs the .deb on this machine, which is Ubuntu under systemd: the scripts run for real, and so does the service.
+  deb:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+      - name: Install
+        run: sudo apt-get install --yes ./home-display-server_*_amd64.deb
+      - name: What was put where
+        run: |
+          id home-display
+          test "$(stat -c '%U:%G %a' /etc/home-display/config.toml)" = "root:home-display 640"
+          test "$(stat -c '%U:%G %a' /var/lib/home-display)" = "home-display:home-display 700"
+          # The first install made the certificate authority, as the service's user.
+          sudo test -f /var/lib/home-display/pki/root.key
+          test -x /usr/bin/home-display-server && test -x /usr/bin/displayctl
+          systemd-analyze verify /usr/lib/systemd/system/home-display.service /usr/lib/systemd/system/home-display-health.timer
+      - name: Start it
+        run: |
+          sudo systemctl enable --now home-display home-display-health.timer
+          for _ in $(seq 30); do
+            curl --fail --silent http://127.0.0.1:8080/healthz && break
+            sleep 2
+          done
+          echo
+          systemctl is-active home-display
+          journalctl -u home-display --no-pager | tail -n 20
+      - name: Upgrade in place
+        run: |
+          # The same package again: the configuration and the authority stay, and the service is restarted.
+          before=$(sudo sha256sum /var/lib/home-display/pki/root.key)
+          sudo apt-get install --yes --reinstall ./home-display-server_*_amd64.deb
+          test "$before" = "$(sudo sha256sum /var/lib/home-display/pki/root.key)"
+          systemctl is-active home-display
+      - name: Remove
+        run: |
+          sudo apt-get remove --yes home-display-server
+          test ! -e /usr/bin/home-display-server
+          ! systemctl is-active --quiet home-display
+          # The data and the configuration are kept.
+          sudo test -f /var/lib/home-display/pki/root.key
+          test -f /etc/home-display/config.toml
+
+  # Installs the .rpm in Fedora. A container has no systemd running, so the service is not started: what is tried is the user, the
+  # files, their owners, and the scripts, which must not need systemd running.
+  rpm:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+      - name: Install in Fedora
+        run: |
+          docker run --rm --volume "$PWD:/packages:ro" fedora:latest bash -euxo pipefail -c '
+            dnf install --assumeyes /packages/home-display-server-*.rpm
+            id home-display
+            test "$(stat -c "%U:%G %a" /etc/home-display/config.toml)" = "root:home-display 640"
+            test "$(stat -c "%U:%G %a" /var/lib/home-display)" = "home-display:home-display 700"
+            test -f /var/lib/home-display/pki/root.key
+            test -x /usr/bin/home-display-server
+            rpm --verify home-display-server || true
+            # The scripts on removal, which must not need a running systemd either.
+            dnf remove --assumeyes home-display-server
+            test ! -e /usr/bin/home-display-server
+            test -f /var/lib/home-display/pki/root.key
+          '

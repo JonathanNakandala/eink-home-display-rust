@@ -1,0 +1,17 @@
+name: install-nfpm
+description: >
+  Installs nfpm, which makes the .deb and .rpm, at a fixed version and checked against the checksum its release published.
+  Change both together to update it (Dependabot does not know about this one).
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        version=2.48.0
+        sha256=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+        curl --fail --silent --show-error --location --output "$RUNNER_TEMP/nfpm.tar.gz" \
+          "https://github.com/goreleaser/nfpm/releases/download/v${version}/nfpm_${version}_Linux_x86_64.tar.gz"
+        echo "${sha256}  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum --check
+        sudo tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C /usr/local/bin nfpm
+        nfpm --version

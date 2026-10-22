@@ -48,10 +48,16 @@ jobs:
     if: ${{ needs.release-please.outputs.firmware_release_created == 'true' }}
     uses: ./.github/workflows/firmware.yml
 
+  # That the packages install, and that the service starts from them (packages.yml), on this commit.
+  verify-packages:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/packages.yml
+
   # Here and not in a workflow of its own that listens for `release: published`: a release made with the workflow's
   # token does not start other workflows, so that one would never run.
   build-server:
-    needs: [release-please, verify]
+    needs: [release-please, verify, verify-packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -87,14 +93,17 @@ jobs:
         run: bash .github/scripts/smoke-test.sh
       - name: Package
         run: bash .github/scripts/package-release.sh "$VERSION"
+      - uses: ./.github/actions/install-nfpm
+      - name: Packages
+        run: bash .github/scripts/build-packages.sh "$VERSION"
       - name: Summary
         run: |
           {
             echo "### ${TAG}"
             echo '```'
             cat dist/*.sha256
-            ls -lh dist/*.tar.gz | awk '{print $5, $9}'
+            ls -lh dist/*.tar.gz dist/*.deb dist/*.rpm | awk '{print $5, $9}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Attach to the release
-        run: gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber
+        run: gh release upload "$TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.sha256 --clobber
