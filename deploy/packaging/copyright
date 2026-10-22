@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: home-display-server
+Source: https://github.com/JonathanNakandala/eink-home-display-rust
+
+Files: *
+Copyright: 2024-2026 Jonathan Nakandala
+License: Expat or Apache-2.0
+ The program may be used under the MIT licence (Expat) or the Apache licence 2.0, as you choose. Their texts are in LICENSE-MIT and
+ LICENSE-APACHE in this directory (/usr/share/doc/home-display-server/).
+ .
+ The program contains other people's software, each under its own licence, whose terms ask that their notices go with it. They are
+ all in THIRD_PARTY_LICENSES.txt in this directory.

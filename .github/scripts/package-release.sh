@@ -16,6 +16,9 @@ cp -r deploy config/example.toml config/quiet_times.toml "dist/${name}/"
 # The installer and its guide at the top, where someone who has unpacked the archive looks first. install.sh finds the rest in deploy/.
 install -m 0755 deploy/install.sh "dist/${name}/install.sh"
 cp deploy/INSTALL.md "dist/${name}/INSTALL.md"
+# The licences, which ask to go with every copy: ours, the choice of two, and everything the program contains (made by
+# third-party-licences.sh, which has to run first).
+cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.txt "dist/${name}/"
 
 # The archive says root, not whoever the runner was, and the same input gives the same bytes: sorted entries, and the
 # time of the commit instead of now.

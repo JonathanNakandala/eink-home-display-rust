@@ -1,0 +1,46 @@
+name: licences
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: licences-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Every file has an author and a licence (REUSE.toml, LICENSES/), and every licence used has its text. Seconds, so it runs on
+  # every change, firmware and documents too: a new file there needs a licence as much as any.
+  reuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # The version the files were checked with, and charset-normalizer, which it needs to read a file's encoding.
+      - run: pipx run --spec 'reuse[charset-normalizer]==6.2.0' reuse lint
+
+  # Every crate the Linux program is built from has a licence on the list in about.toml, and the notices file can be made: what a
+  # release ships. A new dependency with another licence stops here, to be looked at.
+  third-party:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/install-cargo-about
+      - run: bash .github/scripts/third-party-licences.sh

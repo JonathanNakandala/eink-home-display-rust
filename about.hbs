@@ -1,0 +1,26 @@
+Third-party licences
+====================
+
+home-display-server is licensed under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE). It contains the software below, each under
+its own licence, whose terms ask that this notice is kept with every copy. Generated from Cargo.lock by cargo-about; the fonts and
+the icons are at the end.
+
+Licences in use
+---------------
+{{#each overview}}
+  {{{name}}}: {{count}} crate(s)
+{{/each}}
+
+{{#each licenses}}
+
+================================================================================
+{{{name}}}
+================================================================================
+
+Used by:
+{{#each used_by}}
+  - {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} <{{{crate.repository}}}>{{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

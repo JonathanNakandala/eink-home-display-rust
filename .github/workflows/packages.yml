@@ -9,6 +9,8 @@ on:
       - src/cli.rs
       - .github/scripts/build-packages.sh
       - .github/actions/install-nfpm/**
+      - .github/actions/install-cargo-about/**
+      - .github/scripts/third-party-licences.sh
       - .github/workflows/packages.yml
   # The release runs this first (release-please.yml), so a package that does not install is not attached to a release.
   workflow_call:
@@ -48,6 +50,8 @@ jobs:
           shared-key: release
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release --locked --bin home-display-server --bin displayctl
+      - uses: ./.github/actions/install-cargo-about
+      - run: bash .github/scripts/third-party-licences.sh
       - uses: ./.github/actions/install-nfpm
       - run: bash .github/scripts/build-packages.sh 0.0.0-test
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -77,6 +81,9 @@ jobs:
           # The first install made the certificate authority, as the service's user.
           sudo test -f /var/lib/home-display/pki/root.key
           test -x /usr/bin/home-display-server && test -x /usr/bin/displayctl
+          # The licences, which ask to go with every copy.
+          test -s /usr/share/doc/home-display-server/THIRD_PARTY_LICENSES.txt
+          test -s /usr/share/doc/home-display-server/LICENSE-MIT && test -s /usr/share/doc/home-display-server/LICENSE-APACHE
           systemd-analyze verify /usr/lib/systemd/system/home-display.service /usr/lib/systemd/system/home-display-health.timer
       - name: Start it
         run: |
