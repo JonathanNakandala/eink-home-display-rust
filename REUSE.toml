@@ -39,11 +39,11 @@ precedence = "override"
 SPDX-FileCopyrightText = "2016 Red Hat, Inc."
 SPDX-License-Identifier = "OFL-1.1"
 
-# The weather icons, which are also inside the server's program. Where they came from was not written down: the file names
-# (013-sun-8.svg) and the "Capa_1" in them are those of an icon pack from a website of free icons, which usually asks for a credit.
-# TODO: find the pack, put its author and licence here, and remove LICENSES/LicenseRef-Provenance-Not-Recorded.txt.
+# The weather icons, which are also inside the server's program: Prosymbols, from Flaticon, whose free licence asks that they are
+# credited (LICENSES/LicenseRef-Flaticon-Free.txt says what is known of it, and that Flaticon's own terms are the authority).
+# THIRD_PARTY_LICENSES.txt carries the credit with every release. If they are ever replaced by an openly licensed set, change this.
 [[annotations]]
 path = "templates/weather_icons/**"
 precedence = "override"
-SPDX-FileCopyrightText = "Not recorded: see LICENSES/LicenseRef-Provenance-Not-Recorded.txt"
-SPDX-License-Identifier = "LicenseRef-Provenance-Not-Recorded"
+SPDX-FileCopyrightText = "Prosymbols (https://www.flaticon.com/authors/prosymbols), from Flaticon"
+SPDX-License-Identifier = "LicenseRef-Flaticon-Free"
