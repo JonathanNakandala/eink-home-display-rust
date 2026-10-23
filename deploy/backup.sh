@@ -67,7 +67,9 @@ exec 9> "$BACKUP_DIR/.lock"
 flock -n 9 || { log "another backup is running"; exit 0; }
 
 # A second one in the same second must not write over the first, so a number is added when the name is taken.
-base="home-display-$(date -u +%Y%m%dT%H%M%SZ)-$(hostname -s)"
+# uname -n and not hostname: a minimal Fedora has no hostname command.
+host=$(uname -n)
+base="home-display-$(date -u +%Y%m%dT%H%M%SZ)-${host%%.*}"
 name="$base$suffix"
 number=1
 while [ -e "$BACKUP_DIR/$name" ]; do
