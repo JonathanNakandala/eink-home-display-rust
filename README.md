@@ -62,9 +62,3 @@ The server is **MIT OR Apache-2.0** ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE
 **GPL-3.0-only** ([esphome/LICENSE](esphome/LICENSE)), because it is built with ESPHome. They are separate programs that talk over
 HTTP. What the server contains of other people's is in `THIRD_PARTY_LICENSES.txt` with every release, and who wrote and licensed
 each file is in [REUSE.toml](REUSE.toml) (checked in CI). Weather icons: [Meteocons](https://github.com/basmilius/meteocons) (MIT).
-
-## Security
-
-The server is for a home network. Its pages (`/image`, `/status`, `/metrics`) have no password, like the picture itself: keep its ports on your
-own network, and see "Back up" in [deploy/INSTALL.md](deploy/INSTALL.md) for the one secret that cannot be replaced (the certificate
-authority's root key). There is no security contact: use it with that in mind.
