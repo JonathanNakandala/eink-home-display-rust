@@ -1,0 +1,25 @@
+name: rust-toolchain
+description: >
+  Installs the current stable Rust, with the components asked for, using rustup, which the runner already has: no action from
+  anyone else needed for it. The toolchain is what is current when the job runs.
+
+inputs:
+  components:
+    description: Components to add, separated by spaces, for example "clippy" or "rustfmt".
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        # Through the environment and not into the script text: an input is a value and not code.
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        args=()
+        for component in $COMPONENTS; do args+=(--component "$component"); done
+        rustup toolchain install stable --profile minimal "${args[@]}" --no-self-update
+        rustup default stable
+        rustc --version

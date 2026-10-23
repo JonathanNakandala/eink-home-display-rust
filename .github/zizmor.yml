@@ -1,0 +1,7 @@
+# zizmor's configuration, read by .github/workflows/lint-workflows.yml (and by zizmor when run by hand: `zizmor .github`).
+rules:
+  # GitHub's new `$/` syntax (July 2026) for a reference to this repository's own actions and reusable workflows, which is also, in
+  # effect, a pin. They are written `./` here, which works everywhere. The release workflow calls reusable workflows this way and cannot
+  # be tried before a release, so it is not moved to a syntax this new until that is known to work for them.
+  self-repository:
+    disable: true

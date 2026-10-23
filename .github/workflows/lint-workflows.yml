@@ -1,0 +1,49 @@
+name: lint-workflows
+
+on:
+  pull_request:
+    paths:
+      - .github/**
+  push:
+    branches: [main]
+    paths:
+      - .github/**
+  # An action is found to be vulnerable, or a pinned commit turns out not to be what its tag was: a week is long enough to wait.
+  schedule:
+    - cron: "23 5 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: lint-workflows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Mistakes in the workflows themselves: expressions, the names of contexts and outputs, and, with shellcheck, the shell in every `run:`.
+  actionlint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-actionlint
+      - run: actionlint -color
+
+  # What makes a workflow unsafe: permissions wider than a job needs, values from outside put into scripts, actions that are not pinned
+  # or that are known to be vulnerable, credentials left in the checkout. Fails on a finding and marks the line in the pull request;
+  # .github/zizmor.yml says what is switched off, and why. zizmor is at a fixed version so that a new rule cannot fail the build by itself.
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          version: "1.31.1"
+          advanced-security: false
+          annotations: true
