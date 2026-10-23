@@ -53,6 +53,14 @@ check "not the admin socket" fails grep -q "admin.sock" <<< "$listing"
 check "not a half-written file" fails grep -q "\.tmp" <<< "$listing"
 check "not the cache or the pictures" fails grep -q -E "cache|served" <<< "$listing"
 
+echo "two in the same second"
+before=$(find "$BACKUP_DIR" -maxdepth 1 -name 'home-display-*.tar.gz' | wc -l)
+BACKUP_KEEP=20 "$backup" > /dev/null
+BACKUP_KEEP=20 "$backup" > /dev/null
+check "are both kept" test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'home-display-*.tar.gz' | wc -l)" -eq $((before + 2))
+rm -f "$BACKUP_DIR"/home-display-*
+"$backup" > /dev/null
+
 echo "how many are kept"
 for _ in 1 2 3 4; do
     sleep 1.1
@@ -104,6 +112,11 @@ echo "$public" > "$work/recipients.txt"
 BACKUP_AGE_RECIPIENTS_FILE="$work/recipients.txt" "$backup" > /dev/null
 check "a recipients file works too" test "$(find "$BACKUP_DIR" -maxdepth 1 -name '*.tar.gz.age' | wc -l)" -ge 2
 
+echo "the programs an option needs, missing"
+count=$(find "$BACKUP_DIR" -maxdepth 1 -name 'home-display-*' | wc -l)
+check "no age: refused" fails env BACKUP_AGE_BIN=no-such-age BACKUP_AGE_RECIPIENT="$public" "$backup"
+check "and nothing was made, in particular nothing unencrypted" test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'home-display-*' | wc -l)" -eq "$count"
+
 echo "a copy to another place"
 mkdir "$work/dest"
 BACKUP_DEST="$work/dest/" "$backup" > /dev/null
@@ -111,6 +124,9 @@ check "the archive is there" test -n "$(find "$work/dest" -name 'home-display-*.
 check "and its checksum" test -n "$(find "$work/dest" -name 'home-display-*.tar.gz.sha256' | head -n 1)"
 check "a destination that fails is a failure" fails env BACKUP_DEST=/proc/nowhere/ "$backup"
 check "but the backup here was made" test -n "$(find "$BACKUP_DIR" -maxdepth 1 -newer "$work/dest" -name 'home-display-*' | head -n 1)"
+count=$(find "$BACKUP_DIR" -maxdepth 1 -name 'home-display-*.tar.gz' | wc -l)
+check "no rsync: a failure" fails env BACKUP_RSYNC_BIN=no-such-rsync BACKUP_DEST="$work/dest/" "$backup"
+check "but the backup here was still made" test "$(find "$BACKUP_DIR" -maxdepth 1 -name 'home-display-*.tar.gz' | wc -l)" -eq $((count + 1))
 
 echo
 if [ "$failed" -ne 0 ]; then echo "FAILED" >&2; exit 1; fi
