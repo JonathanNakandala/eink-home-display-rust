@@ -1,0 +1,19 @@
+name: install-actionlint
+description: >
+  Installs actionlint, which checks workflow files (and the shell in their steps with shellcheck), at a fixed version and
+  checked against the checksum its release published. Change both together to update it (Dependabot does not know about this one).
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        version=1.7.12
+        sha256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        file="actionlint_${version}_linux_amd64.tar.gz"
+        curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$file" \
+          "https://github.com/rhysd/actionlint/releases/download/v${version}/${file}"
+        echo "${sha256}  $RUNNER_TEMP/$file" | sha256sum --check
+        tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" actionlint
+        sudo install -m 0755 "$RUNNER_TEMP/actionlint" /usr/local/bin/actionlint
+        actionlint -version

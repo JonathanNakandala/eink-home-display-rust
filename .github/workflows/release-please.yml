@@ -9,9 +9,9 @@ concurrency:
   group: release-please
   cancel-in-progress: false
 
+# Read-only unless a job asks for more: the jobs that call other workflows only read, and the ones that write ask for it themselves.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 defaults:
   run:
@@ -20,6 +20,9 @@ defaults:
 jobs:
   release-please:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write # release-please makes the release (a draft) and the changelog commit
+      pull-requests: write # and opens and updates the release pull requests
     outputs:
       # For the server (the "." package) only: the firmware's are `esphome--release_created` and the like.
       release_created: ${{ steps.release.outputs.release_created }}
@@ -28,7 +31,7 @@ jobs:
       firmware_release_created: ${{ steps.release.outputs.esphome--release_created }}
       firmware_tag_name: ${{ steps.release.outputs.esphome--tag_name }}
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           config-file: .github/release-please/config.json
@@ -98,15 +101,13 @@ jobs:
       TAG: ${{ needs.release-please.outputs.tag_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The commit the release was made at, which is the one just pushed.
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: ./.github/actions/rust-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # A release build shares nothing with the dev profile that CI caches, so it has a key of its own. Saved, so the
           # next release recompiles little more than this program.
@@ -131,7 +132,7 @@ jobs:
             echo "### ${TAG}"
             echo '```'
             cat dist/*.sha256
-            ls -lh dist/*.tar.gz dist/*.deb dist/*.rpm | awk '{print $5, $9}'
+            du -h dist/*.tar.gz dist/*.deb dist/*.rpm
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       # A signed statement, kept by GitHub, that each of these files was built by this repository's workflow at this commit (SLSA build
