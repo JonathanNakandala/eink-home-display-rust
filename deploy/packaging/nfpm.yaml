@@ -102,6 +102,10 @@ contents:
   - src: deploy/INSTALL.md
     dst: /usr/share/doc/home-display-server/INSTALL.md
     file_info: {mode: 0644}
+  # What INSTALL.md calls deploy/README.md: pairing, what is kept, layouts, monitoring.
+  - src: deploy/README.md
+    dst: /usr/share/doc/home-display-server/README.md
+    file_info: {mode: 0644}
   # The licences: ours, the choice of two, and everything the program contains, which asks to go with every copy
   # (.github/scripts/third-party-licences.sh makes the last, and has to run first).
   - src: deploy/packaging/copyright

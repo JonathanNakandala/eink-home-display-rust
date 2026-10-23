@@ -89,6 +89,7 @@ jobs:
           test -x /usr/bin/home-display-server && test -x /usr/bin/displayctl
           # The licences, which ask to go with every copy.
           test -s /usr/share/doc/home-display-server/THIRD_PARTY_LICENSES.txt
+          test -s /usr/share/doc/home-display-server/INSTALL.md && test -s /usr/share/doc/home-display-server/README.md
           test -s /usr/share/doc/home-display-server/LICENSE-MIT && test -s /usr/share/doc/home-display-server/LICENSE-APACHE
           systemd-analyze verify /usr/lib/systemd/system/home-display.service /usr/lib/systemd/system/home-display-health.timer
       - name: Start it
