@@ -1,0 +1,48 @@
+# Run by home-display-backup.timer. Installed by install.sh (or the package) next to home-display.service.
+# What it does, and its settings (/etc/home-display/backup.env): home-display-backup, and INSTALL.md, "Back up".
+[Unit]
+Description=Back up the home display server's authority, displays and configuration
+Documentation=file:///usr/share/doc/home-display-server/INSTALL.md
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# Made by root with nothing taken away (the + does that), closed to everyone but root, since what is in it opens the authority.
+# It is in the sandbox's list of writable paths below with a - (the sandbox is set up before this runs, and the folder is not
+# there yet the first time: without the -, systemd stops with 226/NAMESPACE).
+ExecStartPre=+/usr/bin/install -d -m 0700 /var/backups/home-display
+ExecStart=/usr/local/bin/home-display-backup
+# Quiet when there is little to do; the machine has other work.
+Nice=19
+IOSchedulingClass=idle
+UMask=0077
+
+# Sandboxing. It runs as root, since the files are private to the service's user, but is given only what it uses: to read the
+# state and the configuration, to write the backups, and the network for an off-machine copy if one is set.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=-/var/backups/home-display
+ReadOnlyPaths=-/var/lib/home-display /etc/home-display
+# Read-only and not hidden: an ssh key for BACKUP_DEST is usually in /root/.ssh.
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Left out on purpose: RestrictSUIDSGID, which on this kind of kernel (found on WSL2's) makes tar fail to look at any file with
+# "Function not implemented", and which would only stop it making setuid files, which a backup does not.
+#
+# Root reads a file that belongs to another user only with this, and nothing else is needed.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# A failed backup is a failed unit: `systemctl --failed`, and the journal. To be told, add a drop-in with OnFailure= (INSTALL.md).

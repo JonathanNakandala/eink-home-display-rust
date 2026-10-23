@@ -48,13 +48,16 @@ if [ -d "$HERE/deploy" ]; then DEPLOY="$HERE/deploy"; else DEPLOY="$HERE"; fi
 
 if [ "$uninstall" -eq 1 ]; then
     say "Removing the program and the units"
-    systemctl disable --now home-display-health.timer home-display.service 2> /dev/null || true
+    systemctl disable --now home-display-backup.timer home-display-health.timer home-display.service 2> /dev/null || true
     rm -f "$UNIT_DIR/home-display.service" "$UNIT_DIR/home-display-health.service" "$UNIT_DIR/home-display-health.timer" \
+        "$UNIT_DIR/home-display-backup.service" "$UNIT_DIR/home-display-backup.timer" \
         "$BIN_TARGET/home-display-server" "$BIN_TARGET/displayctl" "$BIN_TARGET/home-display-health-check" \
+        "$BIN_TARGET/home-display-backup" "$BIN_TARGET/home-display-restore" \
         /etc/sysusers.d/home-display.conf
     systemctl daemon-reload
-    echo "Kept: $CONFIG_DIR and $STATE_DIR (the certificate authority, the displays, the keys), and the user $SERVICE_USER."
-    echo "To remove them too:  rm -r $CONFIG_DIR $STATE_DIR && userdel $SERVICE_USER"
+    echo "Kept: $CONFIG_DIR and $STATE_DIR (the certificate authority, the displays, the keys), the backups in"
+    echo "/var/backups/home-display, and the user $SERVICE_USER."
+    echo "To remove them too:  rm -r $CONFIG_DIR $STATE_DIR /var/backups/home-display && userdel $SERVICE_USER"
     exit 0
 fi
 
@@ -67,7 +70,9 @@ if [ -z "$bin_dir" ]; then
     fi
 fi
 for file in "$bin_dir/home-display-server" "$bin_dir/displayctl" "$DEPLOY/home-display.service" "$DEPLOY/home-display-health.service" \
-    "$DEPLOY/home-display-health.timer" "$DEPLOY/health-check.sh" "$DEPLOY/home-display.sysusers" "$DEPLOY/config.production.toml"; do
+    "$DEPLOY/home-display-health.timer" "$DEPLOY/health-check.sh" "$DEPLOY/home-display.sysusers" "$DEPLOY/config.production.toml" \
+    "$DEPLOY/home-display-backup.service" "$DEPLOY/home-display-backup.timer" "$DEPLOY/backup.sh" "$DEPLOY/restore.sh" \
+    "$DEPLOY/backup.env"; do
     [ -r "$file" ] || die "$file is missing"
 done
 
@@ -89,8 +94,11 @@ say "The program"
 # Both in /usr/local/bin: the place SELinux already labels as programs, so a service may run them on Fedora too.
 install -m 0755 "$bin_dir/home-display-server" "$bin_dir/displayctl" "$BIN_TARGET/"
 install -m 0755 "$DEPLOY/health-check.sh" "$BIN_TARGET/home-display-health-check"
+install -m 0755 "$DEPLOY/backup.sh" "$BIN_TARGET/home-display-backup"
+install -m 0755 "$DEPLOY/restore.sh" "$BIN_TARGET/home-display-restore"
 if command -v restorecon > /dev/null; then
-    restorecon -F "$BIN_TARGET/home-display-server" "$BIN_TARGET/displayctl" "$BIN_TARGET/home-display-health-check" 2> /dev/null || true
+    restorecon -F "$BIN_TARGET/home-display-server" "$BIN_TARGET/displayctl" "$BIN_TARGET/home-display-health-check" \
+        "$BIN_TARGET/home-display-backup" "$BIN_TARGET/home-display-restore" 2> /dev/null || true
 fi
 
 say "The configuration"
@@ -100,6 +108,10 @@ else
     install -m 0640 -o root -g "$SERVICE_USER" "$DEPLOY/config.production.toml" "$CONFIG"
     echo "Made $CONFIG. Edit [location] (and add your departure boards) before the displays rely on it."
 fi
+# The backup's settings: root only (they may name a key), and never replaced, like the configuration.
+if [ ! -e "$CONFIG_DIR/backup.env" ]; then
+    install -m 0600 -o root -g root "$DEPLOY/backup.env" "$CONFIG_DIR/backup.env"
+fi
 # As the user the service runs as, in its folder, so what the check makes there is the service's own. A configuration that
 # is wrong stops the installation here, with the program's own words, and not at a start that then fails in the journal.
 check=(--config-file "$CONFIG" --check-config)
@@ -107,17 +119,18 @@ if [ "$fresh" -eq 1 ]; then check+=(--init-pki); fi
 runuser -u "$SERVICE_USER" -- env -C "$STATE_DIR" RUST_LOG=warn "$BIN_TARGET/home-display-server" "${check[@]}" \
     || die "the configuration in $CONFIG is not valid: fix it and run install.sh again"
 if [ "$fresh" -eq 1 ]; then
-    echo "(First install: the certificate authority was made, if the configuration uses one. Back up $STATE_DIR.)"
+    echo "(First install: the certificate authority was made, if the configuration uses one. The daily backup keeps it safe: see below.)"
 fi
 
 say "The service"
-install -m 0644 "$DEPLOY/home-display.service" "$DEPLOY/home-display-health.service" "$DEPLOY/home-display-health.timer" "$UNIT_DIR/"
+install -m 0644 "$DEPLOY/home-display.service" "$DEPLOY/home-display-health.service" "$DEPLOY/home-display-health.timer" \
+    "$DEPLOY/home-display-backup.service" "$DEPLOY/home-display-backup.timer" "$UNIT_DIR/"
 systemctl daemon-reload
-systemctl enable home-display.service home-display-health.timer
+systemctl enable home-display.service home-display-health.timer home-display-backup.timer
 if [ "$start" -eq 1 ]; then
     # Starts it the first time and restarts it on an upgrade, so the new program is the one running.
     systemctl restart home-display.service
-    systemctl start home-display-health.timer
+    systemctl start home-display-health.timer home-display-backup.timer
 else
     echo "Enabled, not started (--no-start): systemctl start home-display"
 fi
@@ -136,6 +149,7 @@ Next:
                    sudo -u $SERVICE_USER displayctl -c $CONFIG credential set --help
   Let a display join (HTTPS):
                    sudo -u $SERVICE_USER displayctl -c $CONFIG window open
-  Back up $STATE_DIR: the certificate authority's root key is the one thing that cannot be remade.
+  Backups:         one a day is kept in /var/backups/home-display (two weeks of them). To encrypt them, and to copy them to
+                   another machine, which a disk that fails needs: /etc/home-display/backup.env. Try one now: sudo home-display-backup
   More:            INSTALL.md, and README.md for everything the server does.
 MESSAGE

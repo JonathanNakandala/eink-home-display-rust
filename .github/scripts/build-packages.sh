@@ -13,11 +13,13 @@ for bin in home-display-server displayctl; do
 done
 install -m 0755 deploy/health-check.sh "$stage/home-display-health-check"
 install -m 0755 deploy/preflight.sh "$stage/home-display-preflight"
+install -m 0755 deploy/backup.sh "$stage/home-display-backup"
+install -m 0755 deploy/restore.sh "$stage/home-display-restore"
 # A package's programs are in /usr/bin; /usr/local/bin is for what an administrator installs by hand (install.sh).
-for unit in home-display.service home-display-health.service; do
+for unit in home-display.service home-display-health.service home-display-backup.service; do
     sed 's#/usr/local/bin#/usr/bin#g' "deploy/${unit}" > "$stage/${unit}"
 done
-cp deploy/home-display-health.timer "$stage/"
+cp deploy/home-display-health.timer deploy/home-display-backup.timer "$stage/"
 
 for packager in deb rpm; do
     VERSION="$version" nfpm package --config deploy/packaging/nfpm.yaml --packager "$packager" --target dist/

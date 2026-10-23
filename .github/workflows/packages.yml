@@ -95,6 +95,19 @@ jobs:
           echo
           systemctl is-active home-display
           journalctl -u home-display --no-pager | tail -n 20
+      - name: Back up
+        run: |
+          # The unit itself, sandbox and all, which is what the timer runs: the sandbox is where it can go wrong.
+          systemd-analyze verify /usr/lib/systemd/system/home-display-backup.service /usr/lib/systemd/system/home-display-backup.timer
+          sudo systemctl start home-display-backup.service
+          test "$(systemctl show home-display-backup.service -p Result --value)" = success
+          # The folder is closed to everyone but root, so it takes root to look in it.
+          archive=$(sudo bash -c 'ls /var/backups/home-display/home-display-*.tar.gz | head -n 1')
+          sudo test -s "$archive" && sudo test -s "$archive.sha256"
+          sudo home-display-restore --list "$archive" | grep -q 'pki/root.key$'
+          sudo home-display-restore --list "$archive" | grep -q 'etc/home-display/config.toml$'
+          test "$(sudo stat -c '%a %U' /etc/home-display/backup.env)" = "600 root"
+          journalctl -u home-display-backup --no-pager | tail -n 5
       - name: Upgrade in place
         run: |
           # The same package again: the configuration and the authority stay, and the service is restarted.
@@ -107,9 +120,10 @@ jobs:
           sudo apt-get remove --yes home-display-server
           test ! -e /usr/bin/home-display-server
           ! systemctl is-active --quiet home-display
-          # The data and the configuration are kept.
+          # The data, the backups and the configuration are kept.
           sudo test -f /var/lib/home-display/pki/root.key
           sudo test -f /etc/home-display/config.toml
+          sudo test -d /var/backups/home-display
 
   # Installs the .rpm in Fedora. A container has no systemd running, so the service is not started: what is tried is the user, the
   # files, their owners, and the scripts, which must not need systemd running.
@@ -130,6 +144,12 @@ jobs:
             test "$(stat -c "%U:%G %a" /var/lib/home-display)" = "home-display:home-display 700"
             test -f /var/lib/home-display/pki/root.key
             test -x /usr/bin/home-display-server
+            # The backup and the restore, which do not need systemd running (the timer does, and is tried on the Ubuntu one).
+            home-display-backup
+            archive=$(ls /var/backups/home-display/home-display-*.tar.gz | head -n 1)
+            test -s "$archive.sha256"
+            home-display-restore --list "$archive" | grep -q "pki/root.key$"
+            test "$(stat -c "%a %U" /etc/home-display/backup.env)" = "600 root"
             rpm --verify home-display-server || true
             # The scripts on removal, which must not need a running systemd either.
             dnf remove --assumeyes home-display-server

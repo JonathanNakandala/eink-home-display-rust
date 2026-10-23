@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up the home display server every day
+
+[Timer]
+# A day is enough: what is backed up changes when a display joins or its certificate is renewed (every few weeks), or you set a
+# key. Not at midnight with everything else on the machine, and not all at once if there are several: a random hour after it.
+OnCalendar=daily
+RandomizedDelaySec=1h
+# A machine that was off at the time is backed up soon after it starts, and not a day later.
+Persistent=true
+AccuracySec=10min
+
+[Install]
+WantedBy=timers.target

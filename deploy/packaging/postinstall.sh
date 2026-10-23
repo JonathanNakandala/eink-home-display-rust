@@ -32,8 +32,10 @@ if [ "$fresh" -eq 1 ]; then
 
 home-display-server is installed and not started.
   1. Edit /etc/home-display/config.toml: at least [location], and your departure boards.
-  2. sudo systemctl enable --now home-display home-display-health.timer
+  2. sudo systemctl enable --now home-display home-display-health.timer home-display-backup.timer
   3. sudo home-display-preflight          (what on this machine would stop it: Chrome, the firewall, the clock)
+  4. Backups, one a day: to encrypt them, and to copy them to another machine (a disk that fails takes this one's with it),
+     edit /etc/home-display/backup.env. Try one: sudo home-display-backup
 More: /usr/share/doc/home-display-server/INSTALL.md
 MESSAGE
 fi
