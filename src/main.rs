@@ -39,21 +39,18 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
+    // Before logging starts, so that what --help and --version print is theirs alone. `exit` is clap's own: those two print what
+    // was asked for and end with 0, and a mistake is said (which flag, and what is allowed) and ends with 2. They used to print
+    // "invalid arguments" and end with 1, so --help was an error, and anything that tries the program by running it with --help
+    // (the release's smoke test, the installer's check) failed.
+    let args = cli::Args::try_parse().unwrap_or_else(|e| e.exit());
+
     bootstrap::init_logging("debug");
     // TODO: Figure out how to log the current log level as RUST_LOG should by able to override via try_from_default_env
     tracing::info!(
         "Logging initialized at {} level",
         tracing::level_filters::STATIC_MAX_LEVEL
     );
-
-    let args = match cli::Args::try_parse() {
-        Ok(args) => args,
-        Err(e) => {
-            log::error!("Failed to parse command-line arguments: {}", e);
-            eprintln!("Error: Invalid command-line arguments. Use --help for usage information.");
-            std::process::exit(1);
-        }
-    };
 
     let config = bootstrap::load_valid_application_config(&args.config_file)?;
 
