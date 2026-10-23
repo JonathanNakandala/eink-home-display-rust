@@ -13,7 +13,9 @@ join over HTTPS with a certificate from the server's own private authority, whic
    National Rail, TfL         on a cron schedule                                (ESPHome firmware in esphome/)
 ```
 
-**Status:** version 0.x. It runs here; its interfaces may still change between releases.
+**Status:** a personal project, provided **as is**: no support, no promise to answer issues or take contributions, and its interfaces may
+change between releases. It runs here, and it is published so that it can be read and used, under the licences below, which come without
+warranty.
 
 ## What is in it
 
@@ -60,8 +62,3 @@ The server is **MIT OR Apache-2.0** ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE
 **GPL-3.0-only** ([esphome/LICENSE](esphome/LICENSE)), because it is built with ESPHome. They are separate programs that talk over
 HTTP. What the server contains of other people's is in `THIRD_PARTY_LICENSES.txt` with every release, and who wrote and licensed
 each file is in [REUSE.toml](REUSE.toml) (checked in CI). Weather icons: [Meteocons](https://github.com/basmilius/meteocons) (MIT).
-
-## Security
-
-[SECURITY.md](SECURITY.md) says how to report a problem. The server's pages (`/image`, `/status`, `/metrics`) have no password, like the
-picture: keep its ports on your own network.
