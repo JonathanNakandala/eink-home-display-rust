@@ -33,7 +33,7 @@ the service**, since the configuration wants editing first:
 
 ```sh
 sudoedit /etc/home-display/config.toml
-sudo systemctl enable --now home-display home-display-health.timer
+sudo systemctl enable --now home-display home-display-health.timer home-display-backup.timer
 sudo home-display-preflight            # what on this machine would stop it: Chrome, the firewall, the clock
 ```
 
@@ -134,9 +134,53 @@ install the older archive.
 
 ## Back up
 
-Back up `/var/lib/home-display`, above all `pki/root.key` and `pki/root.pem`: without them every display has to be paired again.
-What is in it, and what to do if a part is lost: `deploy/README.md`, "What is kept, and what to back up". Stopping the service
-first gives a copy that cannot be half written; a copy taken while it runs is safe for the files, which are written whole.
+A backup a day is made for you, and kept for two weeks, by `home-display-backup.timer` (`install.sh` turns it on, and for a package it is one of
+the commands it prints; a machine that was off at the time is backed up soon after it starts). It holds what cannot be made again: the certificate
+authority (`pki/root.key` above all, since without it every display has to be paired again), the list of displays, the keys kept
+with `--remember`, and the configuration. The pictures and the cache are made again by the next render, so they are left out.
+
+```sh
+sudo home-display-backup                          # one now, the same way the timer makes it
+sudo ls -l /var/backups/home-display              # the .tar.gz (or .tar.gz.age) and its .sha256, readable by root alone
+systemctl list-timers home-display-backup.timer   # when the next one is
+journalctl -u home-display-backup                 # what the last ones did
+```
+
+**A backup on the same disk does not survive that disk.** Both of these are optional, and both are settings in
+`/etc/home-display/backup.env` (root only; the file explains each):
+
+- **Copy it to another machine** (`BACKUP_DEST`): each backup is copied there with `rsync`, over ssh with a key that has no
+  password, or to a folder that is a mounted disk. A destination that is down makes the backup fail loudly (`systemctl --failed`),
+  after the one here is made. Copies are added and never removed: the destination decides how long to keep them.
+- **Encrypt it** (`BACKUP_AGE_RECIPIENT`): the archive holds the root key and any API keys in plain text. Make a key pair
+  *somewhere else* with `age-keygen -o key.txt`, keep `key.txt` safe (a password manager is a good place), and put its public key
+  (it starts `age1`) in `backup.env`. This machine can then make backups and cannot open them, so a stolen disk or a copy on
+  someone else's server is not the authority. Needs the `age` package.
+
+**Restore**, on this machine or a new one. On a new one, install first (the package or `install.sh`), so that the user the files
+belong to exists, and do not start the service:
+
+```sh
+sudo systemctl stop home-display
+sudo home-display-restore --list FILE             # what is in it, changing nothing (add --identity key.txt for an .age one)
+sudo home-display-restore FILE                    # checks it, puts what is there aside as *.before-restore-TIME, restores it
+sudo home-display-restore --identity key.txt FILE.age
+sudo systemctl start home-display
+```
+
+It refuses an archive that does not match its `.sha256`, that holds anything but the authority's folder and the configuration, or
+that has a path that climbs out of them, and it never deletes what was there. **Try a restore once, now**, into a folder, to know it
+works before you need it: `sudo RESTORE_ROOT=/tmp/try home-display-restore FILE` (and delete `/tmp/try` afterwards: it holds the
+keys).
+
+**To be told when a backup fails**, add a drop-in that starts something on failure, for example one that sends a message:
+
+```sh
+sudo systemctl edit home-display-backup      # then add:  [Unit]  OnFailure=notify-me@%n.service   (your own unit)
+```
+
+Not backed up: the cache and the pictures (remade), and the logs (the journal's). What each file in `pki/` is, and what to do if
+only part of it is lost: `deploy/README.md`, "What is kept, and what to back up".
 
 ## Remove
 

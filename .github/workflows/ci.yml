@@ -82,6 +82,12 @@ jobs:
           persist-credentials: false
       # The runner has shellcheck. Warnings and errors fail the job; style notes do not.
       - run: shellcheck --severity=warning deploy/*.sh deploy/packaging/*.sh .github/scripts/*.sh
+      # The backup and the restore, tried on a made-up copy of the server's state in a folder of their own (as root, which they
+      # require): what is kept and what is left out, how many, a restore, a damaged archive, encryption, a copy elsewhere.
+      - name: Backup and restore
+        run: |
+          sudo apt-get install --yes --no-install-recommends age rsync
+          sudo bash .github/scripts/test-backup.sh
       # systemd's own check of the units: unknown settings, a missing user or program, a timer without its service. The program
       # and the user are made here so that it has something to find; it runs nothing.
       - name: Check the units
@@ -90,4 +96,6 @@ jobs:
           sudo systemd-sysusers /etc/sysusers.d/home-display.conf
           sudo install -m 0755 /bin/true /usr/local/bin/home-display-server
           sudo install -m 0755 /bin/true /usr/local/bin/home-display-health-check
-          systemd-analyze verify deploy/home-display.service deploy/home-display-health.service deploy/home-display-health.timer
+          sudo install -m 0755 /bin/true /usr/local/bin/home-display-backup
+          systemd-analyze verify deploy/home-display.service deploy/home-display-health.service deploy/home-display-health.timer \
+            deploy/home-display-backup.service deploy/home-display-backup.timer
