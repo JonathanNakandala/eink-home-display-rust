@@ -13,7 +13,9 @@ join over HTTPS with a certificate from the server's own private authority, whic
    National Rail, TfL         on a cron schedule                                (ESPHome firmware in esphome/)
 ```
 
-**Status:** version 0.x. It runs here; its interfaces may still change between releases.
+**Status:** a personal project, provided **as is**: no support, no promise to answer issues or take contributions, and its interfaces may
+change between releases. It runs here, and it is published so that it can be read and used, under the licences below, which come without
+warranty.
 
 ## What is in it
 
@@ -63,5 +65,6 @@ each file is in [REUSE.toml](REUSE.toml) (checked in CI). Weather icons: [Meteoc
 
 ## Security
 
-[SECURITY.md](SECURITY.md) says how to report a problem. The server's pages (`/image`, `/status`, `/metrics`) have no password, like the
-picture: keep its ports on your own network.
+The server is for a home network. Its pages (`/image`, `/status`, `/metrics`) have no password, like the picture itself: keep its ports on your
+own network, and see "Back up" in [deploy/INSTALL.md](deploy/INSTALL.md) for the one secret that cannot be replaced (the certificate
+authority's root key). There is no security contact: use it with that in mind.
