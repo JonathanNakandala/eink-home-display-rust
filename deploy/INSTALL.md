@@ -15,6 +15,20 @@ by the test suite; **not yet run on a real machine**, so treat the first install
 
 `install.sh` checks all of this first (`preflight.sh`, which you can also run on its own) and says what to do about anything.
 
+## Check what you downloaded
+
+A release's tag and files are locked once it is published (GitHub's immutable releases), and GitHub signs a statement of what it
+holds. Check a download against it, with the GitHub CLI, before installing it:
+
+```sh
+gh release verify home-display-server-vX.Y.Z -R JonathanNakandala/eink-home-display-rust
+gh release verify-asset home-display-server-vX.Y.Z home-display-server-X.Y.Z-x86_64-v3-linux.tar.gz -R JonathanNakandala/eink-home-display-rust
+```
+
+The first says the release is what GitHub published; the second that this file is one of its files. The `.sha256` beside each file
+checks that it arrived whole (`sha256sum --check`), which the signed statement does for where it came from. A release made before
+the setting was turned on has no statement to check.
+
 ## Install with a package
 
 Each release has a `.deb` (Ubuntu, Debian) and an `.rpm` (Fedora, RHEL and relatives) beside the archive. The package does what

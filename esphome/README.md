@@ -207,7 +207,10 @@ The firmware is released on its own, as `home-display-firmware-esphome` (the fir
 
 Each package has its own release pull request, made from the conventional commits (`feat:`, `fix:`, …) that changed files in
 its path: a commit that changes only `esphome/` releases only the firmware; one that changes both releases both. Merging the
-pull request tags the release and writes the changelog. `make lint` checks the setup (`scripts/check_release.py`) so a
+pull request writes the changelog and makes the release as a **draft**; the workflow publishes it once the firmware has built (the
+server's, once its archive and packages are attached), which is when its tag is made. The repository's releases are immutable: a
+published release's tag and files cannot be changed, so a release that is wrong is replaced by the next version, and a run that fails
+before publishing leaves a draft, which re-running the failed jobs publishes (`.github/release-please/README.md`). `make lint` checks the setup (`scripts/check_release.py`) so a
 hand-edited version or a dropped marker is found before GitHub finds it.
 
 **The version is in the firmware.** `packages/version.yaml` holds `firmware_version` (release-please finds the line by its
@@ -221,9 +224,10 @@ secrets (Wi-Fi, over-the-air password, an optional `server_root`) are yours, so 
 not a binary. A release is also only the firmware tree: the server's version that goes with it is the one in the
 changelog's notes.
 
-**The first release:** release-please needs a starting point for each package. After merging the setup, tag the commit that is
-the baseline for each (`git tag home-display-server-v0.1.0 <sha>` and `git tag home-display-firmware-esphome-v0.1.0 <sha>`,
-then push the tags), or the first release pull request will list every commit in the repository's history.
+**The first release:** there are no baseline tags, so release-please counts the repository's whole history as the first release, and
+its notes (0.2.0) list all of it, which is accurate and long; from then on each release lists what changed since the last. (To
+shorten a first release, tag the commit to count as 0.1.0 for each package, `git tag home-display-server-v0.1.0 <sha>` and
+`git tag home-display-firmware-esphome-v0.1.0 <sha>`, and push the tags, before merging its pull request.)
 
 ### Resetting a display's pairing
 
