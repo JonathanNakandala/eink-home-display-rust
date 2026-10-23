@@ -93,12 +93,22 @@ fn open(socket: Socket, address: SocketAddr) -> std::io::Result<TcpListener> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use tokio::net::TcpStream;
 
     use super::*;
 
-    async fn connects(address: SocketAddr) -> bool {
-        TcpStream::connect(address).await.is_ok()
+    /// Whether `listener` is handed a connection made to `address`. Whether the connection succeeds is not the question: another
+    /// program, or another test running at the same time, may be listening at that address (the same port number on the other IP
+    /// version is a different socket), and then it succeeds without this listener having heard anything.
+    async fn hears(listener: &TcpListener, address: SocketAddr) -> bool {
+        let attempt = tokio::spawn(TcpStream::connect(address));
+        let heard = tokio::time::timeout(Duration::from_millis(300), listener.accept())
+            .await
+            .is_ok();
+        attempt.abort();
+        heard
     }
 
     #[tokio::test]
@@ -109,8 +119,14 @@ mod tests {
             return;
         }
         let port = bound.listener.local_addr().unwrap().port();
-        assert!(connects(SocketAddr::from(([127, 0, 0, 1], port))).await);
-        assert!(connects(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))).await);
+        assert!(hears(&bound.listener, SocketAddr::from(([127, 0, 0, 1], port))).await);
+        assert!(
+            hears(
+                &bound.listener,
+                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))
+            )
+            .await
+        );
     }
 
     #[tokio::test]
@@ -118,8 +134,14 @@ mod tests {
         let bound = bind("0.0.0.0:0".parse().unwrap()).unwrap();
         assert_eq!(bound.families, Families::V4);
         let port = bound.listener.local_addr().unwrap().port();
-        assert!(connects(SocketAddr::from(([127, 0, 0, 1], port))).await);
-        assert!(!connects(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))).await);
+        assert!(hears(&bound.listener, SocketAddr::from(([127, 0, 0, 1], port))).await);
+        assert!(
+            !hears(
+                &bound.listener,
+                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))
+            )
+            .await
+        );
     }
 
     #[tokio::test]
@@ -130,8 +152,36 @@ mod tests {
         };
         assert_eq!(bound.families, Families::V6);
         let port = bound.listener.local_addr().unwrap().port();
-        assert!(connects(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))).await);
-        assert!(!connects(SocketAddr::from(([127, 0, 0, 1], port))).await);
+        assert!(
+            hears(
+                &bound.listener,
+                SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))
+            )
+            .await
+        );
+        assert!(!hears(&bound.listener, SocketAddr::from(([127, 0, 0, 1], port))).await);
+    }
+
+    /// What made the old check fail now and then: something else listening at the same port number on the other IP version. A
+    /// connection to it succeeds, and this listener has no part in it.
+    #[tokio::test]
+    async fn a_stranger_on_the_other_ip_version_is_not_taken_for_this_listener() {
+        let Ok(bound) = bind("[::1]:0".parse().unwrap()) else {
+            eprintln!("skipped: this host has no IPv6 loopback");
+            return;
+        };
+        let port = bound.listener.local_addr().unwrap().port();
+        let Ok(stranger) = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
+        else {
+            eprintln!("skipped: that port is taken on IPv4 already");
+            return;
+        };
+        assert!(
+            TcpStream::connect(stranger.local_addr().unwrap())
+                .await
+                .is_ok()
+        );
+        assert!(!hears(&bound.listener, SocketAddr::from(([127, 0, 0, 1], port))).await);
     }
 
     #[tokio::test]
