@@ -1,0 +1,25 @@
+# cargo-deny: what the dependencies may be. Run by .github/workflows/audit.yml on every change to Cargo.lock, and weekly, because an
+# advisory is published about a crate that has not changed. (Licences are checked by cargo-about, about.toml, which also makes the
+# notices a release carries; they are not repeated here.)
+
+[advisories]
+version = 2
+# Known vulnerabilities and unmaintained crates fail the check. What is ignored is here with the reason, so that it is looked at again.
+ignore = [
+    # zip 8.6, which headless_chrome uses to unpack the Chromium it downloads when there is no Chrome on the machine (the "fetch"
+    # feature: --bundled-chrome, or nothing installed). The three advisories are about an archive that makes the unpacking write
+    # outside its folder or keep setuid bits; the archive is Google's, fetched over HTTPS, and a Chrome from the package manager
+    # (which INSTALL.md asks for) means none of it runs. The fix is zip 9, which headless_chrome 1.0.22 does not use yet.
+    # TODO: remove these when headless_chrome moves to zip 9 (or drop its "fetch" feature if that fallback is not wanted).
+    { id = "RUSTSEC-2026-0367", reason = "zip: SUID/SGID kept when unpacking the downloaded Chromium; fixed in zip 9, not yet in headless_chrome" },
+    { id = "RUSTSEC-2026-0368", reason = "zip: symlinks out of the folder when unpacking the downloaded Chromium; fixed in zip 9, not yet in headless_chrome" },
+    { id = "RUSTSEC-2026-0369", reason = "zip: permissions applied through symlinks when unpacking the downloaded Chromium; fixed in zip 9, not yet in headless_chrome" },
+    # paste is a macro crate (no code at run time) that is no longer maintained; nothing here chooses it, and no fork has taken its place.
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained macro crate pulled in by a dependency; no replacement yet" },
+]
+
+[sources]
+# Crates from crates.io only: nothing from a git repository or another registry, which no advisory database watches.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
