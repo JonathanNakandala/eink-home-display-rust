@@ -23,8 +23,22 @@ use home_display_server::scheduler::{
     PERIODIC_IDLE_TIMEOUT, log_schedule, run_periodically_from, shutdown_signal,
 };
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// How long a stopping program waits for work that cannot be cancelled before it goes without it. Well inside the 20 s that
+/// the unit allows (`TimeoutStopSec`) after which systemd kills it and calls the stop a failure.
+const STOP_WAIT: Duration = Duration::from_secs(5);
+
+fn main() -> Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = runtime.block_on(run());
+    // A render may be inside a blocking call that nothing can interrupt: Chrome being downloaded or started, which takes up to 30 s.
+    // Dropping the runtime, as `#[tokio::main]` does, waits for every such call however long it takes, and a stop then ran out
+    // the unit's time and was killed. This waits a few seconds and goes: what is left is a thread, and ending the process ends it
+    // (and systemd ends any Chrome it left, which it does by the whole cgroup).
+    runtime.shutdown_timeout(STOP_WAIT);
+    result
+}
+
+async fn run() -> Result<()> {
     bootstrap::init_logging("debug");
     // TODO: Figure out how to log the current log level as RUST_LOG should by able to override via try_from_default_env
     tracing::info!(
