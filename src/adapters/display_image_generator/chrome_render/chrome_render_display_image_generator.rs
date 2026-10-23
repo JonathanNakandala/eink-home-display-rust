@@ -268,6 +268,126 @@ fn output_within(mut command: Command, timeout: Duration) -> Result<String, Stri
     Ok(String::from_utf8_lossy(&printed).trim().to_owned())
 }
 
+/// How long a Chrome that failed to launch is given to say why when it is run again.
+const EXPLAIN_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Lines Chrome prints that say nothing about why it did not start: a service has no session bus, sound or GPU, and says so.
+const CHROME_NOISE: &[&str] = &[
+    "dbus", "DBus", "ALSA", "udev", "gcm", "GCM", "vaapi", "libva",
+];
+
+/// The Chrome that was downloaded into `dir` (headless_chrome does not say where it put it): the program called chrome, a few
+/// folders down.
+fn find_downloaded_chrome(dir: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "chrome.exe"
+    } else {
+        "chrome"
+    };
+    let mut folders = vec![(dir.to_owned(), 0)];
+    while let Some((folder, depth)) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() && depth < 3 {
+                folders.push((path, depth + 1));
+            } else if path.file_name().is_some_and(|n| n == name) && path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// What `chrome` says when it is run as the server runs it, for the log. Launching reads this and throws it away, so a Chrome that
+/// would not start (a sandbox the system refuses, a library missing) failed with a timeout and no reason.
+fn explain_launch_failure(chrome: &Path, timeout: Duration) -> String {
+    let profile = match tempfile::tempdir() {
+        Ok(profile) => profile,
+        Err(e) => {
+            return format!(
+                "Chrome at {} did not start; no reason could be found ({e})",
+                chrome.display()
+            );
+        }
+    };
+    let mut child = match Command::new(chrome)
+        .args([
+            "--headless",
+            "--disable-gpu",
+            "--no-first-run",
+            "--remote-debugging-port=0",
+        ])
+        .arg(format!("--user-data-dir={}", profile.path().display()))
+        .arg("about:blank")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            return format!(
+                "Chrome at {} did not start: it could not be run ({e})",
+                chrome.display()
+            );
+        }
+    };
+    let printed = Arc::new(Mutex::new(String::new()));
+    if let Some(mut stderr) = child.stderr.take() {
+        let printed = Arc::clone(&printed);
+        // Not joined: a Chrome that was killed can leave helpers holding the pipe open.
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 4096];
+            while let Ok(n) = stderr.read(&mut buffer) {
+                if n == 0 {
+                    break;
+                }
+                let mut printed = printed.lock().unwrap_or_else(|e| e.into_inner());
+                printed.push_str(&String::from_utf8_lossy(&buffer[..n]));
+            }
+        });
+    }
+    let deadline = Instant::now() + timeout;
+    let exited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) | Err(_) => break None,
+        }
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    let Some(status) = exited else {
+        return format!(
+            "Chrome at {} did not start for the server but stayed up when run again by itself; the cause is not in Chrome's own output",
+            chrome.display()
+        );
+    };
+    // The reader may be a moment behind the exit.
+    std::thread::sleep(Duration::from_millis(100));
+    let printed = printed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let lines: Vec<&str> = printed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !CHROME_NOISE.iter().any(|noise| line.contains(noise)))
+        .collect();
+    if lines.is_empty() {
+        return format!(
+            "Chrome at {} exited ({status}) when run again and printed nothing to say why",
+            chrome.display()
+        );
+    }
+    let said = lines[lines.len().saturating_sub(8)..]
+        .iter()
+        .map(|line| line.chars().take(300).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n    ");
+    format!(
+        "Chrome at {} exited ({status}) when run again; it said:\n    {said}",
+        chrome.display()
+    )
+}
+
 impl ChromeRenderDisplayImageGenerator {
     pub fn new(chrome_install_dir: PathBuf, idle_timeout: Duration, source: ChromeSource) -> Self {
         Self {
@@ -391,26 +511,36 @@ impl Inner {
         let fetcher_options = FetcherOptions::default()
             .with_allow_download(true)
             .with_install_dir(Some(self.chrome_install_dir.clone()));
+        let path = match self.source {
+            ChromeSource::PreferSystem => find_system_chrome(),
+            ChromeSource::Bundled => {
+                log::info!(
+                    "Using the bundled Chrome in {}",
+                    self.chrome_install_dir.display()
+                );
+                None
+            }
+        };
         let launcher_options = LaunchOptions::default_builder()
             .window_size(Some(window))
             .devtools(false)
             .headless(true)
             // None makes headless_chrome download its pinned revision instead.
-            .path(match self.source {
-                ChromeSource::PreferSystem => find_system_chrome(),
-                ChromeSource::Bundled => {
-                    log::info!(
-                        "Using the bundled Chrome in {}",
-                        self.chrome_install_dir.display()
-                    );
-                    None
-                }
-            })
+            .path(path.clone())
             .fetcher_options(fetcher_options)
             .idle_browser_timeout(self.idle_timeout)
             .build()?;
-        let browser =
-            Browser::new(launcher_options).context("Failed to create browser instance")?;
+        let browser = match Browser::new(launcher_options) {
+            Ok(browser) => browser,
+            Err(e) => {
+                // The crate reads what Chrome says on the way out and drops it; the reason is in that.
+                let chrome = path.or_else(|| find_downloaded_chrome(&self.chrome_install_dir));
+                if let Some(chrome) = chrome {
+                    log::warn!("{}", explain_launch_failure(&chrome, EXPLAIN_TIMEOUT));
+                }
+                return Err(e).context("Failed to create browser instance");
+            }
+        };
         match browser.get_version() {
             Ok(v) => log::info!(
                 "Rendering with {} (protocol {})",
@@ -668,6 +798,57 @@ mod tests {
             "waited {:?} for a program that was to be given up on after 0.3 s",
             began.elapsed()
         );
+    }
+
+    /// A Chrome that does not start: it complains and exits.
+    #[cfg(unix)]
+    fn failing_chrome(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let chrome = dir.join("chrome");
+        std::fs::write(
+            &chrome,
+            "#!/bin/sh\necho 'dbus: no session bus' >&2\necho 'FATAL:sandbox_linux.cc: No usable sandbox!' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&chrome, std::fs::Permissions::from_mode(0o755)).unwrap();
+        chrome
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_chrome_that_will_not_start_has_its_reason_given_without_the_noise() {
+        let dir = tempfile::tempdir().unwrap();
+        let chrome = failing_chrome(dir.path());
+
+        let said = explain_launch_failure(&chrome, Duration::from_secs(20));
+
+        assert!(said.contains("No usable sandbox"), "{said}");
+        assert!(said.contains("exited"), "{said}");
+        assert!(!said.contains("dbus"), "{said}");
+    }
+
+    #[test]
+    fn a_chrome_that_cannot_be_run_is_said_to_be_so() {
+        let said = explain_launch_failure(Path::new("/nowhere/chrome"), Duration::from_secs(20));
+
+        assert!(said.contains("could not be run"), "{said}");
+    }
+
+    #[test]
+    fn a_downloaded_chrome_is_found_in_its_folders() {
+        let name = if cfg!(windows) {
+            "chrome.exe"
+        } else {
+            "chrome"
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("linux-1095492").join("chrome-linux");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("chrome_sandbox"), "").unwrap();
+        std::fs::write(folder.join(name), "").unwrap();
+
+        assert_eq!(find_downloaded_chrome(dir.path()), Some(folder.join(name)));
+        assert_eq!(find_downloaded_chrome(&dir.path().join("none")), None);
     }
 
     #[test]
