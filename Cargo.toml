@@ -3,6 +3,11 @@ name = "home-display-server"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Draws a dashboard (weather, train departures) and serves it to e-ink displays"
+repository = "https://github.com/JonathanNakandala/eink-home-display-rust"
+readme = "README.md"
+# The highest of what the dependencies need (aes 1.89); edition 2024 alone needs 1.85. Built and tested on the current stable.
+rust-version = "1.89"
 # Released as programs (see deploy/), not as a crate, so `cargo publish` is not to be run by mistake.
 publish = false
 
