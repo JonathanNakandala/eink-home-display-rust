@@ -6,9 +6,12 @@ name: home-display CodeQL configuration
 queries:
   - uses: security-extended
 
-# What is not analysed: what the tests and the build make, and what is not ours.
+# What is not analysed: the tests and their data, the examples, and what the build makes. (Tests written inside a source file, in a
+# #[cfg(test)] module, cannot be left out by path: an alert there is dismissed with the reason "used in tests".)
 paths-ignore:
   - "**/tests/**"
+  - "**/tests.rs"
+  - examples
   - testdata
   - target
   - esphome/.esphome
