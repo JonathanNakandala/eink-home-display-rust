@@ -151,5 +151,5 @@ Next:
                    sudo -u $SERVICE_USER displayctl -c $CONFIG window open
   Backups:         one a day is kept in /var/backups/home-display (two weeks of them). To encrypt them, and to copy them to
                    another machine, which a disk that fails needs: /etc/home-display/backup.env. Try one now: sudo home-display-backup
-  More:            INSTALL.md, and README.md for everything the server does.
+  More:            INSTALL.md, and deploy/README.md for everything the server does.
 MESSAGE

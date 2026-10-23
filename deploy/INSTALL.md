@@ -1,7 +1,10 @@
 # Installing the server on Linux
 
-For a machine that runs the server all the time, under systemd: Ubuntu, Debian, Fedora and the like. Tested for syntax and
-by the test suite; **not yet run on a real machine**, so treat the first install as a test and read the output.
+For a machine that runs the server all the time, under systemd: Ubuntu, Debian, Fedora and the like. Tested in CI (Ubuntu under
+systemd, and Fedora) and in WSL, but **not yet run on a real server**, so treat the first install as a test and read the output.
+
+The server's full documentation, which this guide refers to as `deploy/README.md` (pairing displays, what each file in `pki/` is,
+layouts, monitoring), is in the archive under `deploy/`, and in a package it is `/usr/share/doc/home-display-server/README.md`.
 
 ## What you need
 
