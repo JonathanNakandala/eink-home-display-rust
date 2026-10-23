@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Restarts the service when it is running but not working: /healthz says `stale` (a scheduled render is long overdue), or does not
 # answer at all. Run every few minutes by home-display-health.timer, as root, and installed as
 # /usr/local/bin/home-display-health-check.

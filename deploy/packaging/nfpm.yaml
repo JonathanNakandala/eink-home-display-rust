@@ -4,14 +4,20 @@ name: home-display-server
 arch: amd64
 platform: linux
 version: ${VERSION}
+# The packaging revision: 0.2.0-1. For a deb it makes the package non-native, so that changelog.gz may be the upstream changelog
+# (release-please's, in Markdown) and not a Debian-format one; for an rpm it is the Release.
+release: "1"
 section: net
 priority: optional
 maintainer: home-display-server contributors <JonathanNakandala@users.noreply.github.com>
 description: |
-  Draws a dashboard (weather, train departures) and serves it to e-ink displays.
-  Renders with Chrome on a schedule and serves the picture over HTTP and HTTPS,
-  announced over mDNS. Edit /etc/home-display/config.toml, then
-  systemctl enable --now home-display home-display-health.timer home-display-backup.timer.
+  Dashboard server for e-ink displays
+  Draws a dashboard (weather, train departures) with Chrome on a schedule,
+  and serves the picture to e-ink displays over HTTP and HTTPS, announced
+  over mDNS.
+  .
+  Edit /etc/home-display/config.toml, then enable the service and its
+  timers: see /usr/share/doc/home-display-server/INSTALL.md.
 homepage: https://github.com/JonathanNakandala/eink-home-display-rust
 license: MIT OR Apache-2.0
 
@@ -28,14 +34,11 @@ suggests:
   - age
   - rsync
 overrides:
+  # Debian's essential packages (tar, gzip, findutils, util-linux) are always there, and policy is not to depend on them.
   deb:
     depends:
       - systemd
       - curl
-      - util-linux
-      - tar
-      - gzip
-      - findutils
       - libc6 (>= 2.39)
   rpm:
     depends:
@@ -99,12 +102,19 @@ contents:
     dst: /etc/home-display/backup.env
     type: config|noreplace
     file_info: {mode: 0600, owner: root, group: root}
+  # Plain files: nfpm's `type: doc` and `type: license` are for an rpm only, and a deb leaves such files out of the package.
   - src: deploy/INSTALL.md
     dst: /usr/share/doc/home-display-server/INSTALL.md
     file_info: {mode: 0644}
   # What INSTALL.md calls deploy/README.md: pairing, what is kept, layouts, monitoring.
   - src: deploy/README.md
     dst: /usr/share/doc/home-display-server/README.md
+    file_info: {mode: 0644}
+  - src: dist/pkg/changelog.gz
+    dst: /usr/share/doc/home-display-server/changelog.gz
+    file_info: {mode: 0644}
+  - src: dist/pkg/changelog.Debian.gz
+    dst: /usr/share/doc/home-display-server/changelog.Debian.gz
     file_info: {mode: 0644}
   # The licences: ours, the choice of two, and everything the program contains, which asks to go with every copy
   # (.github/scripts/third-party-licences.sh makes the last, and has to run first).

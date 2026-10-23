@@ -1,15 +1,39 @@
 # Run by home-display-health.timer. Installed by install.sh next to home-display.service.
 [Unit]
 Description=Restart the home display server if it is running but not working
+Documentation=file:///usr/share/doc/home-display-server/INSTALL.md https://github.com/JonathanNakandala/eink-home-display-rust/blob/main/deploy/INSTALL.md
 After=home-display.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/home-display-health-check
-# Needs to be root to restart a service; otherwise as little as that takes. The count of failures in a row is kept in /run.
+# Needs to be root to restart a service, and nothing else: no capability, nothing written but the count of failures in a row (in /run).
 RuntimeDirectory=home-display-health
 RuntimeDirectoryPreserve=yes
+UMask=0077
+
+# Sandboxing: it runs curl against this machine and asks systemd, over its socket, to restart one service.
 NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# systemd's own socket (AF_UNIX), and the network for curl (IPv4 and IPv6, since the server listens on both).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

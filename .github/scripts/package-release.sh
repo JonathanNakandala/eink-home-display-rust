@@ -9,8 +9,9 @@ bins=(home-display-server displayctl)
 
 rm -rf dist
 mkdir -p "dist/${name}"
+# -s: stripped of its symbol table, like a package's programs.
 for bin in "${bins[@]}"; do
-    install -m 0755 "target/release/${bin}" "dist/${name}/"
+    install -m 0755 -s "target/release/${bin}" "dist/${name}/"
 done
 cp -r deploy config/example.toml config/quiet_times.toml "dist/${name}/"
 # The installer and its guide at the top, where someone who has unpacked the archive looks first. install.sh finds the rest in deploy/.

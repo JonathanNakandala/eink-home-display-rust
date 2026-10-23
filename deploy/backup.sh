@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Backs up what cannot be made again: the certificate authority (its root key above all), the list of displays that have
 # joined, the keys kept with --remember, and the configuration. Installed as home-display-backup, and run every day by
 # home-display-backup.timer; run it by hand as root the same way. Restoring is home-display-restore.
