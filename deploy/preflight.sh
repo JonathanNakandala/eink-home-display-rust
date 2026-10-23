@@ -87,6 +87,22 @@ if have timedatectl; then
 fi
 have curl && ok "curl (for the health check)" || warn "curl is missing: the health check needs it"
 
+# --- backups: the daily timer, and the programs the options in backup.env need (the backup stops with a message if one is missing,
+# but that is a night too late)
+if [ -f /etc/home-display/backup.env ]; then
+    if systemctl is-enabled --quiet home-display-backup.timer 2> /dev/null; then
+        ok "the daily backup is on (home-display-backup.timer)"
+    else
+        warn "the daily backup is not on: sudo systemctl enable --now home-display-backup.timer"
+    fi
+    if grep -Eq '^[[:space:]]*BACKUP_AGE_(RECIPIENT|RECIPIENTS_FILE)=' /etc/home-display/backup.env 2> /dev/null; then
+        have age && ok "age, which the backup's encryption needs" || warn "backup.env asks for encryption and age is not installed, so no backup will be made: apt install age, or dnf install age"
+    fi
+    if grep -Eq '^[[:space:]]*BACKUP_DEST=' /etc/home-display/backup.env 2> /dev/null; then
+        have rsync && ok "rsync, which the copy to another machine needs" || warn "backup.env asks for a copy to another machine and rsync is not installed: apt install rsync, or dnf install rsync"
+    fi
+fi
+
 # --- the network, unless the server is already running it
 if systemctl is-active --quiet home-display.service 2> /dev/null; then
     ok "home-display is running (its ports are not checked)"

@@ -32,6 +32,9 @@ BACKUP_AGE_RECIPIENTS_FILE="${BACKUP_AGE_RECIPIENTS_FILE:-}"
 BACKUP_DEST="${BACKUP_DEST:-}"
 BACKUP_SSH_KEY="${BACKUP_SSH_KEY:-}"
 BACKUP_SSH_OPTIONS="${BACKUP_SSH_OPTIONS:--o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$BACKUP_DIR/known_hosts}"
+# The two programs the options use. Not normally set: for one that is somewhere else, and for the tests.
+AGE="${BACKUP_AGE_BIN:-age}"
+RSYNC="${BACKUP_RSYNC_BIN:-rsync}"
 
 log() { echo "home-display-backup: $*"; }
 die() { echo "home-display-backup: $*" >&2; exit 1; }
@@ -51,13 +54,11 @@ if [ -n "$BACKUP_AGE_RECIPIENTS_FILE" ]; then
     age_args+=(-R "$BACKUP_AGE_RECIPIENTS_FILE")
 fi
 if [ "${#age_args[@]}" -gt 0 ]; then
-    command -v age > /dev/null || die "encryption is asked for and age is not installed (apt install age, or dnf install age)"
+    # Nothing is made without it: an unencrypted backup when an encrypted one was asked for is the one thing not to do quietly.
+    command -v "$AGE" > /dev/null || die "encryption is asked for (BACKUP_AGE_*) and age is not installed, so no backup was made: apt install age, or dnf install age"
     suffix=".tar.gz.age"
 else
     suffix=".tar.gz"
-fi
-if [ -n "$BACKUP_DEST" ]; then
-    command -v rsync > /dev/null || die "BACKUP_DEST is set and rsync is not installed"
 fi
 
 install -d -m 0700 "$BACKUP_DIR"
@@ -65,7 +66,14 @@ install -d -m 0700 "$BACKUP_DIR"
 exec 9> "$BACKUP_DIR/.lock"
 flock -n 9 || { log "another backup is running"; exit 0; }
 
-name="home-display-$(date -u +%Y%m%dT%H%M%SZ)-$(hostname -s)$suffix"
+# A second one in the same second must not write over the first, so a number is added when the name is taken.
+base="home-display-$(date -u +%Y%m%dT%H%M%SZ)-$(hostname -s)"
+name="$base$suffix"
+number=1
+while [ -e "$BACKUP_DIR/$name" ]; do
+    number=$((number + 1))
+    name="$base-$number$suffix"
+done
 partial=$(mktemp "$BACKUP_DIR/.partial.XXXXXX")
 trap 'rm -f "$partial"' EXIT
 
@@ -77,7 +85,7 @@ sources=("${pki#/}")
 set +e
 if [ "${#age_args[@]}" -gt 0 ]; then
     tar --create --file=- --directory=/ --exclude='*.sock' --exclude='*.tmp' --warning=no-file-changed "${sources[@]}" \
-        | gzip --no-name | age "${age_args[@]}" > "$partial"
+        | gzip --no-name | "$AGE" "${age_args[@]}" > "$partial"
     status=("${PIPESTATUS[@]}")
 else
     tar --create --file=- --directory=/ --exclude='*.sock' --exclude='*.tmp' --warning=no-file-changed "${sources[@]}" \
@@ -116,9 +124,13 @@ done < <(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'home-display-*.tar.gz'
 
 # Off this machine, last, so that a destination that is down does not stop the local one: that is made, and this says so.
 if [ -n "$BACKUP_DEST" ]; then
+    # Checked here and not before the backup is made: without rsync the copy cannot be made, and the one here still can.
+    command -v "$RSYNC" > /dev/null || die "BACKUP_DEST is set and rsync is not installed, so it was not copied (the backup here is good: $BACKUP_DIR/$name): apt install rsync, or dnf install rsync"
     ssh_command="ssh $BACKUP_SSH_OPTIONS"
     [ -z "$BACKUP_SSH_KEY" ] || ssh_command="$ssh_command -i $BACKUP_SSH_KEY"
-    if rsync --archive --partial -e "$ssh_command" "$BACKUP_DIR/$name" "$BACKUP_DIR/$name.sha256" "$BACKUP_DEST"; then
+    # 9>&- : without the lock. rsync starts helpers, and one that outlives this script would keep the lock, and every backup after
+    # it would say "another backup is running" and do nothing. --timeout: a copy that stalls ends, and does not hold the unit.
+    if "$RSYNC" --archive --partial --timeout=600 -e "$ssh_command" "$BACKUP_DIR/$name" "$BACKUP_DIR/$name.sha256" "$BACKUP_DEST" 9>&-; then
         log "copied to $BACKUP_DEST"
     else
         die "the copy to $BACKUP_DEST failed; the backup here is good ($BACKUP_DIR/$name)"

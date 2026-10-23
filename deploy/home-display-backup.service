@@ -12,6 +12,8 @@ Type=oneshot
 # there yet the first time: without the -, systemd stops with 226/NAMESPACE).
 ExecStartPre=+/usr/bin/install -d -m 0700 /var/backups/home-display
 ExecStart=/usr/local/bin/home-display-backup
+# A oneshot unit has no limit unless given one, and a copy that hangs would stop every backup after it.
+TimeoutStartSec=2h
 # Quiet when there is little to do; the machine has other work.
 Nice=19
 IOSchedulingClass=idle
