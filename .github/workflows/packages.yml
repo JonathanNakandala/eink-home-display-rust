@@ -90,6 +90,7 @@ jobs:
           # The licences, which ask to go with every copy.
           test -s /usr/share/doc/home-display-server/THIRD_PARTY_LICENSES.txt
           test -s /usr/share/doc/home-display-server/INSTALL.md && test -s /usr/share/doc/home-display-server/README.md
+          test -s /usr/share/doc/home-display-server/changelog.gz && test -s /usr/share/doc/home-display-server/copyright
           test -s /usr/share/doc/home-display-server/LICENSE-MIT && test -s /usr/share/doc/home-display-server/LICENSE-APACHE
           systemd-analyze verify /usr/lib/systemd/system/home-display.service /usr/lib/systemd/system/home-display-health.timer
       - name: Start it
@@ -115,6 +116,19 @@ jobs:
           sudo home-display-restore --list "$archive" | grep -q 'etc/home-display/config.toml$'
           test "$(sudo stat -c '%a %U' /etc/home-display/backup.env)" = "600 root"
           journalctl -u home-display-backup --no-pager | tail -n 5
+      - name: The health check restarts a service that does not answer
+        run: |
+          # Pointed at a port where nothing listens, so /healthz does not answer. The unit is sandboxed (that is what is being tried),
+          # and it restarts the service on the third failure in a row and not before.
+          echo 'HEALTH_URL=http://127.0.0.1:9/healthz' | sudo tee /etc/home-display/health.env > /dev/null
+          before=$(systemctl show home-display.service -p MainPID --value)
+          sudo systemctl start home-display-health.service
+          sudo systemctl start home-display-health.service
+          test "$(systemctl show home-display.service -p MainPID --value)" = "$before"
+          sudo systemctl start home-display-health.service
+          test "$(systemctl show home-display.service -p MainPID --value)" != "$before"
+          systemctl is-active home-display
+          sudo rm /etc/home-display/health.env
       - name: Upgrade in place
         run: |
           # The same package again: the configuration and the authority stay, and the service is restarted.

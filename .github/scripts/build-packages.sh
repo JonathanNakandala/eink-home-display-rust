@@ -8,9 +8,28 @@ stage=dist/pkg
 
 rm -rf "$stage"
 mkdir -p "$stage"
+# -s: stripped of its symbol table, as a package's programs are (a panic still says what and where; only a backtrace's names go).
 for bin in home-display-server displayctl; do
-    install -m 0755 "target/release/${bin}" "$stage/"
+    install -m 0755 -s "target/release/${bin}" "$stage/"
 done
+# The changelog release-please writes, which a package carries as changelog.gz. A build that is not from a release has none yet.
+if [ -f CHANGELOG.md ]; then
+    gzip -9n -c CHANGELOG.md > "$stage/changelog.gz"
+else
+    echo 'No changelog: this was not built from a release.' | gzip -9n > "$stage/changelog.gz"
+fi
+# A deb with a revision (0.2.0-1) carries the upstream changelog as changelog.gz and a Debian one, which says only that there is nothing
+# of Debian's to add, as changelog.Debian.gz, in the format Debian reads.
+{
+    printf 'home-display-server (%s-1) unstable; urgency=medium
+
+' "$version"
+    printf '  * Release %s. What changed is in changelog.gz, in this folder.
+
+' "$version"
+    printf ' -- home-display-server contributors <JonathanNakandala@users.noreply.github.com>  %s
+' "$(date -R)"
+} | gzip -9n > "$stage/changelog.Debian.gz"
 install -m 0755 deploy/health-check.sh "$stage/home-display-health-check"
 install -m 0755 deploy/preflight.sh "$stage/home-display-preflight"
 install -m 0755 deploy/backup.sh "$stage/home-display-backup"

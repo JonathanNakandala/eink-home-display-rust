@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Puts a backup made by home-display-backup back where it was. Installed as home-display-restore.
 #
 #   home-display-restore ARCHIVE                  restore it

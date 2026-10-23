@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Checks that this machine can run the server, before (or after) it is installed, and says what to do about anything that
 # cannot. Changes nothing. Run by install.sh, and on its own:   ./preflight.sh [directory with home-display-server in it]
 #

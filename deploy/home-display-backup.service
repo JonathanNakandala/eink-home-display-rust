@@ -2,7 +2,7 @@
 # What it does, and its settings (/etc/home-display/backup.env): home-display-backup, and INSTALL.md, "Back up".
 [Unit]
 Description=Back up the home display server's authority, displays and configuration
-Documentation=file:///usr/share/doc/home-display-server/INSTALL.md
+Documentation=file:///usr/share/doc/home-display-server/INSTALL.md https://github.com/JonathanNakandala/eink-home-display-rust/blob/main/deploy/INSTALL.md
 After=local-fs.target
 
 [Service]
