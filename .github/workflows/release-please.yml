@@ -26,6 +26,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       firmware_release_created: ${{ steps.release.outputs.esphome--release_created }}
+      firmware_tag_name: ${{ steps.release.outputs.esphome--tag_name }}
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
@@ -33,8 +34,13 @@ jobs:
           config-file: .github/release-please/config.json
           manifest-file: .github/release-please/manifest.json
 
-  # The checks (ci.yml), on the commit about to be released. Release-please makes the release as soon as its pull request
-  # is merged, whatever CI says, so this is what stops a binary being attached to a release made from a failing commit.
+  # Releases are made as drafts (`"draft": true` in the release-please configuration) and published by the jobs below, at the end,
+  # because the repository's releases are immutable: once published, a release's tag is locked and its files can neither be added
+  # to nor changed. So nothing is public until everything has passed and been attached, and a run that fails leaves a draft: fix
+  # it, "Re-run failed jobs" (they use the same outputs, so the same draft and version), and it is published then.
+  #
+  # The checks (ci.yml), on the commit about to be released. Release-please makes the draft as soon as its pull request is merged,
+  # whatever CI says, so this is what stops it being published from a failing commit.
   verify:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
@@ -47,6 +53,21 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.firmware_release_created == 'true' }}
     uses: ./.github/workflows/firmware.yml
+
+  # Publishes the firmware's draft once it has built. Nothing to attach, so this is all there is.
+  publish-firmware:
+    needs: [release-please, verify-firmware]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write # to publish the release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.release-please.outputs.firmware_tag_name }}
+    steps:
+      - name: Publish the release
+        run: gh release edit "$TAG" --draft=false
 
   # That the packages install, and that the service starts from them (packages.yml), on this commit.
   verify-packages:
@@ -110,5 +131,10 @@ jobs:
             ls -lh dist/*.tar.gz dist/*.deb dist/*.rpm | awk '{print $5, $9}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      # To the draft, by its tag: --clobber so that a re-run of this job replaces what a failed one attached.
       - name: Attach to the release
         run: gh release upload "$TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.sha256 --clobber
+      # Last, and only if everything before it passed. From here the release is immutable: its tag is locked to this commit and its
+      # files cannot be changed or removed.
+      - name: Publish the release
+        run: gh release edit "$TAG" --draft=false
