@@ -1,0 +1,16 @@
+# CodeQL's configuration, read by .github/workflows/codeql.yml.
+name: home-display CodeQL configuration
+
+# The default queries and the extra security ones (lower precision, more findings). Not the "quality" queries, which are about style and
+# would be noise here.
+queries:
+  - uses: security-extended
+
+# What is not analysed: what the tests and the build make, and what is not ours.
+paths-ignore:
+  - "**/tests/**"
+  - testdata
+  - target
+  - esphome/.esphome
+  - esphome/build
+  - .venv
