@@ -39,7 +39,7 @@ serde_valid = { version = "3", features = ["toml"] }
 tempfile = "3.10.1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["timeout", "trace", "set-header"] }
+tower-http = { version = "0.7", features = ["timeout", "trace", "set-header"] }
 url = "2"
 futures-util = "0.3"
 trait-variant = "0.1.2"
@@ -82,7 +82,7 @@ tokio = { version = "1", features = ["test-util"] }
 httpmock = "0.8"
 speculoos = "0.13"
 cms = "0.2.3"
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "0.59", default-features = false }
 rqrr = "0.11.0"
 
 [target.'cfg(unix)'.dependencies]
