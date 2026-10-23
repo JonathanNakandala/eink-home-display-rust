@@ -5,6 +5,7 @@ use crate::adapters::display_image_generator::chrome_render::ChromeSource;
 use crate::scheduler::Schedule;
 
 #[derive(clap::Parser)]
+#[command(version)]
 pub struct Args {
     /// Path to application config file
     #[arg(short, long)]
