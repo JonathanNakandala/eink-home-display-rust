@@ -101,6 +101,29 @@ jobs:
           echo
           systemctl is-active home-display
           journalctl -u home-display --no-pager | tail -n 20
+      - name: It draws a picture
+        run: |
+          # The first render, under the unit's sandbox, with the Chrome this machine has: a Chrome that will not start there
+          # (the sandbox, a missing library) is found here and not on someone's display. A source that is down only makes the
+          # state "degraded", so that counts: what is being tried is the picture.
+          for _ in $(seq 60); do
+            state=$(curl --silent http://127.0.0.1:8080/status | jq --raw-output '.state' || true)
+            if [ "$state" = ok ] || [ "$state" = degraded ]; then break; fi
+            sleep 2
+          done
+          if [ "$state" != ok ] && [ "$state" != degraded ]; then
+            echo "::error::no picture after 120 s (state: ${state:-none})"
+            curl --silent http://127.0.0.1:8080/status | jq . || true
+            journalctl -u home-display --no-pager | tail -n 40
+            sysctl kernel.apparmor_restrict_unprivileged_userns || true
+            exit 1
+          fi
+          curl --fail --silent --dump-header image.headers --output image.bmp http://127.0.0.1:8080/image
+          # A Windows bitmap starts with "BM", and one the size of the panel is megabytes.
+          test "$(head -c 2 image.bmp)" = BM
+          test "$(stat -c %s image.bmp)" -gt 100000
+          grep -qi '^content-type: image/bmp' image.headers
+          echo "state: $state; $(stat -c %s image.bmp) bytes"
       - name: Back up
         run: |
           # The unit itself, sandbox and all, which is what the timer runs: the sandbox is where it can go wrong.
