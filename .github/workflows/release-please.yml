@@ -82,7 +82,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      contents: write # to attach the files to the release
+      contents: write # to attach the files to the release, and publish it
+      id-token: write # for the signing certificate of the attestation below
+      attestations: write # to keep it
+      artifact-metadata: write # and the record of what it is for
     env:
       CARGO_INCREMENTAL: 0
       CARGO_NET_RETRY: 5
@@ -131,6 +134,17 @@ jobs:
             ls -lh dist/*.tar.gz dist/*.deb dist/*.rpm | awk '{print $5, $9}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      # A signed statement, kept by GitHub, that each of these files was built by this repository's workflow at this commit (SLSA build
+      # provenance), which `gh attestation verify FILE` checks. It goes with the files as built here, before they are attached. It is
+      # not one of the release's files, so the lock on those does not touch it. The release's own statement (immutable releases) says
+      # what the release holds; this says how each file was made.
+      - name: Attest the files
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
       # To the draft, by its tag: --clobber so that a re-run of this job replaces what a failed one attached.
       - name: Attach to the release
         run: gh release upload "$TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.sha256 --clobber

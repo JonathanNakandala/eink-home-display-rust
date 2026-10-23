@@ -28,7 +28,15 @@ gh release verify home-display-server-vX.Y.Z -R JonathanNakandala/eink-home-disp
 gh release verify-asset home-display-server-vX.Y.Z home-display-server-X.Y.Z-x86_64-v3-linux.tar.gz -R JonathanNakandala/eink-home-display-rust
 ```
 
-The first says the release is what GitHub published; the second that this file is one of its files. The `.sha256` beside each file
+The first says the release is what GitHub published; the second that this file is one of its files. A third check says how a file was
+made: that this repository's release workflow built it, at the commit named in the release (signed build provenance):
+
+```sh
+gh attestation verify home-display-server-X.Y.Z-x86_64-v3-linux.tar.gz -R JonathanNakandala/eink-home-display-rust
+```
+
+(The same works for the `.deb` and `.rpm`.) The first two need the release to have been published with the setting on; the third
+is made by the release workflow for every file. The `.sha256` beside each file
 checks that it arrived whole (`sha256sum --check`), which the signed statement does for where it came from. A release made before
 the setting was turned on has no statement to check.
 
