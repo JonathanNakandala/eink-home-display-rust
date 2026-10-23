@@ -8,6 +8,8 @@ on:
       - src/main.rs
       - src/cli.rs
       - .github/scripts/build-packages.sh
+      - .github/scripts/package-release.sh
+      - .github/scripts/smoke-test.sh
       - .github/actions/install-nfpm/**
       - .github/actions/install-cargo-about/**
       - .github/scripts/third-party-licences.sh
@@ -50,9 +52,12 @@ jobs:
           shared-key: release
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release --locked --bin home-display-server --bin displayctl
+      # What the release does with the build, in the same order: the program starts, then the archive and the packages are made.
+      - run: bash .github/scripts/smoke-test.sh
       - uses: ./.github/actions/install-cargo-about
       - run: bash .github/scripts/third-party-licences.sh
       - uses: ./.github/actions/install-nfpm
+      - run: bash .github/scripts/package-release.sh 0.0.0-test
       - run: bash .github/scripts/build-packages.sh 0.0.0-test
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -60,6 +65,7 @@ jobs:
           path: |
             dist/*.deb
             dist/*.rpm
+            dist/*.tar.gz
           retention-days: 1
 
   # Installs the .deb on this machine, which is Ubuntu under systemd: the scripts run for real, and so does the service.
@@ -121,6 +127,58 @@ jobs:
           test ! -e /usr/bin/home-display-server
           ! systemctl is-active --quiet home-display
           # The data, the backups and the configuration are kept.
+          sudo test -f /var/lib/home-display/pki/root.key
+          sudo test -f /etc/home-display/config.toml
+          sudo test -d /var/backups/home-display
+
+  # Installs from the release archive, the way install.sh is meant to be used: unpacked, and run from where it is. First install, an
+  # upgrade over it, and --uninstall, on this machine, which is Ubuntu under systemd.
+  archive:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+      - name: Unpack
+        run: |
+          tar -xzf home-display-server-*-x86_64-v3-linux.tar.gz
+          ls home-display-server-*-x86_64-v3-linux
+      - name: First install
+        run: |
+          cd home-display-server-*-x86_64-v3-linux
+          sudo ./install.sh
+          id home-display
+          test "$(sudo stat -c '%U:%G %a' /etc/home-display/config.toml)" = "root:home-display 640"
+          sudo test -f /var/lib/home-display/pki/root.key
+          for _ in $(seq 30); do curl --fail --silent http://127.0.0.1:8080/healthz && break; sleep 2; done
+          echo
+          systemctl is-active home-display home-display-health.timer home-display-backup.timer
+          # The licences are in the archive, as they are asked to be.
+          test -s THIRD_PARTY_LICENSES.txt && test -s LICENSE-MIT && test -s LICENSE-APACHE
+      - name: Back up with the unit
+        run: |
+          sudo systemctl start home-display-backup.service
+          test "$(systemctl show home-display-backup.service -p Result --value)" = success
+      - name: Upgrade over it
+        run: |
+          cd home-display-server-*-x86_64-v3-linux
+          echo '# my edit' | sudo tee -a /etc/home-display/config.toml > /dev/null
+          before=$(sudo sha256sum /var/lib/home-display/pki/root.key)
+          sudo ./install.sh
+          # The configuration and the authority are the user's: neither is touched.
+          sudo grep -q '# my edit' /etc/home-display/config.toml
+          test "$before" = "$(sudo sha256sum /var/lib/home-display/pki/root.key)"
+          systemctl is-active home-display
+      - name: Uninstall
+        run: |
+          cd home-display-server-*-x86_64-v3-linux
+          sudo ./install.sh --uninstall
+          test ! -e /usr/local/bin/home-display-server
+          test ! -e /etc/systemd/system/home-display.service
+          ! systemctl is-active --quiet home-display
+          # The data, the configuration and the backups stay.
           sudo test -f /var/lib/home-display/pki/root.key
           sudo test -f /etc/home-display/config.toml
           sudo test -d /var/backups/home-display
