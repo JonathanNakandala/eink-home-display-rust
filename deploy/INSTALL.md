@@ -223,6 +223,7 @@ The display's firmware (`esphome/` in the source) is GPL-3.0-only, because it is
 | What you see | What to look at |
 |---|---|
 | `install.sh` stops at "the configuration is not valid" | the message above it says which setting; fix `/etc/home-display/config.toml` and run it again |
+| `install.sh` stops at "is installed as a .deb" (or ".rpm") | the package owns the program and the units; upgrade with `apt` or `dnf`, or remove the package first. The installer will not put a second copy beside it |
 | The journal says `Read-only file system` | a folder in the configuration is outside `/var/lib/home-display`: add it to `ReadWritePaths` in `systemctl edit home-display` |
 | Chrome fails to start, and the log mentions the sandbox or a namespace | `preflight.sh` checks the usual causes. On Ubuntu 23.10 and later, `kernel.apparmor_restrict_unprivileged_userns`; on any system, `kernel.unprivileged_userns_clone` and `user.max_user_namespaces` |
 | The same, on Fedora, and `getenforce` says Enforcing | SELinux may be refusing Chrome: `sudo ausearch -m avc -ts recent` shows what. Not tried; if that is it, a local policy module (`audit2allow -M`) for what it names is the fix |

@@ -42,6 +42,14 @@ die() { echo "install.sh: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "run it as root: sudo $0"
 
+# A .deb or .rpm owns /usr/bin, /usr/lib/systemd/system and the same user and state: an install here beside it would leave two
+# copies of the program and two sets of units, and the one in /etc/systemd/system would win. Upgrade with the package manager.
+if dpkg-query --show --showformat='${db:Status-Status}' home-display-server 2> /dev/null | grep -qx installed; then
+    die "home-display-server is installed as a .deb. Upgrade it with apt (apt install ./home-display-server_*.deb), or remove it first: apt remove home-display-server"
+elif rpm --query home-display-server > /dev/null 2>&1; then
+    die "home-display-server is installed as an .rpm. Upgrade it with dnf (dnf upgrade ./home-display-server-*.rpm), or remove it first: dnf remove home-display-server"
+fi
+
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # In the release archive the units and templates are in deploy/ beside this script; in a checkout they are beside it.
 if [ -d "$HERE/deploy" ]; then DEPLOY="$HERE/deploy"; else DEPLOY="$HERE"; fi
