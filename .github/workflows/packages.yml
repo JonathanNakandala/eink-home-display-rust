@@ -124,6 +124,15 @@ jobs:
           test "$(stat -c %s image.bmp)" -gt 100000
           grep -qi '^content-type: image/bmp' image.headers
           echo "state: $state; $(stat -c %s image.bmp) bytes"
+      - name: install.sh does not install over the package
+        run: |
+          tar -xzf home-display-server-*-x86_64-v3-linux.tar.gz
+          # The command's own words are what is looked for: it must stop for this reason and not for another.
+          if sudo ./home-display-server-*-x86_64-v3-linux/install.sh --no-start --skip-preflight 2> refusal; then
+            echo "install.sh installed over the package"; exit 1
+          fi
+          grep -q 'installed as a .deb' refusal
+          test -x /usr/bin/home-display-server && test ! -e /usr/local/bin/home-display-server
       - name: Back up
         run: |
           # The unit itself, sandbox and all, which is what the timer runs: the sandbox is where it can go wrong.
@@ -244,6 +253,11 @@ jobs:
             test -s "$archive.sha256"
             home-display-restore --list "$archive" | grep -q "pki/root.key$"
             test "$(stat -c "%a %U" /etc/home-display/backup.env)" = "600 root"
+            # The installer stops, and says why, instead of putting a second copy beside the package.
+            tar -xzf /packages/home-display-server-*-x86_64-v3-linux.tar.gz -C /tmp
+            if /tmp/home-display-server-*-x86_64-v3-linux/install.sh --no-start --skip-preflight 2> /tmp/refusal; then exit 1; fi
+            grep -q "installed as an .rpm" /tmp/refusal
+            test ! -e /usr/local/bin/home-display-server
             rpm --verify home-display-server || true
             # The scripts on removal, which must not need a running systemd either.
             dnf remove --assumeyes home-display-server
