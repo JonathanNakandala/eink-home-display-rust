@@ -7,7 +7,6 @@
 targets = ["x86_64-unknown-linux-gnu"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
-all-features = true
 
 # What the program may contain. A crate with a licence that is not here stops the build, so a new dependency's licence is looked at
 # by a person before it is shipped. For a crate that offers a choice (MIT OR GPL-3.0), any one listed is enough.

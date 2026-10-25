@@ -6,7 +6,8 @@
 set -euo pipefail
 
 out=THIRD_PARTY_LICENSES.txt
-cargo about generate --locked about.hbs --output-file "$out"
+# --all-features: the release is built with the optional OpenTelemetry export (`--features otel`), so its crates are in the program.
+cargo about generate --locked --all-features about.hbs --output-file "$out"
 
 {
     printf '\n\n'
