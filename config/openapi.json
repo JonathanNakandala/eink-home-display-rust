@@ -3,7 +3,7 @@
   "info": {
     "title": "Home display server",
     "description": "What displays and monitors ask of the server that serves the dashboard image.",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "paths": {
     "/healthz": {

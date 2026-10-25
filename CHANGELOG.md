@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-server-v0.2.0...home-display-server-v0.3.0) (2026-10-25)
+
+
+### Features
+
+* Log with fields and spans, as JSON if asked, and export over OTLP ([e0c60b0](https://github.com/JonathanNakandala/eink-home-display-rust/commit/e0c60b040a5d1e684cefa47c8135b16541cc262d))
+
+
+### Bug Fixes
+
+* Pass --all-features to cargo-about on the command line, not in about.toml ([d091080](https://github.com/JonathanNakandala/eink-home-display-rust/commit/d091080f488b74eee05f04c01170f242506a4e77))
+
 ## [0.2.0](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-server-v0.1.0...home-display-server-v0.2.0) (2026-10-25)
 
 
