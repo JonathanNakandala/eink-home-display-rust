@@ -3,7 +3,9 @@
 //! Built only with `--features otel`, and then only active when `OTEL_EXPORTER_OTLP_ENDPOINT` (or the `_TRACES_` /
 //! `_LOGS_` forms of it) is set, so a package built with it behaves as before until asked. The rest is the standard
 //! environment: `OTEL_SERVICE_NAME` (default `home-display-server`), `OTEL_RESOURCE_ATTRIBUTES`,
-//! `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_PROTOCOL` is not used: it is always OTLP over HTTP (port 4318).
+//! `OTEL_EXPORTER_OTLP_HEADERS`; `OTEL_EXPORTER_OTLP_PROTOCOL` is not used: it is always OTLP over HTTP (port 4318).
+//! `OTEL_TRACES_EXPORTER=none` and `OTEL_LOGS_EXPORTER=none` turn off one of the two, e.g. the logs when the journal already
+//! ships them (the SDK itself ignores these, so they are read here).
 //!
 //! What is sent: every `tracing` span as a trace span (a refresh run, a layout drawn, a source fetched), and every event as
 //! a log record carrying the span it happened in. Metrics are not sent this way; `/metrics` serves those to a scraper.
@@ -30,11 +32,11 @@ mod disabled {
         }
     }
 
-    pub fn init<S>() -> (Option<Box<dyn Layer<S> + Send + Sync>>, Guard)
+    pub fn init<S>() -> (Vec<Box<dyn Layer<S> + Send + Sync>>, Guard)
     where
         S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a> + Send + Sync,
     {
-        (None, Guard)
+        (Vec::new(), Guard)
     }
 }
 
@@ -54,31 +56,32 @@ mod enabled {
 
     /// Flushes and stops the exporters when dropped.
     pub struct Guard {
-        providers: Option<(SdkTracerProvider, SdkLoggerProvider)>,
+        traces: Option<SdkTracerProvider>,
+        logs: Option<SdkLoggerProvider>,
         failure: Option<String>,
     }
 
     impl Guard {
         /// Says, once logging works, what `init` did.
         pub fn report(&self) {
-            match (&self.providers, &self.failure) {
-                (Some(_), _) => tracing::info!("Exporting traces and logs over OTLP"),
-                (None, Some(why)) => tracing::warn!(error = %why, "Not exporting over OTLP"),
-                (None, None) => {}
+            match (&self.traces, &self.logs, &self.failure) {
+                (_, _, Some(why)) => tracing::warn!(error = %why, "Not exporting over OTLP"),
+                (Some(_), Some(_), None) => tracing::info!("Exporting traces and logs over OTLP"),
+                (Some(_), None, None) => tracing::info!("Exporting traces over OTLP"),
+                (None, Some(_), None) => tracing::info!("Exporting logs over OTLP"),
+                (None, None, None) => {}
             }
         }
     }
 
     impl Drop for Guard {
         fn drop(&mut self) {
-            if let Some((traces, logs)) = self.providers.take() {
-                // The exporters' own trouble can only go to stderr: logging may be what is being flushed.
-                if let Err(e) = traces.shutdown() {
-                    eprintln!("Could not flush the traces: {e}");
-                }
-                if let Err(e) = logs.shutdown() {
-                    eprintln!("Could not flush the logs: {e}");
-                }
+            // The exporters' own trouble can only go to stderr: logging may be what is being flushed.
+            if let Some(Err(e)) = self.traces.take().map(|traces| traces.shutdown()) {
+                eprintln!("Could not flush the traces: {e}");
+            }
+            if let Some(Err(e)) = self.logs.take().map(|logs| logs.shutdown()) {
+                eprintln!("Could not flush the logs: {e}");
             }
         }
     }
@@ -93,6 +96,11 @@ mod enabled {
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
     }
 
+    /// Whether the standard `OTEL_<KIND>_EXPORTER` variable turns that kind of export off (the SDK does not read it).
+    fn switched_off(variable: &str) -> bool {
+        std::env::var(variable).is_ok_and(|value| value.trim().eq_ignore_ascii_case("none"))
+    }
+
     fn resource() -> Resource {
         let mut builder = Resource::builder().with_attribute(opentelemetry::KeyValue::new(
             "service.version",
@@ -105,25 +113,26 @@ mod enabled {
         builder.build()
     }
 
-    fn providers() -> Result<(SdkTracerProvider, SdkLoggerProvider), String> {
-        let resource = resource();
-        let spans = SpanExporter::builder()
+    fn trace_provider(resource: Resource) -> Result<SdkTracerProvider, String> {
+        let exporter = SpanExporter::builder()
             .with_http()
             .build()
             .map_err(|e| e.to_string())?;
-        let logs = LogExporter::builder()
-            .with_http()
-            .build()
-            .map_err(|e| e.to_string())?;
-        let traces = SdkTracerProvider::builder()
-            .with_resource(resource.clone())
-            .with_batch_exporter(spans)
-            .build();
-        let logger = SdkLoggerProvider::builder()
+        Ok(SdkTracerProvider::builder()
             .with_resource(resource)
-            .with_batch_exporter(logs)
-            .build();
-        Ok((traces, logger))
+            .with_batch_exporter(exporter)
+            .build())
+    }
+
+    fn log_provider(resource: Resource) -> Result<SdkLoggerProvider, String> {
+        let exporter = LogExporter::builder()
+            .with_http()
+            .build()
+            .map_err(|e| e.to_string())?;
+        Ok(SdkLoggerProvider::builder()
+            .with_resource(resource)
+            .with_batch_exporter(exporter)
+            .build())
     }
 
     /// The exporter's own HTTP client logs as it sends; exporting those would make each batch cause the next.
@@ -146,38 +155,46 @@ mod enabled {
         })
     }
 
-    pub fn init<S>() -> (Option<Box<dyn Layer<S> + Send + Sync>>, Guard)
+    pub fn init<S>() -> (Vec<Box<dyn Layer<S> + Send + Sync>>, Guard)
     where
         S: tracing::Subscriber + for<'a> LookupSpan<'a> + Send + Sync,
     {
-        let none = |failure| {
-            (
-                None,
-                Guard {
-                    providers: None,
-                    failure,
-                },
-            )
+        let mut guard = Guard {
+            traces: None,
+            logs: None,
+            failure: None,
         };
+        let mut layers: Vec<Box<dyn Layer<S> + Send + Sync>> = Vec::new();
         if !wanted() {
-            return none(None);
+            return (layers, guard);
         }
-        let (traces, logger) = match providers() {
-            Ok(both) => both,
-            Err(why) => return none(Some(why)),
-        };
-        let spans = tracing_opentelemetry::layer()
-            .with_tracer(traces.tracer(SERVICE))
-            .with_filter(filter_fn(not_the_exporter));
-        let logs =
-            OpenTelemetryTracingBridge::new(&logger).with_filter(filter_fn(not_the_exporter));
-        let both = Layer::<S>::and_then(spans, logs).boxed();
-        (
-            Some(both),
-            Guard {
-                providers: Some((traces, logger)),
-                failure: None,
-            },
-        )
+        if !switched_off("OTEL_TRACES_EXPORTER") {
+            match trace_provider(resource()) {
+                Ok(provider) => {
+                    layers.push(
+                        tracing_opentelemetry::layer()
+                            .with_tracer(provider.tracer(SERVICE))
+                            .with_filter(filter_fn(not_the_exporter))
+                            .boxed(),
+                    );
+                    guard.traces = Some(provider);
+                }
+                Err(why) => guard.failure = Some(why),
+            }
+        }
+        if !switched_off("OTEL_LOGS_EXPORTER") {
+            match log_provider(resource()) {
+                Ok(provider) => {
+                    layers.push(
+                        OpenTelemetryTracingBridge::new(&provider)
+                            .with_filter(filter_fn(not_the_exporter))
+                            .boxed(),
+                    );
+                    guard.logs = Some(provider);
+                }
+                Err(why) => guard.failure = Some(why),
+            }
+        }
+        (layers, guard)
     }
 }
