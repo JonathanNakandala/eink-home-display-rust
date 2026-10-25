@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-server-v0.3.0...home-display-server-v0.3.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* Let OTEL_TRACES_EXPORTER and OTEL_LOGS_EXPORTER turn off one kind of export ([e1beb0d](https://github.com/JonathanNakandala/eink-home-display-rust/commit/e1beb0da8ce174b5ef3c6cedca912f63992aa4ae))
+
 ## [0.3.0](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-server-v0.2.0...home-display-server-v0.3.0) (2026-10-25)
 
 
