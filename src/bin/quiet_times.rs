@@ -15,7 +15,7 @@ use home_display_server::quiet_times::QuietTimesApplication;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    bootstrap::init_logging("debug");
+    let _logs = bootstrap::init_logging("debug");
 
     let args = QuietTimesArgs::parse();
 

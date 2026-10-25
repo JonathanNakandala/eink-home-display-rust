@@ -46,7 +46,7 @@ pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
 
 pub fn log_schedule(schedule: &Schedule, now: DateTime<Tz>) {
     for line in schedule_summary(schedule, now) {
-        log::info!("{line}");
+        tracing::info!(schedule = %line, "Schedule");
     }
 }
 
@@ -109,16 +109,16 @@ where
     };
 
     loop {
-        log::info!("Next run at {}", due.format("%Y-%m-%d %H:%M:%S"));
+        tracing::info!(next_run = %due.format("%Y-%m-%d %H:%M:%S"), "Next run planned");
         let mut last_look = clock.now();
         loop {
             let now = clock.now();
             if last_look - now > chrono::Duration::from_std(STEP_BACK)? {
                 due = schedule.next_after(now)?;
-                log::warn!(
-                    "The clock was set back {}: planning the next run again, for {}",
-                    format_age(last_look - now),
-                    due.format("%Y-%m-%d %H:%M:%S")
+                tracing::warn!(
+                    set_back = %format_age(last_look - now),
+                    next_run = %due.format("%Y-%m-%d %H:%M:%S"),
+                    "The clock was set back: planning the next run again"
                 );
             }
             last_look = now;
@@ -128,12 +128,12 @@ where
             }
             tokio::select! {
                 _ = &mut shutdown => {
-                    log::info!("Shutting down");
+                    tracing::info!("Shutting down");
                     return Ok(());
                 }
                 _ = tokio::time::sleep(remaining.min(CLOCK_CHECK)) => {}
                 _ = wake.notified() => {
-                    log::info!("Render requested");
+                    tracing::info!("Render requested");
                     break;
                 }
             }
@@ -143,12 +143,12 @@ where
         // Let a signal interrupt a long fetch or render too.
         tokio::select! {
             _ = &mut shutdown => {
-                log::info!("Shutting down mid-run");
+                tracing::info!("Shutting down mid-run");
                 return Ok(());
             }
             result = tick() => {
                 if let Err(e) = result {
-                    log::error!("Run failed: {e:#}");
+                    tracing::error!(error = %format_args!("{e:#}"), "Run failed");
                 }
             }
         }
@@ -175,7 +175,7 @@ pub async fn shutdown_signal() {
                 }
                 return;
             }
-            Err(e) => log::warn!("Could not listen for SIGTERM: {e}"),
+            Err(error) => tracing::warn!(%error, "Could not listen for SIGTERM"),
         }
     }
     let _ = tokio::signal::ctrl_c().await;

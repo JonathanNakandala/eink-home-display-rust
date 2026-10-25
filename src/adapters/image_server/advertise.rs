@@ -141,7 +141,7 @@ async fn watch_over(
         let Some(why) = watch.judge(Instant::now(), addresses(), serving) else {
             continue;
         };
-        log::warn!("Starting the mDNS responder again: {why}");
+        tracing::warn!(%why, "Starting the mDNS responder again");
         // The old one goes first and its goodbye is sent, so that the new one does not find the name taken. Its drop waits
         // for the goodbye, so it is not done on this task's thread.
         let old = responder
@@ -156,7 +156,9 @@ async fn watch_over(
                 *responder.lock().unwrap_or_else(PoisonError::into_inner) = Some(new);
             }
             // Nothing is announced until the next try, which the silence it leaves brings about.
-            Err(e) => log::warn!("Could not start the mDNS responder again: {e:#}"),
+            Err(e) => {
+                tracing::warn!(error = %format_args!("{e:#}"), "Could not start the mDNS responder again")
+            }
         }
         watch.restarted(Instant::now(), addresses());
     }
@@ -328,7 +330,7 @@ impl MdnsResponder {
             Families::Both => {}
         }
         if let Err(e) = daemon.disable_interface(unused) {
-            log::warn!("Could not narrow the mDNS interfaces: {e}");
+            tracing::warn!(error = %e, "Could not narrow the mDNS interfaces");
         }
         let served = Arc::new(Mutex::new(Served::default()));
         let this = Self {
@@ -347,29 +349,29 @@ impl MdnsResponder {
                 match event {
                     // The responder probes first and renames itself if the name is taken.
                     DaemonEvent::NameChange(change) => {
-                        log::warn!(
-                            "mDNS name {} is taken, using {}",
-                            change.original,
-                            change.new_name
+                        tracing::warn!(
+                            original = %change.original,
+                            new_name = %change.new_name,
+                            "mDNS name is taken, using another"
                         )
                     }
-                    DaemonEvent::Error(e) => log::warn!("mDNS error: {e}"),
+                    DaemonEvent::Error(e) => tracing::warn!(error = %e, "mDNS error"),
                     DaemonEvent::Announce(..) => {
-                        log::debug!("mDNS: {event:?}");
+                        tracing::debug!(?event, "mDNS event");
                         if !served.announced {
                             served.announced = true;
                             served.addresses = addresses();
                         }
                     }
                     DaemonEvent::IpAdd(ip) => {
-                        log::debug!("mDNS: {event:?}");
+                        tracing::debug!(?event, "mDNS event");
                         served.addresses.insert(ip);
                     }
                     DaemonEvent::IpDel(ip) => {
-                        log::debug!("mDNS: {event:?}");
+                        tracing::debug!(?event, "mDNS event");
                         served.addresses.remove(&ip);
                     }
-                    other => log::debug!("mDNS: {other:?}"),
+                    other => tracing::debug!(event = ?other, "mDNS event"),
                 }
             }
         });
@@ -377,7 +379,7 @@ impl MdnsResponder {
         this.daemon
             .register(info)
             .context("Failed to register the mDNS service")?;
-        log::info!("Advertising {} over mDNS", this.fullname);
+        tracing::info!(name = %this.fullname, "Advertising over mDNS");
         Ok(this)
     }
 }

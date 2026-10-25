@@ -1222,9 +1222,11 @@ async fn a_refused_request_is_logged_with_where_it_came_from() {
     )
     .await;
     assert_eq!(response.status, 403);
-    let lines = crate::captured_log::lines_containing("EST request from 127.0.0.1 refused");
+    let lines = crate::captured_log::lines_containing("EST request refused");
     assert!(
-        lines.iter().any(|line| line.starts_with("WARN")),
+        lines
+            .iter()
+            .any(|line| line.starts_with("WARN") && line.contains("from=127.0.0.1")),
         "{lines:?}"
     );
 }

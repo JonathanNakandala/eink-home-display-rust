@@ -57,16 +57,17 @@ impl Wanted {
 async fn chosen_or_current<'a>(published: &'a Published, caller: Option<&DeviceId>) -> &'a Layout {
     let chosen = match (caller, &published.handles.layout_choices) {
         (Some(device), Some(choices)) => choices.get(device).await.unwrap_or_else(|e| {
-            log::warn!("Could not look up the layout chosen for {device}: {e:#}");
+            tracing::warn!(%device, error = %format_args!("{e:#}"), "Could not look up the layout chosen for the display");
             None
         }),
         _ => None,
     };
     match chosen {
         Some(name) => published.layouts.find(name.as_str()).unwrap_or_else(|| {
-            log::warn!(
-                "The layout chosen for {} is {name}, which there is no longer; sending the one for now",
-                caller.map(|device| device.to_string()).unwrap_or_default()
+            tracing::warn!(
+                device = %caller.map(|device| device.to_string()).unwrap_or_default(),
+                layout = %name,
+                "The layout chosen for the display no longer exists; sending the one for now"
             );
             published.layouts.current(published.clock.now())
         }),

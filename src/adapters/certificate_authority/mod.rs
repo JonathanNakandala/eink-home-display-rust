@@ -349,7 +349,7 @@ impl PrivateAuthority {
             );
         }
         if not_after > self.intermediate_not_after {
-            log::warn!(
+            tracing::warn!(
                 "A certificate asked to last until {} is cut short to {}, when the intermediate ends",
                 not_after.format("%Y-%m-%d"),
                 self.intermediate_not_after.format("%Y-%m-%d")

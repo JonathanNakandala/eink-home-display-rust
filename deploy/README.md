@@ -653,6 +653,56 @@ set to the display's zone: a container or a cloud machine is usually UTC, and th
 server too: `/plan` carries the zone and its current offset from UTC, so the time in the display's "update
 failed" notice is the server's, and there is nothing to keep in step in the firmware.
 
+## Logs and traces
+
+The service logs to the journal (`journalctl -u home-display`). Two environment variables in the unit shape that:
+
+- `RUST_LOG`: what is shown. `info` by default; `home_display_server=debug` for more of ours, `debug` for everything.
+- `LOG_FORMAT`: `text` (coloured only on a terminal) or `json`. The package sets `json`: one object per line, with the call's
+  own fields at the top level, e.g. `{"timestamp":"…","level":"WARN","message":"Failed to draw the layout","layout":"…",
+  "display":"…","error":"…","target":"…"}`. Lines logged during a refresh also carry `run`, its number, from the `render_run` span.
+
+In Loki: `{unit="home-display.service"} | json | level="WARN"`, or `| display="NORTHBOUND"`.
+
+### Traces and logs over OpenTelemetry (Grafana Alloy)
+
+The release is built with `--features otel`. It does nothing until `OTEL_EXPORTER_OTLP_ENDPOINT` is set (also read:
+`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_EXPORTER_OTLP_HEADERS`). Then every span (a refresh run) goes out as a trace
+and every log line as an OTLP log record, over HTTP (OTLP/HTTP, port 4318). Metrics are not sent that way: Alloy scrapes `/metrics`.
+
+```alloy
+otelcol.receiver.otlp "home_display" {
+  http { endpoint = "127.0.0.1:4318" }
+  output {
+    logs   = [otelcol.processor.batch.default.input]
+    traces = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    logs   = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}
+
+otelcol.auth.basic "grafana_cloud" {
+  username = "<instance id>"
+  password = sys.env("GCLOUD_RW_API_KEY")
+}
+
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = "https://otlp-gateway-<region>.grafana.net/otlp"
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
+```
+
+Then `systemctl edit home-display`, add `[Service]` and `Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`, and restart.
+Use either this or the journal source for logs, not both, or each line arrives twice. The service talks to Alloy in plain HTTP, so
+keep the endpoint on the machine itself.
+
 ## Watching the displays
 
 Each display names itself on every request (`device=` on `/plan`, `/refresh` and `/image`; the firmware

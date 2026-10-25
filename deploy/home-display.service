@@ -28,6 +28,11 @@ StateDirectory=home-display
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/home-display
 Environment=RUST_LOG=info
+# One JSON object per line in the journal, for Loki; remove for plain text.
+Environment=LOG_FORMAT=json
+# To also send traces and logs to Grafana Alloy (or any OTLP collector): uncomment, or put it in a drop-in
+# (`systemctl edit home-display`). Alloy needs an `otelcol.receiver.otlp` with an http listener on 4318; see deploy/README.md.
+#Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 Environment=HOME=/var/lib/home-display
 # What to refresh and when is in the configuration (`[schedule]`), and may be given more than once, each for its own hours and
 # days. The log at start-up says in words what it means and how many refreshes each day gets (each is a wake of the display, so

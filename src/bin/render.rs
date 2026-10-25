@@ -26,7 +26,7 @@ use home_display_server::domain::services::image_repository::ImageRepository;
 /// Renders every layout to PNG files without touching any display, one set per display type.
 #[tokio::main]
 async fn main() -> Result<()> {
-    bootstrap::init_logging("info");
+    let _logs = bootstrap::init_logging("info");
     let args = RenderArgs::parse();
 
     let config = args
@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
             Arc::new(DirectoryImages::new("")),
         )
         .profile();
-        log::info!(
+        tracing::info!(
             "Rendering for {name} ({}x{}, {:?})",
             profile.width,
             profile.height,
@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
             std::fs::write(&render_path, &image.data)
                 .with_context(|| format!("Failed to write {}", render_path.display()))?;
             preview_on_panel(&image, &profile, dither)?.save(&output_path)?;
-            log::info!(
+            tracing::info!(
                 "Wrote {} and {} (dither: {dither:?})",
                 render_path.display(),
                 output_path.display()

@@ -268,9 +268,10 @@ async fn open_window(
     let closes = admin
         .enrollment
         .open_window(chrono::Duration::minutes(minutes.into()));
-    log::info!(
-        "The pairing window is open for {minutes} minutes (until {})",
-        closes.format("%H:%M:%S UTC")
+    tracing::info!(
+        minutes,
+        until = %closes.format("%H:%M:%S UTC"),
+        "The pairing window is open"
     );
     Ok(Json(window_state(&admin)))
 }
@@ -287,7 +288,7 @@ async fn open_window(
 )]
 async fn close_window(State(admin): State<Arc<Admin>>) -> Response {
     admin.enrollment.close_window();
-    log::info!("The pairing window is closed");
+    tracing::info!("The pairing window is closed");
     Json(window_state(&admin)).into_response()
 }
 
@@ -889,7 +890,7 @@ async fn set_credential(
             SetError::NowhereToKeep => ApiError::new(ErrorCode::CannotRemember, error.to_string()),
             SetError::NotKept(_) => ApiError::internal("keep the key", error),
         })?;
-    log::info!(
+    tracing::info!(
         "The {name} key was set ({})",
         if remember {
             "kept for a restart"
@@ -923,6 +924,6 @@ async fn clear_credential(
         .clear(name)
         .await
         .map_err(|e| ApiError::internal("take the key away", e))?;
-    log::info!("The {name} key that was set has been taken away");
+    tracing::info!("The {name} key that was set has been taken away");
     Ok(Json(CredentialEntry::of(&status)))
 }

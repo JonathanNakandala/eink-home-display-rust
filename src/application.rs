@@ -13,12 +13,14 @@ pub mod viewers;
 use std::any::Any;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration as StdDuration;
 
 use anyhow::anyhow;
 use chrono::{DateTime, Duration};
 use chrono_tz::Tz;
 use futures_util::FutureExt;
+use tracing::Instrument;
 
 use std::future::Future;
 
@@ -245,6 +247,15 @@ where
     /// A panic in a source, the renderer or the display is caught and reported as a failed run, like
     /// any other: the service also serves the image and its health, and one bad response must not end it.
     pub async fn run(&self, location: Location) -> anyhow::Result<RenderReport> {
+        static RUNS: AtomicU64 = AtomicU64::new(0);
+        // Everything logged during the run, here and in the sources and the renderer, carries the run's number.
+        let span =
+            tracing::info_span!("render_run", run = RUNS.fetch_add(1, Ordering::Relaxed) + 1);
+        self.run_observed(location).instrument(span).await
+    }
+
+    async fn run_observed(&self, location: Location) -> anyhow::Result<RenderReport> {
+        let started = std::time::Instant::now();
         for observer in &self.observers {
             observer.render_started();
         }
@@ -256,6 +267,18 @@ where
             )),
         };
         let finished = self.clock.now();
+        match &result {
+            Ok(report) => tracing::info!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                degraded = report.is_degraded(),
+                "Render finished"
+            ),
+            Err(error) => tracing::error!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                error = %format_args!("{error:#}"),
+                "Render failed"
+            ),
+        }
         for observer in &self.observers {
             match &result {
                 Ok(report) => observer.render_succeeded(finished, report),
@@ -370,21 +393,22 @@ where
         match outcome {
             Ok(Ok(())) => LayoutState::Drawn,
             Ok(Err(error)) => {
-                log::warn!(
-                    "Failed to draw the {} layout for {}: {error:#}",
-                    layout.name,
-                    output.name()
+                tracing::warn!(
+                    layout = %layout.name,
+                    display = %output.name(),
+                    error = %format_args!("{error:#}"),
+                    "Failed to draw the layout"
                 );
                 LayoutState::Failed {
                     reason: "could not be drawn".to_owned(),
                 }
             }
             Err(_) => {
-                log::warn!(
-                    "The {} layout for {} took longer than {:?}; its last image stays",
-                    layout.name,
-                    output.name(),
-                    self.policy.limits.layout_deadline
+                tracing::warn!(
+                    layout = %layout.name,
+                    display = %output.name(),
+                    deadline = ?self.policy.limits.layout_deadline,
+                    "The layout took longer than its deadline; its last image stays"
                 );
                 LayoutState::Failed {
                     reason: "timed out".to_owned(),

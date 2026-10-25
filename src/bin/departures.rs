@@ -11,7 +11,7 @@ use home_display_server::domain::services::credential_source::CredentialSource;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    bootstrap::init_logging("debug");
+    let _logs = bootstrap::init_logging("debug");
 
     let args = DeparturesArgs::parse();
 

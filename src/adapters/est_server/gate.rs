@@ -83,7 +83,7 @@ async fn check(
             next.run(request).await
         }
         Ok(false) => {
-            log::warn!(
+            tracing::warn!(
                 "Turned away {} ({}): its certificate is valid but it is not a member",
                 client.device,
                 connection
@@ -93,7 +93,7 @@ async fn check(
             refuse("This display is not a member")
         }
         Err(e) => {
-            log::error!(
+            tracing::error!(
                 "Failed to check whether {} is a member: {e:#}",
                 client.device
             );

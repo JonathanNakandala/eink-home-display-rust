@@ -154,7 +154,10 @@ pub async fn start(
     security: Option<Security>,
 ) -> anyhow::Result<Listening> {
     let settings = ServerSettings::from(config);
-    log::info!("Displays reach this server by: {}", config.transport.name());
+    tracing::info!(
+        transport = config.transport.name(),
+        "Displays reach this server by"
+    );
     // A viewer token is only ever sent over HTTPS, so the page that takes one is not served in plain.
     let plain_web = web.clone().filter(|_| config.web.open);
     if !config.transport.serves_https() {
@@ -324,7 +327,9 @@ async fn open_admin(
     credentials: Arc<Credentials>,
 ) -> anyhow::Result<Option<AdminListener>> {
     if !config.admin.enabled {
-        log::info!("The admin interface is turned off; no display can be paired until it is on");
+        tracing::info!(
+            "The admin interface is turned off; no display can be paired until it is on"
+        );
         return Ok(None);
     }
     let path = config.admin_socket();
@@ -340,12 +345,12 @@ async fn open_admin(
         credentials,
         web_facts(config),
     );
-    log::info!("Admin interface on {}", path.display());
+    tracing::info!(socket = %path.display(), "Admin interface listening");
     Ok(Some(AdminListener {
         path,
         serving: Box::pin(async move {
             if let Err(e) = axum::serve(listener, app).await {
-                log::error!("The admin interface stopped: {e}");
+                tracing::error!(error = %e, "The admin interface stopped");
             }
             // The server carries on without it; it must not end because of it.
             std::future::pending::<()>().await;
@@ -395,16 +400,16 @@ async fn open_authority(
         })?,
     );
     let remaining = authority.not_after() - clock.now().to_utc();
-    log::info!(
-        "Certificate authority: root {} (valid until {}), intermediate valid until {}",
-        authority.fingerprint(),
-        authority.not_after().format("%Y-%m-%d"),
-        authority.intermediate_not_after().format("%Y-%m-%d")
+    tracing::info!(
+        root = %authority.fingerprint(),
+        root_valid_until = %authority.not_after().format("%Y-%m-%d"),
+        intermediate_valid_until = %authority.intermediate_not_after().format("%Y-%m-%d"),
+        "Certificate authority"
     );
     if remaining < AUTHORITY_WARNING {
-        log::warn!(
-            "The certificate authority's root ends on {}; every display has to be paired again by then",
-            authority.not_after().format("%Y-%m-%d")
+        tracing::warn!(
+            root_valid_until = %authority.not_after().format("%Y-%m-%d"),
+            "The certificate authority's root is nearing its end; every display has to be paired again by then"
         );
     }
     let missing = if init_pki || !authority_there {
@@ -495,7 +500,7 @@ pub fn web_routes(
     )
     .map_err(anyhow::Error::msg)?;
     if web.open {
-        log::warn!(
+        tracing::warn!(
             "The web view at /view is open: anyone who can reach this server can see the picture{}",
             if config.transport.requires_certificate() {
                 ", with no certificate, which /image still asks for"
@@ -504,7 +509,7 @@ pub fn web_routes(
             }
         );
     } else {
-        log::info!(
+        tracing::info!(
             "The web view at /view is on the HTTPS port only, and needs a viewer token: make one with `displayctl viewer create`"
         );
     }

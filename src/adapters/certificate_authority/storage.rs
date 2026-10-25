@@ -66,14 +66,14 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
                 return Ok(authority);
             }
             if root_key.exists() {
-                log::info!(
+                tracing::info!(
                     "The intermediate ends in {} days; replacing it",
                     left.num_days()
                 );
                 rotate_intermediate(directory, None)?;
                 return load(directory);
             }
-            log::warn!(
+            tracing::warn!(
                 "The intermediate certificate ends in {} days and {} is not here to replace it. Put the \
                  root's key back, or run the rotation with its path, before then: after it ends no display \
                  can be served",
@@ -84,7 +84,7 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
         }
         (true, false) if root_key.exists() => {
             // The intermediate is gone but the root and its key are not: the way an intermediate is replaced.
-            log::warn!(
+            tracing::warn!(
                 "{} is missing; making a new intermediate from the root",
                 intermediate.display()
             );
@@ -169,7 +169,7 @@ pub(super) fn create_all(directory: &Path, now: DateTime<Utc>) -> anyhow::Result
         false,
     )?;
     write_atomically(&directory.join(INTERMEDIATE), &files.intermediate, true)?;
-    log::info!(
+    tracing::info!(
         "Made a new certificate authority in {}. {ROOT_KEY} there is used only to replace the intermediate \
          every few years; back it up, and keep it off this machine if you can",
         directory.display()
@@ -219,7 +219,7 @@ pub(super) fn rotate_intermediate_at(
         write_atomically(&retired_path, &retired, false)?;
     }
     write_atomically(&intermediate_path, &new, true)?;
-    log::info!("Replaced the intermediate certificate");
+    tracing::info!("Replaced the intermediate certificate");
     Ok(())
 }
 

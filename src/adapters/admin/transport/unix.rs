@@ -112,6 +112,6 @@ async fn clear_stale(path: &Path) -> anyhow::Result<()> {
     }
     std::fs::remove_file(path)
         .with_context(|| format!("Failed to remove the old socket {}", path.display()))?;
-    log::info!("Replaced a socket left behind at {}", path.display());
+    tracing::info!(socket = %path.display(), "Replaced a socket left behind");
     Ok(())
 }

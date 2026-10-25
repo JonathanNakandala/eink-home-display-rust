@@ -85,7 +85,7 @@ pub(super) fn watched(data: Vec<u8>, device: Option<DeviceId>, format: ImageForm
                 || "A client".to_owned(),
                 |device| format!("Display {device}"),
             );
-            log::warn!(
+            tracing::warn!(
                 "{who} dropped the {} image after {sent} of {total} bytes ({} ms)",
                 format.extension(),
                 took.as_millis()

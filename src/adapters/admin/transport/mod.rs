@@ -42,7 +42,7 @@ impl axum::serve::Listener for LocalListener {
                 Ok(stream) => return (stream, ()),
                 Err(e) => {
                     // Whatever went wrong (out of descriptors, say) is not fixed by trying again at once.
-                    log::warn!("Failed to accept an admin connection: {e}");
+                    tracing::warn!(error = %e, "Failed to accept an admin connection");
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }

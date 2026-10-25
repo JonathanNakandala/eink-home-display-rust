@@ -49,7 +49,7 @@ pub fn bind(address: SocketAddr) -> anyhow::Result<Bound> {
         SocketAddr::V6(v6) if v6.ip().is_unspecified() => match dual_stack() {
             Ok(socket) => (Ok(socket), address, Families::Both),
             Err(e) => {
-                log::warn!("No dual-stack IPv6 socket here ({e}); listening on IPv4 only");
+                tracing::warn!(error = %e, "No dual-stack IPv6 socket here; listening on IPv4 only");
                 let v4 = SocketAddr::from((Ipv4Addr::UNSPECIFIED, v6.port()));
                 (
                     Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)),

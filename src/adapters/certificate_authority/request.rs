@@ -121,7 +121,7 @@ fn profile(request: &X509CertificationRequest<'_>, device: &DeviceId) -> Option<
                 continue;
             }
             if found.replace(extension.value).is_some() {
-                log::warn!("{device}: ignoring its profile, which it gave twice");
+                tracing::warn!(%device, "Ignoring the display's profile, which it gave twice");
                 return None;
             }
         }
@@ -129,7 +129,7 @@ fn profile(request: &X509CertificationRequest<'_>, device: &DeviceId) -> Option<
     match read_profile(found?) {
         Ok(profile) => Some(profile),
         Err(why) => {
-            log::warn!("{device}: ignoring its profile: {why}");
+            tracing::warn!(%device, %why, "Ignoring the display's profile");
             None
         }
     }

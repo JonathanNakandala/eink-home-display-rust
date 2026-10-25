@@ -40,7 +40,7 @@ impl WeatherService for OpenMeteoWeatherServiceAdapter {
         );
         // Air quality and pollen are a bonus: without them the rest of the weather still shows.
         let (air_quality, pollen) = air_quality.unwrap_or_else(|error| {
-            log::warn!("Failed to get air quality: {error:#}");
+            tracing::warn!("Failed to get air quality: {error:#}");
             (None, None)
         });
         Ok(forecast?.map(|weather| weather.with_air_quality(air_quality).with_pollen(pollen)))
@@ -71,7 +71,7 @@ impl OpenMeteoWeatherServiceAdapter {
         )
         .await?;
         let body: OpenMeteoAirQualityResponse = http::json(response, "air quality data").await?;
-        log::debug!("Air quality response body: {:#?}", body);
+        tracing::debug!("Air quality response body: {:#?}", body);
 
         let current = body.current;
         let pollen = self.pollen.then(|| {
@@ -127,7 +127,7 @@ impl OpenMeteoWeatherServiceAdapter {
         )
         .await?;
         let body: OpenMeteoResponse = http::json(response, "forecast").await?;
-        log::debug!("Response body: {:#?}", body);
+        tracing::debug!("Response body: {:#?}", body);
 
         let max = body
             .daily

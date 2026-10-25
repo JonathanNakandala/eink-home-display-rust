@@ -12,12 +12,12 @@ use crate::config::application::LocationConfig;
 pub fn resolve_zone(location: &LocationConfig) -> anyhow::Result<Tz> {
     match location.zone()? {
         Some(zone) => {
-            log::info!("Working in the timezone {}", zone.name());
+            tracing::info!(timezone = zone.name(), "Working in the timezone");
             Ok(zone)
         }
         None => {
             let zone = zone::host();
-            log::warn!(
+            tracing::warn!(
                 "No timezone is configured, so the host's is used: {}. Set `timezone = \"{}\"` under [location] \
                  so the schedule and the clock don't depend on the machine this runs on",
                 zone.name(),

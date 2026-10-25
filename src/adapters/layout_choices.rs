@@ -82,7 +82,9 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, LayoutName>> {
                 choices.insert(device, layout);
             }
             _ => {
-                log::warn!("Ignoring the layout choice {device:?}: {layout:?}, which is not valid")
+                tracing::warn!(
+                    "Ignoring the layout choice {device:?}: {layout:?}, which is not valid"
+                )
             }
         }
     }

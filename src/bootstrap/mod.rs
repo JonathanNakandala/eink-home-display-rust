@@ -10,6 +10,7 @@ mod display;
 mod load;
 mod logging;
 mod serving;
+mod telemetry;
 mod weather;
 mod zone;
 
@@ -23,7 +24,7 @@ pub use self::display::setup_display;
 pub use self::load::{
     load_application_config, load_quiet_times_config, load_valid_application_config,
 };
-pub use self::logging::init_logging;
+pub use self::logging::{LogGuard, init_logging};
 pub use self::serving::{Listening, Security, open_security, start as start_serving, web_routes};
 pub use self::weather::setup_weather_service;
 pub use self::zone::{configured_zone, resolve_zone};

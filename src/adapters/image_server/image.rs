@@ -87,9 +87,10 @@ pub(super) async fn image(
             Ok(Some(_)) => available.push(format),
             Ok(None) => {}
             Err(e) => {
-                log::warn!(
-                    "Skipping the {} image: failed to inspect it: {e:#}",
-                    format.extension()
+                tracing::warn!(
+                    format = format.extension(),
+                    error = %format_args!("{e:#}"),
+                    "Skipping the image: failed to inspect it"
                 );
                 unreadable.push(format);
             }
@@ -167,9 +168,10 @@ pub(super) async fn image(
             }
             Ok(None) => continue,
             Err(e) => {
-                log::warn!(
-                    "Skipping the {} image: failed to read it: {e:#}",
-                    format.extension()
+                tracing::warn!(
+                    format = format.extension(),
+                    error = %format_args!("{e:#}"),
+                    "Skipping the image: failed to read it"
                 );
                 read_failed = true;
             }

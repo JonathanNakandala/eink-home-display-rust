@@ -99,7 +99,7 @@ impl AttemptMarker {
 impl RenderObserver for AttemptMarker {
     fn render_started(&self) {
         if let Err(e) = std::fs::write(&self.path, self.clock.now().to_rfc3339()) {
-            log::warn!(
+            tracing::warn!(
                 "Could not record the render attempt in {}: {e}",
                 self.path.display()
             );

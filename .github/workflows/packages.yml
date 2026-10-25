@@ -49,7 +49,7 @@ jobs:
         with:
           shared-key: release
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo build --release --locked --bin home-display-server --bin displayctl
+      - run: cargo build --release --locked --features otel --bin home-display-server --bin displayctl
       # What the release does with the build, in the same order: the program starts, then the archive and the packages are made.
       - run: bash .github/scripts/smoke-test.sh
       - uses: ./.github/actions/install-cargo-about

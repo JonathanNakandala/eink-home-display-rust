@@ -81,7 +81,7 @@ impl Args {
             Some(Schedule::parse_crons(&self.cron)?)
         };
         if from_flags.is_some() && configured.is_some() {
-            log::info!(
+            tracing::info!(
                 "Using the schedule from the command line, not the [schedule] in the config"
             );
         }
