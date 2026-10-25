@@ -15,7 +15,11 @@
       "bump-minor-pre-major": true,
       "draft": true,
       "prerelease": false,
-      "exclude-paths": ["esphome"]
+      "exclude-paths": ["esphome"],
+      "extra-files": [
+        { "type": "json", "path": "config/openapi.json", "jsonpath": "$.info.version" },
+        { "type": "json", "path": "config/admin-openapi.json", "jsonpath": "$.info.version" }
+      ]
     },
     "esphome": {
       "release-type": "simple",
