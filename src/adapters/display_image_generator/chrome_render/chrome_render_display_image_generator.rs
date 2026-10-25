@@ -168,7 +168,7 @@ impl Drop for AbandonGuard {
         self.abandoned.store(true, Ordering::SeqCst);
         let pid = self.inner.chrome_pid.load(Ordering::SeqCst);
         if pid != 0 {
-            log::warn!(
+            tracing::warn!(
                 "The render was given up on while Chrome (pid {pid}) was still working: stopping it"
             );
             kill_process(pid);
@@ -187,7 +187,7 @@ fn kill_process(pid: u32) {
 
 #[cfg(not(unix))]
 fn kill_process(pid: u32) {
-    log::warn!(
+    tracing::warn!(
         "Can't stop Chrome (pid {pid}) on this platform; it will end when its calls time out"
     );
 }
@@ -207,7 +207,7 @@ fn find_system_chrome() -> Option<PathBuf> {
     let path = match default_executable() {
         Ok(path) => path,
         Err(reason) => {
-            log::info!("No system Chrome found ({reason}); will use a downloaded one");
+            tracing::info!("No system Chrome found ({reason}); will use a downloaded one");
             return None;
         }
     };
@@ -216,18 +216,18 @@ fn find_system_chrome() -> Option<PathBuf> {
     // takes the command line and exits), and otherwise left a Chrome window open on their desktop. So it is not asked. The
     // version is logged when the browser is launched ("Rendering with ..."), and a Chrome that cannot start fails there.
     if cfg!(windows) {
-        log::info!("Found system Chrome at {}", path.display());
+        tracing::info!("Found system Chrome at {}", path.display());
         return Some(path);
     }
     let mut command = Command::new(&path);
     command.arg("--version");
     match output_within(command, VERSION_PROBE_TIMEOUT) {
         Ok(version) => {
-            log::info!("Found system Chrome at {}: {version}", path.display());
+            tracing::info!("Found system Chrome at {}: {version}", path.display());
             Some(path)
         }
         Err(reason) => {
-            log::warn!("{} --version {reason}; ignoring it", path.display());
+            tracing::warn!("{} --version {reason}; ignoring it", path.display());
             None
         }
     }
@@ -480,7 +480,9 @@ impl Inner {
         if let Some(launched) = slot.as_ref() {
             match capture_in_new_tab(&launched.browser, page, profile) {
                 Ok(png) => return Ok(png),
-                Err(e) => log::warn!("Render with the running Chrome failed ({e:#}); relaunching"),
+                Err(e) => {
+                    tracing::warn!("Render with the running Chrome failed ({e:#}); relaunching")
+                }
             }
         }
 
@@ -514,7 +516,7 @@ impl Inner {
         let path = match self.source {
             ChromeSource::PreferSystem => find_system_chrome(),
             ChromeSource::Bundled => {
-                log::info!(
+                tracing::info!(
                     "Using the bundled Chrome in {}",
                     self.chrome_install_dir.display()
                 );
@@ -536,18 +538,18 @@ impl Inner {
                 // The crate reads what Chrome says on the way out and drops it; the reason is in that.
                 let chrome = path.or_else(|| find_downloaded_chrome(&self.chrome_install_dir));
                 if let Some(chrome) = chrome {
-                    log::warn!("{}", explain_launch_failure(&chrome, EXPLAIN_TIMEOUT));
+                    tracing::warn!("{}", explain_launch_failure(&chrome, EXPLAIN_TIMEOUT));
                 }
                 return Err(e).context("Failed to create browser instance");
             }
         };
         match browser.get_version() {
-            Ok(v) => log::info!(
+            Ok(v) => tracing::info!(
                 "Rendering with {} (protocol {})",
                 v.product,
                 v.protocol_version
             ),
-            Err(e) => log::warn!("Could not read Chrome version: {e}"),
+            Err(e) => tracing::warn!("Could not read Chrome version: {e}"),
         }
         browser.set_default_timeout(RENDER_TIMEOUT);
         Ok(browser)
@@ -565,7 +567,7 @@ fn capture_in_new_tab(
     // Not close(false): the pinned Chromium never answers Target.closeTarget, so that call
     // waits out its timeout and leaves the connection dead, defeating reuse.
     if let Err(e) = tab.close(true) {
-        log::warn!("Could not close the render tab: {e}");
+        tracing::warn!("Could not close the render tab: {e}");
     }
     result
 }

@@ -252,7 +252,7 @@ pub fn web_router(
 }
 
 pub(super) fn server_error(action: &str, e: impl std::fmt::Display) -> Response {
-    log::error!("Failed to {action} the published image: {e}");
+    tracing::error!(action, error = %e, "Failed to handle the published image");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
@@ -284,7 +284,7 @@ pub fn announce(
         .then(|| Advertisement::start(settings, port, format, families, secure))
         .transpose()
         .unwrap_or_else(|e| {
-            log::warn!("Not advertising over mDNS: {e:#}");
+            tracing::warn!(error = %format_args!("{e:#}"), "Not advertising over mDNS");
             None
         })
 }
@@ -327,9 +327,10 @@ impl HttpListener {
     ) -> anyhow::Result<()> {
         let Bound { listener, families } = self.bound;
         let port = listener.local_addr()?.port();
-        log::info!(
-            "Serving the display image at http://{}/image ({families})",
-            settings.bind
+        tracing::info!(
+            url = %format_args!("http://{}/image", settings.bind),
+            families = %families,
+            "Serving the display image"
         );
         // It announces the IP versions the socket really accepts, which isn't always what the
         // configured address says (see `listen`).

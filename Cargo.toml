@@ -43,8 +43,8 @@ tower-http = { version = "0.7", features = ["timeout", "trace", "set-header"] }
 url = "2"
 futures-util = "0.3"
 trait-variant = "0.1.2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 embedded-hal = "1.0.0"
 schemars = "1"
 toml = "1"
@@ -76,6 +76,17 @@ arc-swap = "1.9.2"
 yasna = "0.6"
 qrcode = { version = "0.14.1", default-features = false }
 rpassword = "7"
+
+# Only with `--features otel`; see src/bootstrap/telemetry.rs. Spans and logs go to an OTLP collector (Grafana Alloy) over HTTP.
+opentelemetry = { version = "0.33", optional = true }
+opentelemetry_sdk = { version = "0.33", optional = true }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "logs"], optional = true }
+opentelemetry-appender-tracing = { version = "0.33", optional = true }
+tracing-opentelemetry = { version = "0.34", optional = true }
+
+[features]
+# Exports traces and logs over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is set. Off by default: it adds a good many dependencies.
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-appender-tracing", "dep:tracing-opentelemetry"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

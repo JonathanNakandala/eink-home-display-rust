@@ -17,7 +17,7 @@ pub fn setup_credentials(config: &ApplicationConfig, clock: Arc<dyn Clock>) -> A
 pub fn report_missing_keys(config: &ApplicationConfig, credentials: &Credentials) {
     for name in config.credentials_needed() {
         if !credentials.status(name).is_set() {
-            log::warn!(
+            tracing::warn!(
                 "There is no key for {name} ({}). Set one while the server runs with `displayctl credential set {name}`, \
                  or put it in the configuration file; until then that source is shown as unavailable",
                 name.describe()

@@ -199,7 +199,7 @@ async fn simple_enroll(
         && let Err(wait) = est.limits.allow_name(peer.ip(), &asked.device)
     {
         if est.limits.may_warn() {
-            log::warn!(
+            tracing::warn!(
                 "{} has asked to join under more names than one source may; turned away",
                 from(&connection)
             );
@@ -221,7 +221,7 @@ async fn simple_enroll(
     {
         Ok(Outcome::Issued(certificate)) => issued(&certificate),
         Ok(Outcome::Pending { retry_after, .. }) => {
-            log::debug!("{} is waiting to be approved", from(&connection));
+            tracing::debug!(from = %from(&connection), "Display is waiting to be approved");
             (
                 StatusCode::ACCEPTED,
                 [
@@ -300,7 +300,7 @@ fn failure(est: &Est, error: EnrollError, connection: &Connection, disclose: Dis
     match error {
         EnrollError::Refused(refusal) => {
             if est.limits.may_warn() {
-                log::warn!("EST request from {} refused: {refusal}", from(connection));
+                tracing::warn!(from = %from(connection), %refusal, "EST request refused");
             }
             let status = match &refusal {
                 Refusal::BadRequest(_)
@@ -330,7 +330,7 @@ fn failure(est: &Est, error: EnrollError, connection: &Connection, disclose: Dis
             response
         }
         EnrollError::Failed(e) => {
-            log::error!("EST request from {} failed: {e:#}", from(connection));
+            tracing::error!(from = %from(connection), error = %format_args!("{e:#}"), "EST request failed");
             text(StatusCode::INTERNAL_SERVER_ERROR, "The server failed")
         }
     }

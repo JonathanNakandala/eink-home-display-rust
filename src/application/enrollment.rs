@@ -220,7 +220,7 @@ impl Enrollment {
                 && now - pairing.requested_at > REQUEST_LIFETIME
             {
                 self.store.remove(&pairing.device).await?;
-                log::info!(
+                tracing::info!(
                     "The request from {} lapsed after {} hours unanswered",
                     pairing.device,
                     REQUEST_LIFETIME.num_hours()
@@ -232,7 +232,7 @@ impl Enrollment {
             {
                 pairing.replacement = None;
                 self.store.put(&pairing).await?;
-                log::info!(
+                tracing::info!(
                     "The request for {}'s name by another key lapsed after {} hours unanswered; {} carries on",
                     pairing.device,
                     REQUEST_LIFETIME.num_hours(),
@@ -387,7 +387,7 @@ impl Enrollment {
         self.store.put(&pairing).await?;
         // Not the code itself: the owner reads it off the display's own panel. A code copied from here would
         // be the server's, which is what someone in the middle would have it show.
-        log::warn!(
+        tracing::warn!(
             "{} is a member, and another key asked for its name. To let it take over, compare the code on \
              the display's panel with the server's and approve it; otherwise turn it down",
             pairing.device
@@ -478,7 +478,7 @@ impl Enrollment {
             self.promote(&mut pairing);
             pairing.updated_at = now;
             self.store.put(&pairing).await?;
-            log::info!("{device} is using its new key; the old one is no longer accepted");
+            tracing::info!(%device, "Display is using its new key; the old one is no longer accepted");
             return Ok(true);
         }
         Ok(false)
@@ -560,7 +560,7 @@ impl Enrollment {
             .into();
         if !same {
             if self.count_wrong_code(device, now) {
-                log::warn!(
+                tracing::warn!(
                     "{MAX_WRONG_CODES} wrong pairing codes in a row for {device}: approving it is refused for {} \
                      minutes. Compare the code on its panel with the one the server shows (the display may be \
                      talking to something else), then try again",
@@ -571,7 +571,7 @@ impl Enrollment {
                     retry_after: WRONG_CODE_LOCKOUT,
                 });
             }
-            log::warn!(
+            tracing::warn!(
                 "The pairing code typed for {device} did not match. Type what the display's own panel shows; a \
                  code that is right on the panel and wrong here can mean something is between the display and \
                  this server"
@@ -592,7 +592,7 @@ impl Enrollment {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(device);
-        log::info!("Approved {device}; it gets its certificate the next time it asks");
+        tracing::info!(%device, "Approved; it gets its certificate the next time it asks");
         Ok(())
     }
 
@@ -610,14 +610,14 @@ impl Enrollment {
             pairing.replacement = None;
             pairing.updated_at = self.now();
             self.store.put(&pairing).await?;
-            log::info!("Turned down the replacement for {device}; it carries on as it was");
+            tracing::info!(%device, "Turned down the replacement; the display carries on as it was");
             return Ok(());
         }
         self.change_state(pairing, PairingState::Rejected, |s| {
             matches!(s, PairingState::Pending | PairingState::Approved)
         })
         .await?;
-        log::info!("Turned down {device}");
+        tracing::info!(%device, "Turned down the display");
         Ok(())
     }
 
@@ -634,7 +634,7 @@ impl Enrollment {
             matches!(s, PairingState::Enrolled { .. } | PairingState::Approved)
         })
         .await?;
-        log::warn!("Revoked {device}");
+        tracing::warn!(%device, "Revoked the display");
         Ok(())
     }
 
@@ -642,7 +642,7 @@ impl Enrollment {
     pub async fn forget(&self, device: &DeviceId) -> anyhow::Result<()> {
         let _changing = self.changes.lock().await;
         self.store.remove(device).await?;
-        log::info!("Forgot {device}");
+        tracing::info!(%device, "Forgot the display");
         Ok(())
     }
 
@@ -725,7 +725,7 @@ impl Enrollment {
         pairing.profile = request.profile;
         self.store.put(&pairing).await?;
         // Not the code itself: the owner reads it off the display's own panel (see above).
-        log::info!(
+        tracing::info!(
             "{} asked to join{}. Approve it with the code shown on the display's own panel",
             pairing.device,
             pairing
@@ -790,11 +790,11 @@ impl Enrollment {
             not_after: certificate.not_after,
         };
         pairing.updated_at = now;
-        log::info!(
-            "Issued {} a certificate (serial {}, until {})",
-            pairing.device,
-            certificate.serial,
-            certificate.not_after.format("%Y-%m-%d")
+        tracing::info!(
+            device = %pairing.device,
+            serial = %certificate.serial,
+            valid_until = %certificate.not_after.format("%Y-%m-%d"),
+            "Issued a certificate"
         );
     }
 

@@ -76,7 +76,7 @@ impl Handshakes {
         } else {
             entry.full += 1;
             if entry.last_resumed && entry.full + entry.resumed > 1 {
-                log::debug!(
+                tracing::debug!(
                     "{device} began a connection with a full handshake after resuming the one before"
                 );
             }

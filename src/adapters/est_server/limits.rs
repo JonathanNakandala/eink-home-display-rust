@@ -133,7 +133,7 @@ impl Limits {
         let mut window = lock(&self.log);
         if now.duration_since(window.started) >= Duration::from_secs(60) {
             if window.held_back > 0 {
-                log::warn!(
+                tracing::warn!(
                     "{} more refusals in the last minute were not logged one by one",
                     window.held_back
                 );

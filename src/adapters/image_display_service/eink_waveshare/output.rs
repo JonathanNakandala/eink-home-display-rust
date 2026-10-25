@@ -52,7 +52,7 @@ fn show_frame(frame: &[u8]) -> anyhow::Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 fn show_frame(frame: &[u8]) -> anyhow::Result<()> {
-    log::warn!(
+    tracing::warn!(
         "No e-paper hardware on this platform; skipping display of {} byte frame",
         frame.len()
     );

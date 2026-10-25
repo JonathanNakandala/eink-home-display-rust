@@ -45,16 +45,19 @@ async fn run() -> Result<()> {
     // (the release's smoke test, the installer's check) failed.
     let args = cli::Args::try_parse().unwrap_or_else(|e| e.exit());
 
-    bootstrap::init_logging("debug");
-    // TODO: Figure out how to log the current log level as RUST_LOG should by able to override via try_from_default_env
-    tracing::info!(
-        "Logging initialized at {} level",
-        tracing::level_filters::STATIC_MAX_LEVEL
-    );
+    let _logs = bootstrap::init_logging("debug");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Starting");
 
     let config = bootstrap::load_valid_application_config(&args.config_file)?;
 
-    log::info!("Settings loaded successfully: {:?}", config);
+    // Not the whole configuration: it holds every source's settings, and the keys among them are only as safe as their types.
+    tracing::info!(
+        config_file = %args.config_file.display(),
+        display = ?config.display.kind,
+        departures = config.departures.len(),
+        bind = %config.server.bind,
+        "Configuration loaded"
+    );
 
     let location = Location::new(config.location.latitude, config.location.longitude);
     let cache = CachePaths::new(
@@ -138,13 +141,13 @@ async fn run() -> Result<()> {
         args.restart_cooldown,
     );
     match first {
-        Some(at) if at > now => log::info!(
-            "Holding the first render until {} (restart cooldown)",
-            at.format("%H:%M:%S")
+        Some(at) if at > now => tracing::info!(
+            until = %at.format("%H:%M:%S"),
+            "Holding the first render (restart cooldown)"
         ),
-        Some(_) => log::info!("Rendering now"),
+        Some(_) => tracing::info!("Rendering now"),
         None if image_is_current => {
-            log::info!("The served image is current; waiting for the next slot")
+            tracing::info!("The served image is current; waiting for the next slot")
         }
         None => {}
     }

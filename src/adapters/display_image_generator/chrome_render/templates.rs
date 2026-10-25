@@ -129,11 +129,11 @@ impl Templates {
                 .find(|existing| existing.layout.name == name)
             {
                 Some(existing) => {
-                    log::info!("The layout {name} is replaced by {file}");
+                    tracing::info!("The layout {name} is replaced by {file}");
                     *existing = entry;
                 }
                 None => {
-                    log::info!("Added the layout {name} from {file}");
+                    tracing::info!("Added the layout {name} from {file}");
                     added.push(entry);
                 }
             }

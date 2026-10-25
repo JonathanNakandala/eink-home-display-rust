@@ -110,10 +110,10 @@ pub(super) async fn refresh_now(
         Err(refusal) => return refusal.into_response(),
     };
     match published.handles.refresh.request(REFRESH_TIMEOUT).await {
-        RefreshOutcome::Rendered => log::info!("Rendered on request"),
-        RefreshOutcome::Throttled => log::info!("Render request ignored: one started recently"),
+        RefreshOutcome::Rendered => tracing::info!("Rendered on request"),
+        RefreshOutcome::Throttled => tracing::info!("Render request ignored: one started recently"),
         RefreshOutcome::TimedOut => {
-            log::warn!("Render request timed out after {REFRESH_TIMEOUT:?}")
+            tracing::warn!(timeout = ?REFRESH_TIMEOUT, "Render request timed out")
         }
     }
     plan_response(

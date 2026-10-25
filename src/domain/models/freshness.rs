@@ -97,9 +97,9 @@ impl<T: Clone> LastGood<T> {
 /// is wrong, is an error, since waiting won't help.
 fn report(source: &str, error: &SourceError, consequence: &str) {
     if error.needs_attention() {
-        log::error!("{source} failed and needs attention: {error:#}; {consequence}");
+        tracing::error!("{source} failed and needs attention: {error:#}; {consequence}");
     } else {
-        log::warn!("{source} failed: {error:#}; {consequence}");
+        tracing::warn!("{source} failed: {error:#}; {consequence}");
     }
 }
 

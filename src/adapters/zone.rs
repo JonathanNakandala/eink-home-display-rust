@@ -8,11 +8,14 @@ use chrono_tz::Tz;
 pub fn host() -> Tz {
     match iana_time_zone::get_timezone() {
         Ok(name) => name.parse().unwrap_or_else(|_| {
-            log::warn!("The host's timezone {name:?} isn't a known IANA zone; using UTC");
+            tracing::warn!(
+                timezone = name,
+                "The host's timezone isn't a known IANA zone; using UTC"
+            );
             Tz::UTC
         }),
         Err(e) => {
-            log::warn!("Couldn't tell the host's timezone ({e}); using UTC");
+            tracing::warn!(error = %e, "Couldn't tell the host's timezone; using UTC");
             Tz::UTC
         }
     }

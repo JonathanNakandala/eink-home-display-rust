@@ -75,17 +75,22 @@ pub async fn send_with(
         if let Some(asked) = retry_after
             && asked > policy.max_retry_after
         {
-            log::warn!(
-                "Request failed ({error}); the server asked for {asked:?}, too long to wait"
+            tracing::warn!(
+                %error,
+                asked = ?asked,
+                "Request failed; the server asked for longer than is worth waiting"
             );
             return Err(error);
         }
         let backoff = policy.backoff * 2u32.pow(attempt);
         let wait = retry_after.map_or(backoff, |asked| asked.max(backoff));
         attempt += 1;
-        log::warn!(
-            "Request failed ({error}), retrying in {wait:?} ({attempt}/{})",
-            policy.retries
+        tracing::warn!(
+            %error,
+            retry_in = ?wait,
+            attempt,
+            retries = policy.retries,
+            "Request failed; retrying"
         );
         tokio::time::sleep(wait).await;
     }

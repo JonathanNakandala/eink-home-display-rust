@@ -162,7 +162,7 @@ impl EstServer {
             app = app.merge(display);
         }
         let app = crate::adapters::response_headers::hardened(app);
-        log::info!(
+        tracing::info!(
             "Serving EST over TLS 1.3 at https://{} ({families}); server certificate for {}",
             settings.bind,
             settings.names.join(", ")
@@ -225,18 +225,18 @@ impl EstServer {
                         Ok(accepted) => accepted,
                         Err(e) => {
                             // Out of descriptors, say: back off instead of spinning.
-                            log::warn!("Failed to accept a connection: {e}");
+                            tracing::warn!(error = %e, "Failed to accept a connection");
                             tokio::time::sleep(Duration::from_millis(200)).await;
                             continue;
                         }
                     };
                     // The source's own share first: it is what stops one stranger using up the rest.
                     let Some(held) = limits.admit(peer.ip()) else {
-                        log::debug!("Dropped {peer}: it holds as many connections as one source may");
+                        tracing::debug!(%peer, "Dropped: it holds as many connections as one source may");
                         continue;
                     };
                     let Ok(slot) = slots.clone().try_acquire_owned() else {
-                        log::debug!("Dropped {peer}: too many connections");
+                        tracing::debug!(%peer, "Dropped: too many connections");
                         continue;
                     };
                     let (acceptor, app, settings) = (acceptor.clone(), app.clone(), settings.clone());
@@ -244,7 +244,7 @@ impl EstServer {
                     connections.spawn(async move {
                         let (_slot, _held) = (slot, held);
                         if let Err(e) = serve_connection(stream, peer, acceptor, app, &settings, &handshakes).await {
-                            log::debug!("EST connection from {peer} ended: {e:#}");
+                            tracing::debug!(%peer, error = %format_args!("{e:#}"), "EST connection ended");
                         }
                     });
                 }
@@ -254,7 +254,7 @@ impl EstServer {
                     match enrollment.overdue_renewals().await {
                         Ok(overdue) => {
                             for (device, left) in watch.to_report(overdue, enrollment.now()) {
-                                log::warn!(
+                                tracing::warn!(
                                     "{device} has not renewed its certificate, which ends in {} day(s). A display \
                                      renews with a third of its life left, so it is off, cannot reach this server, or \
                                      has a wrong clock; one that is switched on gets a new certificate by itself \
@@ -263,7 +263,7 @@ impl EstServer {
                                 );
                             }
                         }
-                        Err(e) => log::warn!("Could not check the displays' certificates: {e:#}"),
+                        Err(e) => tracing::warn!(error = %format_args!("{e:#}"), "Could not check the displays' certificates"),
                     }
                 }
                 _ = renewal.tick() => {
@@ -274,13 +274,13 @@ impl EstServer {
                         settings.certificate_lifetime,
                     ) {
                         Ok(true) => {
-                            log::info!("Renewed the server certificate");
+                            tracing::info!("Renewed the server certificate");
                             renewal_failing = false;
                         }
                         Ok(false) => renewal_failing = false,
                         Err(e) => {
                             if !renewal_failing {
-                                log::error!(
+                                tracing::error!(
                                     "Failed to renew the server certificate; the one in use stays until it can be: {e:#}"
                                 );
                             }

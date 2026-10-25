@@ -113,7 +113,7 @@ jobs:
           # next release recompiles little more than this program.
           shared-key: release
       - name: Build
-        run: cargo build --release --locked --bin home-display-server --bin displayctl
+        run: cargo build --release --locked --features otel --bin home-display-server --bin displayctl
       - name: Smoke test
         run: bash .github/scripts/smoke-test.sh
       - uses: ./.github/actions/install-cargo-about

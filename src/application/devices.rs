@@ -345,29 +345,30 @@ impl DeviceBoard {
             .unwrap_or(now);
         let mut devices = self.devices();
         if devices.len() >= MAX_DEVICES && !devices.contains_key(&telemetry.device) {
-            log::warn!(
-                "Ignoring {:?}: already tracking {MAX_DEVICES} devices",
-                telemetry.device
+            tracing::warn!(
+                device = ?telemetry.device,
+                max_devices = MAX_DEVICES,
+                "Ignoring a display: already tracking as many as it will"
             );
             return;
         }
         let previous = devices.get(&telemetry.device);
         match previous {
             None => {
-                log::info!(
-                    "New display {:?} checked in{}",
-                    telemetry.device,
-                    describe_battery(&telemetry)
+                tracing::info!(
+                    device = ?telemetry.device,
+                    battery = describe_battery(&telemetry).trim(),
+                    "New display checked in"
                 );
                 if let Some(reason) = telemetry.last_failure {
-                    log::warn!(
-                        "Display {:?} {}",
-                        telemetry.device,
-                        describe_failure(reason, telemetry.failed_wakes)
+                    tracing::warn!(
+                        device = ?telemetry.device,
+                        failure = %describe_failure(reason, telemetry.failed_wakes),
+                        "Display reports a failure"
                     );
                 }
                 if let Some(firmware) = &telemetry.firmware {
-                    log::info!("Display {:?} runs firmware {firmware}", telemetry.device);
+                    tracing::info!(device = ?telemetry.device, %firmware, "Display firmware");
                 }
             }
             Some(before) => {
@@ -375,24 +376,28 @@ impl DeviceBoard {
                     (&before.telemetry.firmware, &telemetry.firmware)
                     && was != now_runs
                 {
-                    log::info!(
-                        "Display {:?} now runs firmware {now_runs} (it ran {was})",
-                        telemetry.device
+                    tracing::info!(
+                        device = ?telemetry.device,
+                        firmware = %now_runs,
+                        previous = %was,
+                        "Display firmware changed"
                     );
                 }
                 if before.telemetry.last_failure != telemetry.last_failure {
                     match telemetry.last_failure {
-                        Some(reason) => log::warn!(
-                            "Display {:?} {}",
-                            telemetry.device,
-                            describe_failure(reason, telemetry.failed_wakes)
+                        Some(reason) => tracing::warn!(
+                            device = ?telemetry.device,
+                            failure = %describe_failure(reason, telemetry.failed_wakes),
+                            "Display reports a failure"
                         ),
-                        None => log::info!("Display {:?} is working again", telemetry.device),
+                        None => {
+                            tracing::info!(device = ?telemetry.device, "Display is working again")
+                        }
                     }
                 }
                 if before.telemetry.battery_state != telemetry.battery_state {
                     match telemetry.battery_state {
-                        Some(BatteryState::Low | BatteryState::Empty) => log::warn!(
+                        Some(BatteryState::Low | BatteryState::Empty) => tracing::warn!(
                             "Display {:?} battery is {}{}",
                             telemetry.device,
                             telemetry
@@ -400,7 +405,7 @@ impl DeviceBoard {
                                 .map_or("unknown", BatteryState::as_str),
                             describe_battery(&telemetry)
                         ),
-                        _ => log::info!(
+                        _ => tracing::info!(
                             "Display {:?} battery is back to normal{}",
                             telemetry.device,
                             describe_battery(&telemetry)
@@ -408,10 +413,10 @@ impl DeviceBoard {
                     }
                 }
                 if now > before.expected_by + self.overdue_grace {
-                    log::info!(
-                        "Display {:?} is back after {} minutes of silence",
-                        telemetry.device,
-                        (now - before.expected_by).num_minutes()
+                    tracing::info!(
+                        device = ?telemetry.device,
+                        silent_minutes = (now - before.expected_by).num_minutes(),
+                        "Display is back after being overdue"
                     );
                 }
             }
@@ -450,7 +455,7 @@ impl DeviceBoard {
                     at: now,
                 })
             }
-            None => log::debug!("{device} fetched the image without checking in first"),
+            None => tracing::debug!(%device, "Display fetched the image without checking in first"),
         }
     }
 

@@ -11,7 +11,7 @@ impl WeatherService for NoOpWeatherServiceAdapter {
         &self,
         _location: Location,
     ) -> Result<Option<WeatherInformation>, SourceError> {
-        log::debug!("Weather disabled via config, leaving it off the display");
+        tracing::debug!("Weather disabled via config, leaving it off the display");
         Ok(None)
     }
 }

@@ -53,7 +53,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Caller {
             Ok(id) => Ok(Self(Some(id))),
             Err(e) => {
                 // Not logged above debug: it is whatever a stranger on the network sent.
-                log::debug!(
+                tracing::debug!(
                     "Ignoring a device name that isn't usable ({e}) on {}",
                     parts.uri.path()
                 );

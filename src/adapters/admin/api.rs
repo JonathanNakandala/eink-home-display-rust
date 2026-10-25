@@ -536,7 +536,7 @@ impl ApiError {
 impl ApiError {
     /// The server failed: the detail goes to the log, and the caller is told only that it did.
     pub fn internal(what: &str, error: impl std::fmt::Display) -> Self {
-        log::error!("Admin API: failed to {what}: {error}");
+        tracing::error!(what, %error, "Admin API request failed");
         Self::new(
             ErrorCode::Internal,
             format!("The server failed to {what}; the log has the detail"),

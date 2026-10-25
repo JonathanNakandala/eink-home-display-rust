@@ -224,11 +224,12 @@ impl Viewers {
             },
         };
         self.registry.put(&viewer).await?;
-        log::info!(
-            "Made the viewer {} ({}) for {}; its link works for {code_minutes} minute(s)",
-            viewer.id,
-            viewer.label,
-            viewer.scope.to_scope_string()
+        tracing::info!(
+            viewer = %viewer.id,
+            label = %viewer.label,
+            scope = %viewer.scope.to_scope_string(),
+            code_minutes,
+            "Made a viewer"
         );
         Ok(Issued { viewer, code })
     }
@@ -247,7 +248,7 @@ impl Viewers {
             viewer.standing(now),
             crate::domain::models::viewer::ViewerStanding::Waiting
         ) {
-            log::info!("A code for {} was used after it ran out", viewer.id);
+            tracing::info!(viewer = %viewer.id, "A code was used after it ran out");
             return Err(ExchangeError::InvalidGrant);
         }
         let token = ViewerToken::generate(self.random());
@@ -276,7 +277,7 @@ impl Viewers {
         // Written before the token is given out, so a token that fails to be kept is never handed over, and the code
         // that is spent is spent.
         self.registry.put(&viewer).await?;
-        log::info!("{} ({}) has signed in", viewer.id, viewer.label);
+        tracing::info!(viewer = %viewer.id, label = %viewer.label, "Viewer has signed in");
         Ok(Grant {
             token,
             refresh_token,
@@ -319,17 +320,17 @@ impl Viewers {
             if now - rotated.at > REFRESH_LEEWAY {
                 viewer.state = ViewerState::Revoked { at: now };
                 self.registry.put(&viewer).await?;
-                log::warn!(
-                    "A refresh token of {} ({}) was used again after it had been replaced, so it was copied: the viewer is revoked",
-                    viewer.id,
-                    viewer.label
+                tracing::warn!(
+                    viewer = %viewer.id,
+                    label = %viewer.label,
+                    "A refresh token was used again after it had been replaced, so it was copied: the viewer is revoked"
                 );
                 return Err(ExchangeError::InvalidGrant);
             }
-            log::info!(
-                "{} ({}) sent a refresh token again at once; taking it for a retry",
-                viewer.id,
-                viewer.label
+            tracing::info!(
+                viewer = %viewer.id,
+                label = %viewer.label,
+                "Viewer sent a refresh token again at once; taking it for a retry"
             );
         }
         // A retry keeps what the first rotation recorded, so that every retry within the leeway of it is answered, and the leeway
@@ -422,7 +423,7 @@ impl Viewers {
         }
         .await;
         if let Err(e) = outcome {
-            log::warn!("Could not note that {id} was used: {e:#}");
+            tracing::warn!(viewer = %id, error = %format_args!("{e:#}"), "Could not note that a viewer was used");
         }
     }
 
@@ -437,7 +438,7 @@ impl Viewers {
         if !matches!(viewer.state, ViewerState::Revoked { .. }) {
             viewer.state = ViewerState::Revoked { at: self.now() };
             self.registry.put(&viewer).await?;
-            log::warn!("Revoked the viewer {} ({})", viewer.id, viewer.label);
+            tracing::warn!(viewer = %viewer.id, label = %viewer.label, "Revoked the viewer");
         }
         Ok(viewer)
     }
@@ -468,7 +469,7 @@ impl Viewers {
             .await?
             .ok_or_else(|| ChangeError::Unknown(id.clone()))?;
         self.registry.remove(id).await?;
-        log::info!("Forgot the viewer {} ({})", viewer.id, viewer.label);
+        tracing::info!(viewer = %viewer.id, label = %viewer.label, "Forgot the viewer");
         Ok(viewer)
     }
 

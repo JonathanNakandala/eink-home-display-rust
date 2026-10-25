@@ -104,7 +104,9 @@ impl FilePairingStore {
             match tokio::fs::copy(&self.path, directory.join(PREVIOUS)).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => log::warn!("Could not keep the previous list of displays: {e}"),
+                Err(error) => {
+                    tracing::warn!(%error, "Could not keep the previous list of displays")
+                }
             }
         }
         write_atomically(&self.path, &bytes)
@@ -206,7 +208,9 @@ impl ProfileRecord {
             self.levels,
             self.formats,
         )
-        .inspect_err(|e| log::warn!("Ignoring the profile kept for {device}: {e}"))
+        .inspect_err(
+            |error| tracing::warn!(%device, %error, "Ignoring the profile kept for the display"),
+        )
         .ok()
     }
 }
