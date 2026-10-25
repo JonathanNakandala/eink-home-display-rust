@@ -342,7 +342,6 @@ impl HttpListener {
 
 #[cfg(test)]
 mod api_description {
-    use std::path::Path;
 
     use serde_json::Value;
 
@@ -357,11 +356,9 @@ mod api_description {
 
     #[test]
     fn the_committed_description_is_current() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/openapi.json");
-        assert_eq!(
-            std::fs::read_to_string(path).unwrap_or_default(),
-            openapi_json(),
-            "config/openapi.json is stale: run `cargo run --bin gen_config -- --write`"
+        crate::adapters::api_doc_testing::assert_committed_is_current(
+            "openapi.json",
+            &openapi_json(),
         );
     }
 

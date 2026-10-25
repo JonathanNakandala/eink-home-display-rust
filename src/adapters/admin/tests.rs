@@ -384,12 +384,7 @@ async fn an_unknown_path_and_a_wrong_method_answer_in_the_same_form() {
 
 #[test]
 fn the_committed_description_is_current() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/admin-openapi.json");
-    assert_eq!(
-        std::fs::read_to_string(path).unwrap_or_default(),
-        openapi_json(),
-        "config/admin-openapi.json is stale: run `cargo run --bin gen_config -- --write`"
-    );
+    doc::assert_committed_is_current("admin-openapi.json", &openapi_json());
 }
 
 #[test]

@@ -16,6 +16,27 @@ pub(crate) fn check(description: &Value, schema: &Value, instance: &Value) -> Ve
         .collect()
 }
 
+/// Fails if the committed copy of a description (`file`, under `config/`) says anything other than `generated` does, apart from
+/// the version it names. The version is the program's, and the release commit is the one that changes it: a release pull
+/// request is made by a bot that does not rerun the descriptions, so a test that wanted them to match to the byte would fail
+/// on the release commit, after it was merged.
+pub(crate) fn assert_committed_is_current(file: &str, generated: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("config")
+        .join(file);
+    let read = |text: &str| {
+        let mut value: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+        value["info"]["version"] = Value::Null;
+        value
+    };
+    let committed = std::fs::read_to_string(path).unwrap_or_default();
+    assert_eq!(
+        read(&committed),
+        read(generated),
+        "config/{file} is stale: run `cargo run --bin gen_config -- --write`"
+    );
+}
+
 /// Every `$ref` in `description` that points inside it at something that is not there.
 pub(crate) fn dangling_references(description: &Value) -> Vec<String> {
     fn walk(root: &Value, here: &Value, found: &mut Vec<String>) {
