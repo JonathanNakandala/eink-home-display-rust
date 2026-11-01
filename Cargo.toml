@@ -90,7 +90,7 @@ otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", 
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
-httpmock = "0.8"
+httpmock = "0.9"
 speculoos = "0.13"
 cms = "0.2.3"
 jsonschema = { version = "0.59", default-features = false }
