@@ -642,6 +642,15 @@ mod tests {
         }
     }
 
+    /// Stops the server and waits until it has stopped. Dropping a `Harness` only asks the task to end, and the admin
+    /// socket stays open until the runtime next runs it, so a server started at once in the same directory could find
+    /// the old one still answering and refuse to start.
+    async fn stopped(mut harness: Harness) {
+        harness.server.abort();
+        // Ends once the task is gone and its listeners are closed.
+        let _ = (&mut harness.server).await;
+    }
+
     #[tokio::test]
     async fn plain_http_opens_one_listener_and_writes_nothing_to_disk() {
         let pki = tempfile::tempdir().unwrap();
@@ -1172,7 +1181,7 @@ mod tests {
         );
         let kitchen = join(&first, "kitchen", new_key()).await;
         assert_eq!(secure_get(&first, "/image", Some(&kitchen)).await.0, 200);
-        drop(first);
+        stopped(first).await;
 
         // The same directory, a new process's worth of state: same authority, same members.
         let second = harness_for(
@@ -1305,7 +1314,7 @@ mod tests {
         );
         let kitchen = join(&first, "kitchen", new_key()).await;
         assert_eq!(secure_get(&first, "/image", Some(&kitchen)).await.0, 200);
-        drop(first);
+        stopped(first).await;
 
         // The list is deleted, and the server will not start with none.
         std::fs::remove_file(pki.path().join("pairings.json")).unwrap();
