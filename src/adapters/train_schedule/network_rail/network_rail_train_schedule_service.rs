@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use chrono::NaiveDate;
+use jiff::civil::Date;
 
 use crate::adapters::train_schedule::network_rail::schedule_cache;
 use crate::domain::models::train::TrainPassage;
@@ -12,7 +12,7 @@ pub struct NetworkRailTrainScheduleServiceAdapter {
 }
 
 impl TrainScheduleService for NetworkRailTrainScheduleServiceAdapter {
-    async fn passages_on(&self, date: NaiveDate) -> anyhow::Result<Vec<TrainPassage>> {
+    async fn passages_on(&self, date: Date) -> anyhow::Result<Vec<TrainPassage>> {
         let records = schedule_cache::load_cache(&self.cache_file)?;
         Ok(schedule_cache::passages_on_date(&records, date))
     }

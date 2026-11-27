@@ -1,16 +1,17 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime};
+use jiff::SignedDuration;
+use jiff::civil::{Date, DateTime, Time};
 
 use crate::domain::models::train::TrainPassage;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimeWindow {
-    pub start: NaiveTime,
-    pub end: NaiveTime,
+    pub start: Time,
+    pub end: Time,
 }
 
 #[derive(Debug, Clone, Copy, derive_new::new)]
 pub struct QuietTimesRules {
-    pub buffer: Duration,
+    pub buffer: SignedDuration,
     pub weekday_window: TimeWindow,
     pub weekend_window: TimeWindow,
     /// When false, gaps are computed across the whole day (00:00-23:59:59)
@@ -20,21 +21,21 @@ pub struct QuietTimesRules {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gap {
-    pub start: NaiveDateTime,
-    pub end: NaiveDateTime,
+    pub start: DateTime,
+    pub end: DateTime,
 }
 
 impl Gap {
-    pub fn duration(&self) -> Duration {
-        self.end - self.start
+    pub fn duration(&self) -> SignedDuration {
+        self.end.duration_since(self.start)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct DailyReport {
-    pub date: NaiveDate,
-    pub window_start: NaiveDateTime,
-    pub window_end: NaiveDateTime,
+    pub date: Date,
+    pub window_start: DateTime,
+    pub window_end: DateTime,
     pub train_count: usize,
     pub gaps: Vec<Gap>,
 }
@@ -61,8 +62,8 @@ pub struct QuietTimesReport {
 
 impl QuietTimesReport {
     /// Every gap across the whole range, longest first.
-    pub fn longest_gaps(&self, limit: usize) -> Vec<(NaiveDate, Gap)> {
-        let mut all: Vec<(NaiveDate, Gap)> = self
+    pub fn longest_gaps(&self, limit: usize) -> Vec<(Date, Gap)> {
+        let mut all: Vec<(Date, Gap)> = self
             .days
             .iter()
             .flat_map(|day| day.gaps.iter().cloned().map(move |gap| (day.date, gap)))
@@ -86,22 +87,22 @@ impl QuietTimesCalculator {
     /// date's resolved passages: a train counted against the previous day's
     /// schedule can physically pass after midnight, landing in `date`'s
     /// early-morning window.
-    pub fn report_for_day(&self, date: NaiveDate, passages: &[TrainPassage]) -> DailyReport {
+    pub fn report_for_day(&self, date: Date, passages: &[TrainPassage]) -> DailyReport {
         let window = if !self.rules.use_time_windows {
             TimeWindow {
-                start: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
-                end: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+                start: Time::midnight(),
+                end: jiff::civil::time(23, 59, 59, 0),
             }
-        } else if date.weekday().num_days_from_monday() >= 5 {
+        } else if date.weekday().to_monday_zero_offset() >= 5 {
             self.rules.weekend_window
         } else {
             self.rules.weekday_window
         };
-        let window_start = date.and_time(window.start);
-        let window_end = date.and_time(window.end);
+        let window_start = date.to_datetime(window.start);
+        let window_end = date.to_datetime(window.end);
 
         let buffer = self.rules.buffer;
-        let mut times: Vec<NaiveDateTime> = passages
+        let mut times: Vec<DateTime> = passages
             .iter()
             .map(|p| p.scheduled_at)
             .filter(|&t| t >= window_start - buffer && t <= window_end + buffer)
@@ -149,29 +150,29 @@ mod tests {
 
     fn rules_with_windows(buffer_min: i64, use_time_windows: bool) -> QuietTimesRules {
         QuietTimesRules::new(
-            Duration::minutes(buffer_min),
+            SignedDuration::from_mins(buffer_min),
             TimeWindow {
-                start: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
-                end: NaiveTime::from_hms_opt(23, 59, 0).unwrap(),
+                start: jiff::civil::time(17, 0, 0, 0),
+                end: jiff::civil::time(23, 59, 0, 0),
             },
             TimeWindow {
-                start: NaiveTime::from_hms_opt(7, 0, 0).unwrap(),
-                end: NaiveTime::from_hms_opt(23, 59, 0).unwrap(),
+                start: jiff::civil::time(7, 0, 0, 0),
+                end: jiff::civil::time(23, 59, 0, 0),
             },
             use_time_windows,
         )
     }
 
-    fn passage_at(date: NaiveDate, hh: u32, mm: u32) -> TrainPassage {
-        TrainPassage::new("UID1".to_owned(), date.and_hms_opt(hh, mm, 0).unwrap())
+    fn passage_at(date: Date, hh: i8, mm: i8) -> TrainPassage {
+        TrainPassage::new("UID1".to_owned(), date.at(hh, mm, 0, 0))
     }
 
-    fn wed() -> NaiveDate {
-        NaiveDate::from_ymd_opt(2024, 1, 10).unwrap() // a Wednesday
+    fn wed() -> Date {
+        jiff::civil::date(2024, 1, 10) // a Wednesday
     }
 
-    fn sat() -> NaiveDate {
-        NaiveDate::from_ymd_opt(2024, 1, 13).unwrap() // a Saturday
+    fn sat() -> Date {
+        jiff::civil::date(2024, 1, 13) // a Saturday
     }
 
     #[test]
@@ -186,9 +187,9 @@ mod tests {
         let gap = report
             .gaps
             .iter()
-            .find(|g| g.start == date.and_hms_opt(18, 2, 0).unwrap())
+            .find(|g| g.start == date.at(18, 2, 0, 0))
             .expect("expected a buffered gap starting at 18:02, however small");
-        assert_that!(gap.end).is_equal_to(date.and_hms_opt(18, 10, 0).unwrap());
+        assert_that!(gap.end).is_equal_to(date.at(18, 10, 0, 0));
     }
 
     #[test]
@@ -200,10 +201,10 @@ mod tests {
 
         let report = calculator.report_for_day(date, &passages);
 
-        let between_the_two_trains = report.gaps.iter().find(|g| {
-            g.start >= date.and_hms_opt(17, 58, 0).unwrap()
-                && g.end <= date.and_hms_opt(18, 5, 0).unwrap()
-        });
+        let between_the_two_trains = report
+            .gaps
+            .iter()
+            .find(|g| g.start >= date.at(17, 58, 0, 0) && g.end <= date.at(18, 5, 0, 0));
         assert_that!(between_the_two_trains).is_none();
     }
 
@@ -214,8 +215,8 @@ mod tests {
 
         let report = calculator.report_for_day(date, &[]);
 
-        assert_that!(report.window_start).is_equal_to(date.and_hms_opt(7, 0, 0).unwrap());
-        assert_that!(report.window_end).is_equal_to(date.and_hms_opt(23, 59, 0).unwrap());
+        assert_that!(report.window_start).is_equal_to(date.at(7, 0, 0, 0));
+        assert_that!(report.window_end).is_equal_to(date.at(23, 59, 0, 0));
     }
 
     #[test]
@@ -225,7 +226,7 @@ mod tests {
 
         let report = calculator.report_for_day(date, &[]);
 
-        assert_that!(report.window_start).is_equal_to(date.and_hms_opt(17, 0, 0).unwrap());
+        assert_that!(report.window_start).is_equal_to(date.at(17, 0, 0, 0));
     }
 
     #[test]
@@ -262,8 +263,8 @@ mod tests {
 
         let report = calculator.report_for_day(date, &[]);
 
-        assert_that!(report.window_start).is_equal_to(date.and_hms_opt(0, 0, 0).unwrap());
-        assert_that!(report.window_end).is_equal_to(date.and_hms_opt(23, 59, 59).unwrap());
+        assert_that!(report.window_start).is_equal_to(date.at(0, 0, 0, 0));
+        assert_that!(report.window_end).is_equal_to(date.at(23, 59, 59, 0));
     }
 
     #[test]
@@ -288,7 +289,7 @@ mod tests {
         let report = calculator.report_for_day(date, &passages);
         let largest = report.largest_gap().expect("expected at least one gap");
 
-        assert_that!(largest.start).is_equal_to(date.and_hms_opt(19, 2, 0).unwrap());
+        assert_that!(largest.start).is_equal_to(date.at(19, 2, 0, 0));
         assert_that!(largest.end).is_equal_to(report.window_end);
     }
 
@@ -303,7 +304,7 @@ mod tests {
         let top = report.longest_gaps(1);
 
         assert_that!(top).has_length(1);
-        assert_that!(top[0].start).is_equal_to(date.and_hms_opt(19, 2, 0).unwrap());
+        assert_that!(top[0].start).is_equal_to(date.at(19, 2, 0, 0));
     }
 
     #[test]

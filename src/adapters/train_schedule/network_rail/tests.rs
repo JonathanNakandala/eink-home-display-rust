@@ -49,7 +49,7 @@ async fn adapter_resolves_passages_from_cache_file() {
     schedule_cache::save_cache(cache_file.path(), &records).unwrap();
 
     let adapter = NetworkRailTrainScheduleServiceAdapter::new(cache_file.path().to_path_buf());
-    let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 10).unwrap();
+    let date = jiff::civil::date(2024, 1, 10);
 
     let passages = adapter.passages_on(date).await.unwrap();
 
