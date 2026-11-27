@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::LayoutName;
@@ -61,13 +61,16 @@ impl PublishedImages for DirectoryImages {
         &self,
         layout: &LayoutName,
         format: ImageFormat,
-    ) -> anyhow::Result<Option<DateTime<Utc>>> {
+    ) -> anyhow::Result<Option<Timestamp>> {
         let path = self.path(layout, format);
         match tokio::fs::metadata(&path)
             .await
             .and_then(|metadata| metadata.modified())
         {
-            Ok(modified) => Ok(Some(DateTime::<Utc>::from(modified))),
+            Ok(modified) => Ok(Some(
+                Timestamp::try_from(modified)
+                    .context("A file was changed at an impossible time")?,
+            )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e).with_context(|| format!("Failed to inspect {}", path.display())),
         }
@@ -131,7 +134,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!((Utc::now() - at).num_seconds().abs() < 5);
+        assert!((Timestamp::now() - at).as_secs().abs() < 5);
         // Another format is its own file.
         assert!(
             images

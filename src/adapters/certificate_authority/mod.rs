@@ -21,7 +21,7 @@ mod storage;
 mod tests;
 
 use anyhow::{Context, anyhow, bail};
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PublicKeyData, SanType, SerialNumber,
@@ -38,6 +38,7 @@ use crate::domain::models::pairing::Fingerprint;
 use crate::domain::services::certificate_authority::{
     CertificateAuthority, CertificateRequest, IssuedCertificate, RequestError,
 };
+use crate::domain::services::clock::from_days;
 
 const ROOT_NAME: &str = "Home display root";
 const INTERMEDIATE_NAME: &str = "Home display issuing authority";
@@ -47,16 +48,16 @@ const ROOT_YEARS: i64 = 20;
 /// Short enough to be replaced from time to time, which keeps the means of doing so in working order.
 const INTERMEDIATE_YEARS: i64 = 5;
 /// An intermediate with less than this left is replaced (see `storage`).
-pub const ROTATE_WITHIN: Duration = Duration::days(365);
+pub const ROTATE_WITHIN: SignedDuration = from_days(365);
 /// A certificate starts a little before it was made, so a display whose clock is a few minutes behind
 /// doesn't find it "not yet valid".
-const BACKDATE: Duration = Duration::hours(1);
+const BACKDATE: SignedDuration = SignedDuration::from_hours(1);
 
 /// The server's own certificate and key, for it to prove who it is to a display.
 pub struct ServerIdentity {
     pub certificate: CertificateDer<'static>,
     /// When the certificate ends: the end asked for, or the intermediate's if that comes first.
-    pub not_after: DateTime<Utc>,
+    pub not_after: Timestamp,
     /// The intermediate that signed it, sent after it so a display can build the path to the root it
     /// pins without having kept the intermediate.
     pub intermediate: CertificateDer<'static>,
@@ -83,8 +84,8 @@ pub struct PrivateAuthority {
     /// Earlier intermediates that have not ended yet: certificates they signed are still good.
     retired: Vec<Vec<u8>>,
     fingerprint: Fingerprint,
-    root_not_after: DateTime<Utc>,
-    intermediate_not_after: DateTime<Utc>,
+    root_not_after: Timestamp,
+    intermediate_not_after: Timestamp,
 }
 
 /// The intermediate's key for as long as the server runs, wiped from memory when it is dropped (`KeyPair` is not).
@@ -131,7 +132,7 @@ impl PublicKeyData for SubjectKey {
 /// An authority's certificate: `path_len` more authorities may stand below it.
 fn authority_params(
     name: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
     years: i64,
     path_len: u8,
 ) -> anyhow::Result<CertificateParams> {
@@ -141,7 +142,7 @@ fn authority_params(
     params.is_ca = IsCa::Ca(BasicConstraints::Constrained(path_len));
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     params.not_before = to_time(now - BACKDATE)?;
-    params.not_after = to_time(now + Duration::days(365 * years))?;
+    params.not_after = to_time(now + from_days(365 * years))?;
     params.serial_number = Some(serial()?);
     params.use_authority_key_identifier_extension = true;
     Ok(params)
@@ -161,8 +162,8 @@ fn certificate_from_pem(pem: &str, what: &str) -> anyhow::Result<CertificateDer<
         .map_err(|e| anyhow!("The {what} certificate is not valid PEM: {e}"))
 }
 
-fn end_of(parsed: &x509_parser::certificate::X509Certificate<'_>) -> anyhow::Result<DateTime<Utc>> {
-    DateTime::from_timestamp(parsed.validity().not_after.timestamp(), 0)
+fn end_of(parsed: &x509_parser::certificate::X509Certificate<'_>) -> anyhow::Result<Timestamp> {
+    Timestamp::from_second(parsed.validity().not_after.timestamp())
         .context("A certificate has an impossible end date")
 }
 
@@ -171,7 +172,7 @@ fn end_of(parsed: &x509_parser::certificate::X509Certificate<'_>) -> anyhow::Res
 pub fn new_intermediate(
     root_certificate_pem: &str,
     root_key_pem: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> anyhow::Result<Zeroizing<String>> {
     let root_certificate = certificate_from_pem(root_certificate_pem, "root")?;
     let root_key = Zeroizing::new(key_from_pem(root_key_pem, "root")?);
@@ -192,7 +193,7 @@ pub fn new_intermediate(
     );
     let mut params = authority_params(INTERMEDIATE_NAME, now, INTERMEDIATE_YEARS, 0)?;
     // Never outlive the root: nothing below an ended authority is trusted.
-    let end = (now + Duration::days(365 * INTERMEDIATE_YEARS)).min(root_end);
+    let end = (now + from_days(365 * INTERMEDIATE_YEARS)).min(root_end);
     params.not_after = to_time(end)?;
     let certificate = params
         .signed_by(&*key, &root_issuer)
@@ -204,7 +205,7 @@ pub fn new_intermediate(
 
 impl PrivateAuthority {
     /// A new root and intermediate, and the three files' contents to keep them by.
-    pub fn generate(now: DateTime<Utc>) -> anyhow::Result<(Self, AuthorityFiles)> {
+    pub fn generate(now: Timestamp) -> anyhow::Result<(Self, AuthorityFiles)> {
         let key = Zeroizing::new(
             KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
                 .context("Failed to generate the root's key")?,
@@ -233,7 +234,7 @@ impl PrivateAuthority {
         root_pem: &str,
         intermediate_pem: &str,
         retired: &[String],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> anyhow::Result<Self> {
         let root = certificate_from_pem(root_pem, "root")?;
         let (_, root_parsed) = x509_parser::parse_x509_certificate(&root)
@@ -286,8 +287,8 @@ impl PrivateAuthority {
     pub fn issue_server(
         &self,
         names: &[String],
-        now: DateTime<Utc>,
-        not_after: DateTime<Utc>,
+        now: Timestamp,
+        not_after: Timestamp,
     ) -> anyhow::Result<ServerIdentity> {
         if names.is_empty() {
             return Err(anyhow!("A server certificate needs at least one name"));
@@ -338,33 +339,33 @@ impl PrivateAuthority {
     /// intermediate has ended nothing can be made under it at all, and the way out is to replace it.
     fn limit_to_intermediate(
         &self,
-        now: DateTime<Utc>,
-        not_after: DateTime<Utc>,
-    ) -> anyhow::Result<DateTime<Utc>> {
+        now: Timestamp,
+        not_after: Timestamp,
+    ) -> anyhow::Result<Timestamp> {
         if self.intermediate_not_after <= now {
             bail!(
                 "the intermediate certificate ended on {}; nothing can be signed under it. Put the root's key back \
                  and restart, or run the rotation, to replace it",
-                self.intermediate_not_after.format("%Y-%m-%d")
+                self.intermediate_not_after.strftime("%Y-%m-%d")
             );
         }
         if not_after > self.intermediate_not_after {
             tracing::warn!(
                 "A certificate asked to last until {} is cut short to {}, when the intermediate ends",
-                not_after.format("%Y-%m-%d"),
-                self.intermediate_not_after.format("%Y-%m-%d")
+                not_after.strftime("%Y-%m-%d"),
+                self.intermediate_not_after.strftime("%Y-%m-%d")
             );
         }
         Ok(not_after.min(self.intermediate_not_after))
     }
 
     /// When the root ends, after which nothing is trusted and every display has to be paired again.
-    pub fn not_after(&self) -> DateTime<Utc> {
+    pub fn not_after(&self) -> Timestamp {
         self.root_not_after
     }
 
     /// When the intermediate in use ends. Before then it is replaced (see `rotate_intermediate`).
-    pub fn intermediate_not_after(&self) -> DateTime<Utc> {
+    pub fn intermediate_not_after(&self) -> Timestamp {
         self.intermediate_not_after
     }
 
@@ -422,8 +423,8 @@ impl CertificateAuthority for PrivateAuthority {
     fn issue(
         &self,
         request: &CertificateRequest,
-        now: DateTime<Utc>,
-        not_after: DateTime<Utc>,
+        now: Timestamp,
+        not_after: Timestamp,
     ) -> anyhow::Result<IssuedCertificate> {
         // Read again from the request itself: what is signed is what it says, not what the caller
         // passed alongside.
@@ -442,7 +443,7 @@ impl CertificateAuthority for PrivateAuthority {
         params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
         params.not_before = to_time(now - BACKDATE)?;
         // A certificate holds whole seconds.
-        let not_after = DateTime::from_timestamp(not_after.timestamp(), 0)
+        let not_after = Timestamp::from_second(not_after.as_second())
             .context("The certificate's end is out of range")?;
         params.not_after = to_time(not_after)?;
         let serial = serial()?;
@@ -482,8 +483,8 @@ fn is_host_name(name: &str) -> bool {
         })
 }
 
-fn to_time(at: DateTime<Utc>) -> anyhow::Result<OffsetDateTime> {
-    OffsetDateTime::from_unix_timestamp(at.timestamp()).context("A date is out of range")
+fn to_time(at: Timestamp) -> anyhow::Result<OffsetDateTime> {
+    OffsetDateTime::from_unix_timestamp(at.as_second()).context("A date is out of range")
 }
 
 /// 128 random bits with the top bit clear, so it is a positive number (RFC 5280 asks for at most 20

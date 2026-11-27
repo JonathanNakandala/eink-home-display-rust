@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, anyhow};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{PrivateAuthority, ROTATE_WITHIN, new_intermediate};
@@ -61,14 +61,14 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
     match (root.exists(), intermediate.exists()) {
         (true, true) => {
             let authority = load(directory)?;
-            let left = authority.intermediate_not_after() - Utc::now();
+            let left = authority.intermediate_not_after() - Timestamp::now();
             if left >= ROTATE_WITHIN {
                 return Ok(authority);
             }
             if root_key.exists() {
                 tracing::info!(
                     "The intermediate ends in {} days; replacing it",
-                    left.num_days()
+                    left.as_hours() / 24
                 );
                 rotate_intermediate(directory, None)?;
                 return load(directory);
@@ -77,7 +77,7 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
                 "The intermediate certificate ends in {} days and {} is not here to replace it. Put the \
                  root's key back, or run the rotation with its path, before then: after it ends no display \
                  can be served",
-                left.num_days().max(0),
+                (left.as_hours() / 24).max(0),
                 root_key.display()
             );
             Ok(authority)
@@ -96,7 +96,7 @@ pub fn open(directory: &Path, create: Create) -> anyhow::Result<PrivateAuthority
                 "There is no certificate authority in {}",
                 directory.display()
             )),
-            Create::IfMissing => create_all(directory, Utc::now()),
+            Create::IfMissing => create_all(directory, Timestamp::now()),
         },
         _ => Err(anyhow!(
             "{} is only partly there (it needs {ROOT_CERTIFICATE} and {INTERMEDIATE}, and {ROOT_KEY} to replace \
@@ -130,7 +130,7 @@ fn load(directory: &Path) -> anyhow::Result<PrivateAuthority> {
         &read(ROOT_CERTIFICATE)?,
         &read(INTERMEDIATE)?,
         &retired,
-        Utc::now(),
+        Timestamp::now(),
     )
     .with_context(|| format!("The authority in {} is not usable", directory.display()))
 }
@@ -140,14 +140,14 @@ fn load(directory: &Path) -> anyhow::Result<PrivateAuthority> {
 /// every display that pinned it would refuse it once its own clock was right, with pairing them all again the only
 /// way out; an intermediate dated from then would be refused the same way. So nothing is made until the clock is set
 /// (under systemd the start is tried again after a pause).
-fn require_plausible(now: DateTime<Utc>) -> anyhow::Result<()> {
+fn require_plausible(now: Timestamp) -> anyhow::Result<()> {
     if now < earliest_plausible() {
         return Err(anyhow!(implausible(now)));
     }
     Ok(())
 }
 
-pub(super) fn create_all(directory: &Path, now: DateTime<Utc>) -> anyhow::Result<PrivateAuthority> {
+pub(super) fn create_all(directory: &Path, now: Timestamp) -> anyhow::Result<PrivateAuthority> {
     // Before anything is made, so a refusal leaves no directory behind.
     require_plausible(now)?;
     fs::create_dir_all(directory)
@@ -183,13 +183,13 @@ pub(super) fn create_all(directory: &Path, now: DateTime<Utc>) -> anyhow::Result
 /// The two files change one after the other, each whole or not at all: the retired list first, so that a
 /// crash between them leaves the old intermediate still in use and also kept, which is harmless.
 pub fn rotate_intermediate(directory: &Path, root_key: Option<&Path>) -> anyhow::Result<()> {
-    rotate_intermediate_at(directory, root_key, Utc::now())
+    rotate_intermediate_at(directory, root_key, Timestamp::now())
 }
 
 pub(super) fn rotate_intermediate_at(
     directory: &Path,
     root_key: Option<&Path>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> anyhow::Result<()> {
     require_plausible(now)?;
     let key_path = root_key

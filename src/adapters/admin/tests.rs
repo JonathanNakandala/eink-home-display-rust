@@ -3,13 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
 use chrono_tz::Tz;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, HOST};
 use hyper::{Method, Request, StatusCode};
 use hyper_util::rt::TokioIo;
+use jiff::{SignedDuration, Timestamp};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
@@ -40,17 +40,17 @@ fn private_directory() -> TempDir {
 }
 
 /// A clock that stands still until it is moved, so a day can pass in a test.
-struct TestClock(std::sync::Mutex<chrono::DateTime<Utc>>);
+struct TestClock(std::sync::Mutex<Timestamp>);
 
 impl TestClock {
-    fn advance(&self, by: Duration) {
+    fn advance(&self, by: SignedDuration) {
         *self.0.lock().unwrap() += by;
     }
 }
 
 impl crate::domain::services::clock::Clock for TestClock {
     fn now(&self) -> chrono::DateTime<Tz> {
-        self.0.lock().unwrap().with_timezone(&Tz::UTC)
+        crate::domain::services::clock::in_zone(*self.0.lock().unwrap(), Tz::UTC)
     }
 }
 
@@ -86,14 +86,14 @@ async fn enrollment_in(
     let store = FilePairingStore::open(&directory.join("pairings"), Missing::StartEmpty)
         .await
         .unwrap();
-    let clock = Arc::new(TestClock(std::sync::Mutex::new(Utc::now())));
+    let clock = Arc::new(TestClock(std::sync::Mutex::new(Timestamp::now())));
     let enrollment = Arc::new(Enrollment::new(
         authority.clone(),
         Arc::new(store),
         clock.clone(),
         EnrollmentPolicy {
-            certificate_lifetime: Duration::days(90),
-            retry_after: Duration::minutes(5),
+            certificate_lifetime: from_days(90),
+            retry_after: SignedDuration::from_mins(5),
             require_channel_binding: false,
         },
     ));
@@ -264,8 +264,11 @@ async fn the_window_starts_closed_and_opens_and_closes_on_request() {
     let opened = f.client.open_window(15).await.unwrap();
     assert!(opened.open);
     let closes = opened.closes_at.unwrap();
-    let expected = Utc::now() + Duration::minutes(15);
-    assert!((closes - expected).num_seconds().abs() < 5, "{closes}");
+    let expected = Timestamp::now() + SignedDuration::from_mins(15);
+    assert!(
+        closes.duration_since(expected).as_secs().abs() < 5,
+        "{closes}"
+    );
     // It is the real window that opened, not only a report of one.
     assert_eq!(f.enrollment.window_closes_at(), Some(closes));
     assert_eq!(f.client.window().await.unwrap(), opened);
@@ -288,7 +291,10 @@ async fn opening_it_again_sets_the_time_afresh() {
     let f = start().await;
     let short = f.client.open_window(5).await.unwrap().closes_at.unwrap();
     let long = f.client.open_window(60).await.unwrap().closes_at.unwrap();
-    assert!(long - short > Duration::minutes(50), "{short} {long}");
+    assert!(
+        long.duration_since(short) > SignedDuration::from_mins(50),
+        "{short} {long}"
+    );
     let shorter = f.client.open_window(10).await.unwrap().closes_at.unwrap();
     assert!(shorter < long, "a shorter window shortens it");
 }
@@ -731,26 +737,26 @@ async fn with_no_server_the_client_says_it_could_not_be_reached() {
 
 #[test]
 fn the_window_is_described_in_a_sentence_with_the_time_in_the_zone_asked_for() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let open = WindowState {
         open: true,
-        closes_at: Some(now + Duration::minutes(14) + Duration::seconds(5)),
+        closes_at: Some(now + SignedDuration::from_mins(14) + SignedDuration::from_secs(5)),
     };
-    let utc = describe_window(&open, now, &Utc);
+    let utc = describe_window(&open, now, &jiff::tz::TimeZone::UTC);
     assert!(utc.contains("is open until"), "{utc}");
     assert!(utc.contains("14 min 05 s from now"), "{utc}");
     assert!(
-        utc.contains(&open.closes_at.unwrap().format("%H:%M:%S").to_string()),
+        utc.contains(&open.closes_at.unwrap().strftime("%H:%M:%S").to_string()),
         "{utc}"
     );
     // In another zone the clock time is that zone's.
-    let plus_five = chrono::FixedOffset::east_opt(5 * 3600).unwrap();
+    let plus_five = jiff::tz::TimeZone::fixed(jiff::tz::offset(5));
     let there = describe_window(&open, now, &plus_five);
     let expected = open
         .closes_at
         .unwrap()
-        .with_timezone(&plus_five)
-        .format("%H:%M:%S")
+        .to_zoned_datetime(plus_five.clone())
+        .strftime("%H:%M:%S")
         .to_string();
     assert!(there.contains(&expected), "{there}");
 
@@ -760,7 +766,7 @@ fn the_window_is_described_in_a_sentence_with_the_time_in_the_zone_asked_for() {
             closes_at: None,
         },
         now,
-        &Utc,
+        &jiff::tz::TimeZone::UTC,
     );
     assert!(
         closed.contains("closed") && closed.contains("displayctl window open"),
@@ -769,9 +775,9 @@ fn the_window_is_described_in_a_sentence_with_the_time_in_the_zone_asked_for() {
     // A time in the past is never shown as negative.
     let late = WindowState {
         open: true,
-        closes_at: Some(now - Duration::seconds(30)),
+        closes_at: Some(now - SignedDuration::from_secs(30)),
     };
-    assert!(describe_window(&late, now, &Utc).contains("0 min 00 s"));
+    assert!(describe_window(&late, now, &jiff::tz::TimeZone::UTC).contains("0 min 00 s"));
 }
 
 // --- displays ---------------------------------------------------------------------------------------------
@@ -779,7 +785,7 @@ fn the_window_is_described_in_a_sentence_with_the_time_in_the_zone_asked_for() {
 /// A display that is a member: it asked, was approved, and collected its certificate.
 async fn member(f: &Fixture, name: &str) -> Display {
     let display = Display::new(name);
-    f.enrollment.open_window(Duration::minutes(10));
+    f.enrollment.open_window(SignedDuration::from_mins(10));
     display.asks(f).await.unwrap();
     f.client.approve(name, &display.code(f)).await.unwrap();
     assert!(matches!(
@@ -791,7 +797,7 @@ async fn member(f: &Fixture, name: &str) -> Display {
 
 async fn waiting(f: &Fixture, name: &str) -> Display {
     let display = Display::new(name);
-    f.enrollment.open_window(Duration::minutes(10));
+    f.enrollment.open_window(SignedDuration::from_mins(10));
     display.asks(f).await.unwrap();
     display
 }
@@ -814,7 +820,10 @@ async fn no_display_is_listed_until_one_asks() {
     assert_eq!(entry.name, "kitchen");
     assert_eq!(entry.state, DisplayState::Waiting);
     let asked = entry.waiting_since.unwrap();
-    assert!((Utc::now() - asked).num_seconds().abs() < 5, "{asked}");
+    assert!(
+        Timestamp::now().duration_since(asked).as_secs().abs() < 5,
+        "{asked}"
+    );
     assert_eq!(f.client.display("kitchen").await.unwrap(), *entry);
 }
 
@@ -1133,7 +1142,7 @@ async fn turning_a_waiting_display_down_keeps_it_out_until_it_is_forgotten() {
         f.client.reject("hall").await.unwrap().state,
         DisplayState::Rejected
     );
-    f.enrollment.open_window(Duration::minutes(10));
+    f.enrollment.open_window(SignedDuration::from_mins(10));
     assert!(
         hall.asks(&f).await.is_err(),
         "a display turned down is refused when it asks again"
@@ -1150,7 +1159,7 @@ async fn turning_down_another_key_for_a_members_name_leaves_the_member_as_it_was
     let f = start().await;
     let kitchen = member(&f, "kitchen").await;
     let impostor = Display::new("kitchen");
-    f.enrollment.open_window(Duration::minutes(10));
+    f.enrollment.open_window(SignedDuration::from_mins(10));
     impostor.asks(&f).await.unwrap();
     let before = f.client.display("kitchen").await.unwrap();
     assert!(before.replacement_waiting);
@@ -1310,9 +1319,14 @@ async fn a_display_waiting_to_be_approved_can_be_given_a_layout_too() {
 #[test]
 fn the_layout_chosen_is_part_of_what_is_said_about_a_display() {
     let mut chosen = entry(DisplayState::Member);
-    assert!(!describe_entry(&chosen, Utc::now(), &Utc).contains("layout"));
+    assert!(
+        !describe_entry(&chosen, Timestamp::now(), &jiff::tz::TimeZone::UTC).contains("layout")
+    );
     chosen.layout = Some("departures".to_owned());
-    assert!(describe_entry(&chosen, Utc::now(), &Utc).contains("; layout departures"));
+    assert!(
+        describe_entry(&chosen, Timestamp::now(), &jiff::tz::TimeZone::UTC)
+            .contains("; layout departures")
+    );
     assert!(layout_changed(&chosen).contains("departures layout"));
     chosen.layout = None;
     assert!(layout_changed(&chosen).contains("the default"));
@@ -1348,7 +1362,7 @@ async fn a_viewer_is_made_with_a_link_that_has_its_code_after_a_hash_and_is_list
     assert_eq!(issued.viewer.scope, "layout:*");
     assert_eq!(
         issued.link_expires_at - issued.viewer.created_at,
-        Duration::minutes(15)
+        SignedDuration::from_mins(15)
     );
     assert!(issued.viewer.id.len() == 8);
 
@@ -1382,10 +1396,14 @@ async fn a_refreshing_viewer_is_made_when_asked_and_is_listed_as_one_with_its_se
     assert_eq!(wall.status, ViewerStatus::Active);
     let ends = wall.expires_at.unwrap();
     assert!(
-        ends > Utc::now() + Duration::days(29) && ends < Utc::now() + Duration::days(31),
+        ends > Timestamp::now() + from_days(29) && ends < Timestamp::now() + from_days(31),
         "{ends}"
     );
-    let table = describe_viewers(&ViewerList { viewers: listed }, Utc::now(), &Utc);
+    let table = describe_viewers(
+        &ViewerList { viewers: listed },
+        Timestamp::now(),
+        &jiff::tz::TimeZone::UTC,
+    );
     assert!(table.contains("session until"), "{table}");
 }
 
@@ -1442,7 +1460,7 @@ async fn what_a_viewer_is_asked_to_be_is_checked_with_a_code_for_each_fault() {
     assert_eq!(ok.viewer.scope, "layout:departures layout:dashboard");
     assert_eq!(
         ok.link_expires_at - ok.viewer.created_at,
-        Duration::minutes(5)
+        SignedDuration::from_mins(5)
     );
 }
 
@@ -1521,7 +1539,7 @@ async fn a_viewer_that_signs_in_shows_as_active_with_when_its_token_ends() {
 
     assert_eq!(listed.status, ViewerStatus::Active);
     assert_eq!(listed.link_expires_at, None);
-    assert!(listed.expires_at.unwrap() > Utc::now() + Duration::days(89));
+    assert!(listed.expires_at.unwrap() > Timestamp::now() + from_days(89));
     // Nothing that can sign in is anywhere in what is listed.
     let raw = raw(&f.socket, Method::GET, "/v1/viewers", None, "").await.1;
     assert!(
@@ -1532,7 +1550,7 @@ async fn a_viewer_that_signs_in_shows_as_active_with_when_its_token_ends() {
 
 #[test]
 fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let waiting = ViewerEntry {
         id: "abcdefgh".into(),
         label: "kitchen tablet".into(),
@@ -1540,7 +1558,7 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
         scope: "layout:*".into(),
         refreshing: false,
         created_at: now,
-        link_expires_at: Some(now + Duration::minutes(10)),
+        link_expires_at: Some(now + SignedDuration::from_mins(10)),
         expires_at: None,
         last_used_at: None,
     };
@@ -1549,8 +1567,8 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
         label: "hall".into(),
         status: ViewerStatus::Active,
         scope: "layout:departures".into(),
-        expires_at: Some(now + Duration::days(60)),
-        last_used_at: Some(now - Duration::minutes(5)),
+        expires_at: Some(now + from_days(60)),
+        last_used_at: Some(now - SignedDuration::from_mins(5)),
         link_expires_at: None,
         ..waiting.clone()
     };
@@ -1564,7 +1582,7 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
             viewers: vec![waiting.clone(), active, revoked],
         },
         now,
-        &Utc,
+        &jiff::tz::TimeZone::UTC,
     );
 
     assert!(table.starts_with("ID "), "{table}");
@@ -1577,16 +1595,23 @@ fn viewers_are_described_in_a_table_and_a_new_one_with_its_link_once() {
         "{table}"
     );
     assert!(table.contains("forget it to free its place"), "{table}");
-    assert!(describe_viewers(&ViewerList { viewers: vec![] }, now, &Utc).contains("viewer create"));
+    assert!(
+        describe_viewers(
+            &ViewerList { viewers: vec![] },
+            now,
+            &jiff::tz::TimeZone::UTC
+        )
+        .contains("viewer create")
+    );
 
     let issued = ViewerIssued {
         viewer: waiting.clone(),
         code: "hdc1_x".into(),
         link: "https://display.test:8443/view#code=hdc1_x".into(),
-        link_expires_at: now + Duration::minutes(10),
+        link_expires_at: now + SignedDuration::from_mins(10),
         warnings: vec!["The page is turned off".into()],
     };
-    let said = viewer_issued(&issued, now, &Utc);
+    let said = viewer_issued(&issued, now, &jiff::tz::TimeZone::UTC);
     assert!(
         said.contains("https://display.test:8443/view#code=hdc1_x"),
         "{said}"
@@ -1723,8 +1748,8 @@ async fn displays_are_listed_by_name_with_each_ones_standing() {
     let kitchen = list.displays.iter().find(|e| e.name == "kitchen").unwrap();
     let ends = kitchen.certificate_not_after.unwrap();
     assert!(
-        (ends - (Utc::now() + Duration::days(90)))
-            .num_minutes()
+        ends.duration_since(Timestamp::now() + from_days(90))
+            .as_mins()
             .abs()
             < 5,
         "{ends}"
@@ -1738,14 +1763,14 @@ async fn a_member_that_has_not_renewed_when_it_should_have_is_listed_as_overdue_
     let f = start().await;
     member(&f, "kitchen").await;
     // The display renews with 30 of the 90 days left, so a member 50 days in is fine, and 70 days in it has not.
-    f.clock.advance(Duration::days(50));
+    f.clock.advance(from_days(50));
     assert!(!f.client.display("kitchen").await.unwrap().renewal_overdue);
-    f.clock.advance(Duration::days(20));
+    f.clock.advance(from_days(20));
     let late = f.client.display("kitchen").await.unwrap();
     assert!(late.renewal_overdue);
     assert!(!late.certificate_expired, "still has a certificate");
     // Out: the louder state replaces it.
-    f.clock.advance(Duration::days(21));
+    f.clock.advance(from_days(21));
     let out = f.client.display("kitchen").await.unwrap();
     assert!(out.certificate_expired);
     assert!(!out.renewal_overdue);
@@ -1755,7 +1780,7 @@ async fn a_member_that_has_not_renewed_when_it_should_have_is_listed_as_overdue_
 async fn a_member_whose_certificate_has_run_out_is_listed_as_one_that_has() {
     let f = start().await;
     member(&f, "kitchen").await;
-    f.clock.advance(Duration::days(91));
+    f.clock.advance(from_days(91));
     let entry = f.client.display("kitchen").await.unwrap();
     assert_eq!(
         entry.state,
@@ -1770,9 +1795,9 @@ async fn a_request_nobody_answers_lapses_and_disappears_from_the_list() {
     let f = start().await;
     let kitchen = waiting(&f, "kitchen").await;
     f.clock
-        .advance(crate::application::enrollment::REQUEST_LIFETIME - Duration::minutes(1));
+        .advance(crate::application::enrollment::REQUEST_LIFETIME - SignedDuration::from_mins(1));
     assert_eq!(f.client.displays().await.unwrap().displays.len(), 1);
-    f.clock.advance(Duration::minutes(2));
+    f.clock.advance(SignedDuration::from_mins(2));
     assert_eq!(f.client.displays().await.unwrap().displays, []);
     assert_eq!(
         code_of(
@@ -1794,7 +1819,7 @@ async fn every_answer_the_display_endpoints_give_is_one_the_description_declares
     let kitchen = member(&f, "kitchen").await;
     let hall = waiting(&f, "hall").await;
     let impostor = Display::new("kitchen");
-    f.enrollment.open_window(Duration::minutes(10));
+    f.enrollment.open_window(SignedDuration::from_mins(10));
     impostor.asks(&f).await.unwrap();
     let right = hall.code(&f);
     let _ = kitchen;
@@ -1948,16 +1973,20 @@ fn spans_of_time_are_written_in_the_units_that_matter() {
         (3 * 86_400 + 5 * 3600, "3 days 5 h"),
         (-100, "less than a minute"),
     ] {
-        assert_eq!(age(Duration::seconds(seconds)), expected, "{seconds}");
+        assert_eq!(
+            age(SignedDuration::from_secs(seconds)),
+            expected,
+            "{seconds}"
+        );
     }
 }
 
 #[test]
 fn each_state_says_what_to_do_about_it() {
-    let now = Utc::now();
-    let say = |e: &DisplayEntry| describe_entry(e, now, &Utc);
+    let now = Timestamp::now();
+    let say = |e: &DisplayEntry| describe_entry(e, now, &jiff::tz::TimeZone::UTC);
     let mut waiting = entry(DisplayState::Waiting);
-    waiting.waiting_since = Some(now - Duration::minutes(3));
+    waiting.waiting_since = Some(now - SignedDuration::from_mins(3));
     let text = say(&waiting);
     assert!(
         text.contains("asked 3 min ago") && text.contains("code on its own panel"),
@@ -1969,14 +1998,14 @@ fn each_state_says_what_to_do_about_it() {
     assert!(say(&entry(DisplayState::Revoked)).contains("Forget it"));
 
     let mut member = entry(DisplayState::Member);
-    member.certificate_not_after = Some(now + Duration::days(20) + Duration::hours(3));
+    member.certificate_not_after = Some(now + from_days(20) + SignedDuration::from_hours(3));
     let text = say(&member);
     assert!(
         text.contains("certificate until") && text.contains("20 days 3 h left"),
         "{text}"
     );
 
-    member.certificate_not_after = Some(now + Duration::days(20));
+    member.certificate_not_after = Some(now + from_days(20));
     member.renewal_overdue = true;
     let text = say(&member);
     assert!(
@@ -1985,7 +2014,7 @@ fn each_state_says_what_to_do_about_it() {
     );
     member.renewal_overdue = false;
 
-    member.certificate_not_after = Some(now - Duration::days(2));
+    member.certificate_not_after = Some(now - from_days(2));
     member.certificate_expired = true;
     let text = say(&member);
     assert!(
@@ -2003,7 +2032,7 @@ fn each_state_says_what_to_do_about_it() {
         formats: vec!["png".to_owned()],
     };
     let mut asking = entry(DisplayState::Waiting);
-    asking.waiting_since = Some(now - Duration::minutes(3));
+    asking.waiting_since = Some(now - SignedDuration::from_mins(3));
     asking.profile = Some(model("reTerminal E1003"));
     let text = say(&asking);
     assert!(
@@ -2022,7 +2051,7 @@ fn each_state_says_what_to_do_about_it() {
     member.changing_keys = true;
     member.replacement_waiting = true;
     member.replacement_profile = Some(model("Reflashed Model"));
-    member.waiting_since = Some(now - Duration::minutes(10));
+    member.waiting_since = Some(now - SignedDuration::from_mins(10));
     let text = say(&member);
     assert!(text.contains("changing to a new key"), "{text}");
     assert!(
@@ -2034,18 +2063,18 @@ fn each_state_says_what_to_do_about_it() {
 
 #[test]
 fn the_list_is_a_table_and_an_empty_one_says_how_to_get_a_display_in() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut kitchen = entry(DisplayState::Member);
-    kitchen.certificate_not_after = Some(now + Duration::days(30));
+    kitchen.certificate_not_after = Some(now + from_days(30));
     let mut long = entry(DisplayState::Waiting);
     long.name = "reterminal-e1003-a1b2c3".to_owned();
-    long.waiting_since = Some(now - Duration::minutes(1));
+    long.waiting_since = Some(now - SignedDuration::from_mins(1));
     let table = describe_list(
         &DisplayList {
             displays: vec![long, kitchen],
         },
         now,
-        &Utc,
+        &jiff::tz::TimeZone::UTC,
     );
     let lines: Vec<&str> = table.lines().collect();
     assert_eq!(lines.len(), 3, "{table}");
@@ -2057,7 +2086,11 @@ fn the_list_is_a_table_and_an_empty_one_says_how_to_get_a_display_in() {
     assert!(lines[1][state_at..].starts_with("waiting"), "{table}");
     assert!(lines[2][state_at..].starts_with("member"), "{table}");
 
-    let empty = describe_list(&DisplayList { displays: vec![] }, now, &Utc);
+    let empty = describe_list(
+        &DisplayList { displays: vec![] },
+        now,
+        &jiff::tz::TimeZone::UTC,
+    );
     assert!(
         empty.contains("No display has asked") && empty.contains("window open"),
         "{empty}"
@@ -2080,6 +2113,7 @@ fn what_was_done_is_said_in_a_sentence_that_depends_on_what_it_was() {
 // --- the QR code ---------------------------------------------------------------------------------------------
 
 use super::present::{QUIET_ZONE, qr_modules};
+use crate::domain::services::clock::from_days;
 
 /// What a camera would read out of `modules` (dark ones true): drawn as a picture a few pixels to a module, as it would be
 /// on a screen, and decoded.
@@ -2454,7 +2488,7 @@ mod credentials {
         let listed = f.client.credentials().await.unwrap();
         let said = format!(
             "{} {}",
-            present::describe_credentials(&listed, Utc::now()),
+            present::describe_credentials(&listed, Timestamp::now()),
             present::credential_changed(&set, false)
         );
         assert!(!said.contains(KEY), "{said}");
@@ -2484,7 +2518,7 @@ mod credentials {
             .unwrap();
 
         let table =
-            present::describe_credentials(&f.client.credentials().await.unwrap(), Utc::now());
+            present::describe_credentials(&f.client.credentials().await.unwrap(), Timestamp::now());
 
         assert!(
             table.contains("open-weather") && table.contains("set"),

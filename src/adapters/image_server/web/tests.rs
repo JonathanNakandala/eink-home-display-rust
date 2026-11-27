@@ -2,6 +2,7 @@
 
 use chrono::{NaiveTime, TimeZone};
 use chrono_tz::Europe::London;
+use jiff::SignedDuration;
 
 use super::super::testing::{FIRST, publish, publish_layout, start_web, start_with_two_layouts};
 use super::pwa::inline_block;
@@ -617,7 +618,7 @@ async fn guarded_by(peer: Option<std::net::SocketAddr>, settings: &WebSettings) 
 async fn guarded_for(
     peer: Option<std::net::SocketAddr>,
     settings: &WebSettings,
-    access: Option<chrono::Duration>,
+    access: Option<SignedDuration>,
 ) -> Guarded {
     let directory = tempfile::tempdir().unwrap();
     publish_both(directory.path(), FIRST, b"all of it").await;
@@ -1579,7 +1580,7 @@ async fn the_description_has_the_refresh_token_in_a_token_response_and_the_grant
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_refreshing_viewers_page_renews_its_token_by_itself_in_a_browser() {
-    let g = guarded_for(None, &needing_a_token(), Some(chrono::Duration::seconds(2))).await;
+    let g = guarded_for(None, &needing_a_token(), Some(SignedDuration::from_secs(2))).await;
     publish_picture(g._directory.path(), FIRST, 40).await;
     publish_picture(g._directory.path(), "departures", 20).await;
     let issued = g
@@ -2440,7 +2441,7 @@ async fn a_page_on_a_wall_is_pushed_new_pictures_and_survives_the_network_going_
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_renewal_that_fails_does_not_sign_a_refreshing_viewer_out_and_is_tried_again() {
-    let g = guarded_for(None, &needing_a_token(), Some(chrono::Duration::seconds(2))).await;
+    let g = guarded_for(None, &needing_a_token(), Some(SignedDuration::from_secs(2))).await;
     publish_picture(g._directory.path(), FIRST, 40).await;
     publish_picture(g._directory.path(), "departures", 20).await;
     let issued = g

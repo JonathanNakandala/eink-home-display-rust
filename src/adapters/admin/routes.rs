@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use jiff::SignedDuration;
+
 use axum::Json;
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
@@ -267,10 +269,10 @@ async fn open_window(
     }
     let closes = admin
         .enrollment
-        .open_window(chrono::Duration::minutes(minutes.into()));
+        .open_window(SignedDuration::from_mins(minutes.into()));
     tracing::info!(
         minutes,
-        until = %closes.format("%H:%M:%S UTC"),
+        until = %closes.strftime("%H:%M:%S UTC"),
         "The pairing window is open"
     );
     Ok(Json(window_state(&admin)))
@@ -335,7 +337,7 @@ fn refused(error: ApproveError, revoking: bool) -> ApiError {
                 "Too many wrong codes for {device} in a row, so none is accepted for {} more minute(s). Compare \
                  the code on its panel with the one the server shows: if they differ, the display may be \
                  talking to something else",
-                retry_after.num_minutes().max(1)
+                retry_after.as_mins().max(1)
             ),
         ),
         ApproveError::Failed(e) => ApiError::internal("carry that out", e),

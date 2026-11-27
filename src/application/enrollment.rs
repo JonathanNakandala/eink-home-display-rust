@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
@@ -36,7 +36,7 @@ pub const MAX_PENDING: usize = 8;
 /// How long a request waits for the owner before it lapses, counted from when it was first made. A display that
 /// is still asking after that asks again (with the window open) and is a new request. Without this, requests
 /// from strangers, or from a display that was given away, would fill the places for good.
-pub const REQUEST_LIFETIME: Duration = Duration::hours(24);
+pub const REQUEST_LIFETIME: SignedDuration = SignedDuration::from_hours(24);
 
 /// How many wrong codes may be typed for one display, one after the other, before approving it is refused for a while.
 /// The code is sixty bits, so this is not about guessing it. A code that keeps being wrong is a display shown something
@@ -44,15 +44,15 @@ pub const REQUEST_LIFETIME: Duration = Duration::hours(24);
 pub const MAX_WRONG_CODES: u32 = 5;
 
 /// How long approving a display is refused after `MAX_WRONG_CODES` wrong codes. After that it may be tried again.
-pub const WRONG_CODE_LOCKOUT: Duration = Duration::minutes(15);
+pub const WRONG_CODE_LOCKOUT: SignedDuration = SignedDuration::from_mins(15);
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnrollmentPolicy {
     /// How long a display's certificate lasts. A display that is off for longer has to be paired again.
-    pub certificate_lifetime: Duration,
+    pub certificate_lifetime: SignedDuration,
     /// What a waiting display is told to wait. It is the display's battery that pays for asking, so
     /// not seconds.
-    pub retry_after: Duration,
+    pub retry_after: SignedDuration,
     /// Whether a request must prove it was signed on the connection it arrived on. Off until the
     /// display can do it; a request that does carry the proof is checked either way.
     pub require_channel_binding: bool,
@@ -69,7 +69,7 @@ pub enum Outcome {
     /// leave the rule that it is never sent resting on that layer remembering not to. The code is worked out here
     /// only when the owner types one to be compared with it (see `code_for`).
     Pending {
-        retry_after: Duration,
+        retry_after: SignedDuration,
     },
 }
 
@@ -125,10 +125,10 @@ pub enum ApproveError {
     #[error("that is not the code {0} would show")]
     WrongCode(DeviceId),
     /// Too many wrong codes in a row for this display: none is looked at until `retry_after` has passed.
-    #[error("too many wrong codes for {device}; none is accepted for {} more minute(s)", retry_after.num_minutes().max(1))]
+    #[error("too many wrong codes for {device}; none is accepted for {} more minute(s)", retry_after.as_mins().max(1))]
     TooManyAttempts {
         device: DeviceId,
-        retry_after: Duration,
+        retry_after: SignedDuration,
     },
     #[error("the server failed: {0:#}")]
     Failed(#[from] anyhow::Error),
@@ -138,9 +138,9 @@ pub enum ApproveError {
 #[derive(Debug, Clone, Copy)]
 struct WrongCodes {
     count: u32,
-    last_at: DateTime<Utc>,
+    last_at: Timestamp,
     /// While this is in the future no code is looked at.
-    locked_until: Option<DateTime<Utc>>,
+    locked_until: Option<Timestamp>,
 }
 
 pub struct Enrollment {
@@ -149,7 +149,7 @@ pub struct Enrollment {
     clock: Arc<dyn Clock>,
     policy: EnrollmentPolicy,
     /// When the window the owner opened closes, if one is open.
-    window: Mutex<Option<DateTime<Utc>>>,
+    window: Mutex<Option<Timestamp>>,
     /// Held while a pairing is read, decided on and written back, so two changes to the same display
     /// can't interleave: a renewal that has read a display as a member must not write it back as one
     /// after the owner has revoked it.
@@ -178,7 +178,7 @@ impl Enrollment {
 
     /// The members whose certificates should have been renewed by now and have not been, with how long each has left
     /// (see `renewal_overdue`).
-    pub async fn overdue_renewals(&self) -> anyhow::Result<Vec<(DeviceId, Duration)>> {
+    pub async fn overdue_renewals(&self) -> anyhow::Result<Vec<(DeviceId, SignedDuration)>> {
         let now = self.now();
         Ok(self
             .store
@@ -197,7 +197,7 @@ impl Enrollment {
     }
 
     /// How long the certificates this server issues to displays last.
-    pub fn certificate_lifetime(&self) -> Duration {
+    pub fn certificate_lifetime(&self) -> SignedDuration {
         self.policy.certificate_lifetime
     }
 
@@ -207,14 +207,14 @@ impl Enrollment {
     }
 
     /// The time the server goes by.
-    pub fn now(&self) -> DateTime<Utc> {
-        self.clock.now().to_utc()
+    pub fn now(&self) -> Timestamp {
+        self.clock.instant()
     }
 
     /// Lets go of requests that have waited longer than `REQUEST_LIFETIME` for the owner: a display's request to
     /// join is forgotten as if it had never asked, and a different key's request for a member's name is dropped
     /// with the member left as it was. Members and approved displays never lapse. The caller holds the lock.
-    async fn sweep(&self, now: DateTime<Utc>) -> anyhow::Result<()> {
+    async fn sweep(&self, now: Timestamp) -> anyhow::Result<()> {
         for mut pairing in self.store.all().await? {
             if pairing.state == PairingState::Pending
                 && now - pairing.requested_at > REQUEST_LIFETIME
@@ -223,7 +223,7 @@ impl Enrollment {
                 tracing::info!(
                     "The request from {} lapsed after {} hours unanswered",
                     pairing.device,
-                    REQUEST_LIFETIME.num_hours()
+                    REQUEST_LIFETIME.as_hours()
                 );
             } else if pairing
                 .replacement
@@ -235,7 +235,7 @@ impl Enrollment {
                 tracing::info!(
                     "The request for {}'s name by another key lapsed after {} hours unanswered; {} carries on",
                     pairing.device,
-                    REQUEST_LIFETIME.num_hours(),
+                    REQUEST_LIFETIME.as_hours(),
                     pairing.device
                 );
             }
@@ -244,7 +244,7 @@ impl Enrollment {
     }
 
     /// Lets new displays ask to join until `now + duration`.
-    pub fn open_window(&self, duration: Duration) -> DateTime<Utc> {
+    pub fn open_window(&self, duration: SignedDuration) -> Timestamp {
         let closes = self.now() + duration;
         *self.window.lock().unwrap_or_else(PoisonError::into_inner) = Some(closes);
         closes
@@ -255,7 +255,7 @@ impl Enrollment {
     }
 
     /// When the open window closes, or nothing if there is none.
-    pub fn window_closes_at(&self) -> Option<DateTime<Utc>> {
+    pub fn window_closes_at(&self) -> Option<Timestamp> {
         let closes = (*self.window.lock().unwrap_or_else(PoisonError::into_inner))?;
         (closes > self.now()).then_some(closes)
     }
@@ -322,7 +322,7 @@ impl Enrollment {
         &self,
         mut pairing: Pairing,
         request: CertificateRequest,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Outcome, EnrollError> {
         if request.key == pairing.key {
             // The certificate is public, only the key makes it usable, so handing it out again to
@@ -485,7 +485,7 @@ impl Enrollment {
     }
 
     /// How much longer approving `device` is refused, if it is.
-    fn locked_for(&self, device: &DeviceId, now: DateTime<Utc>) -> Option<Duration> {
+    fn locked_for(&self, device: &DeviceId, now: Timestamp) -> Option<SignedDuration> {
         let wrong = self
             .wrong_codes
             .lock()
@@ -495,7 +495,7 @@ impl Enrollment {
     }
 
     /// Notes a wrong code for `device`. True if that was the one that locks it.
-    fn count_wrong_code(&self, device: &DeviceId, now: DateTime<Utc>) -> bool {
+    fn count_wrong_code(&self, device: &DeviceId, now: Timestamp) -> bool {
         let mut wrong = self
             .wrong_codes
             .lock()
@@ -564,7 +564,7 @@ impl Enrollment {
                     "{MAX_WRONG_CODES} wrong pairing codes in a row for {device}: approving it is refused for {} \
                      minutes. Compare the code on its panel with the one the server shows (the display may be \
                      talking to something else), then try again",
-                    WRONG_CODE_LOCKOUT.num_minutes()
+                    WRONG_CODE_LOCKOUT.as_mins()
                 );
                 return Err(ApproveError::TooManyAttempts {
                     device: device.clone(),
@@ -715,7 +715,7 @@ impl Enrollment {
     async fn begin(
         &self,
         request: CertificateRequest,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Outcome, EnrollError> {
         if self.window_closes_at().is_none() {
             return Err(Refusal::NotAccepting.into());
@@ -749,7 +749,7 @@ impl Enrollment {
         &self,
         mut pairing: Pairing,
         request: CertificateRequest,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Outcome, EnrollError> {
         let certificate = self.certificate_for(&request, now)?;
         pairing.key = request.key;
@@ -766,7 +766,7 @@ impl Enrollment {
     fn certificate_for(
         &self,
         request: &CertificateRequest,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<IssuedCertificate, EnrollError> {
         if now < earliest_plausible() {
             return Err(EnrollError::Failed(anyhow::anyhow!(implausible(now))));
@@ -774,17 +774,17 @@ impl Enrollment {
         // Not `now + lifetime`, which panics for a lifetime too long to add to a date: an out-of-range setting
         // is an error here, and `ServerConfig::check` refuses one at start-up.
         let not_after = now
-            .checked_add_signed(self.policy.certificate_lifetime)
-            .ok_or_else(|| {
+            .checked_add(self.policy.certificate_lifetime)
+            .map_err(|_| {
                 anyhow::anyhow!(
                     "a certificate lifetime of {} days is too long to add to {now}",
-                    self.policy.certificate_lifetime.num_days()
+                    self.policy.certificate_lifetime.as_hours() / 24
                 )
             })?;
         Ok(self.authority.issue(request, now, not_after)?)
     }
 
-    fn record(&self, pairing: &mut Pairing, certificate: &IssuedCertificate, now: DateTime<Utc>) {
+    fn record(&self, pairing: &mut Pairing, certificate: &IssuedCertificate, now: Timestamp) {
         pairing.state = PairingState::Enrolled {
             serial: certificate.serial.clone(),
             not_after: certificate.not_after,
@@ -793,7 +793,7 @@ impl Enrollment {
         tracing::info!(
             device = %pairing.device,
             serial = %certificate.serial,
-            valid_until = %certificate.not_after.format("%Y-%m-%d"),
+            valid_until = %certificate.not_after.strftime("%Y-%m-%d"),
             "Issued a certificate"
         );
     }
@@ -808,9 +808,10 @@ impl Enrollment {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::services::clock::{from_days, utc};
+    use jiff::{SignedDuration, Timestamp};
     use std::collections::BTreeMap;
 
-    use chrono::TimeZone;
     use chrono_tz::Tz;
 
     use super::*;
@@ -871,8 +872,8 @@ mod tests {
         fn issue(
             &self,
             request: &CertificateRequest,
-            _now: DateTime<Utc>,
-            not_after: DateTime<Utc>,
+            _now: Timestamp,
+            not_after: Timestamp,
         ) -> anyhow::Result<IssuedCertificate> {
             let mut count = self.issued.lock().unwrap();
             *count += 1;
@@ -908,11 +909,11 @@ mod tests {
         }
     }
 
-    struct TestClock(Mutex<DateTime<Utc>>);
+    struct TestClock(Mutex<Timestamp>);
 
     impl Clock for TestClock {
-        fn now(&self) -> DateTime<Tz> {
-            self.0.lock().unwrap().with_timezone(&Tz::UTC)
+        fn now(&self) -> chrono::DateTime<Tz> {
+            crate::domain::services::clock::in_zone(*self.0.lock().unwrap(), Tz::UTC)
         }
     }
 
@@ -927,23 +928,21 @@ mod tests {
         }
 
         fn with(require_channel_binding: bool) -> Self {
-            let clock = Arc::new(TestClock(Mutex::new(
-                Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap(),
-            )));
+            let clock = Arc::new(TestClock(Mutex::new(utc(2026, 10, 8, 12, 0, 0))));
             let enrollment = Enrollment::new(
                 Arc::new(FakeAuthority::new()),
                 Arc::new(MemoryStore::default()),
                 clock.clone(),
                 EnrollmentPolicy {
-                    certificate_lifetime: Duration::days(365),
-                    retry_after: Duration::minutes(5),
+                    certificate_lifetime: from_days(365),
+                    retry_after: SignedDuration::from_mins(5),
                     require_channel_binding,
                 },
             );
             Self { enrollment, clock }
         }
 
-        fn advance(&self, by: Duration) {
+        fn advance(&self, by: SignedDuration) {
             *self.clock.0.lock().unwrap() += by;
         }
 
@@ -993,7 +992,7 @@ mod tests {
     #[tokio::test]
     async fn with_the_window_open_a_new_display_waits_and_the_code_its_panel_shows_approves_it() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let outcome = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), None)
@@ -1002,7 +1001,7 @@ mod tests {
         assert_eq!(
             outcome,
             Outcome::Pending {
-                retry_after: Duration::minutes(5),
+                retry_after: SignedDuration::from_mins(5),
             }
         );
         // What the display's own panel shows is what approves it: the server works the same code out.
@@ -1015,7 +1014,7 @@ mod tests {
     #[tokio::test]
     async fn asking_again_while_waiting_gives_the_same_answer_and_adds_nothing() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let first = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), None)
@@ -1033,9 +1032,9 @@ mod tests {
     #[tokio::test]
     async fn the_window_closes_when_its_time_is_up() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         assert!(f.enrollment.window_closes_at().is_some());
-        f.advance(Duration::minutes(11));
+        f.advance(SignedDuration::from_mins(11));
         assert!(f.enrollment.window_closes_at().is_none());
         let result = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
         assert_eq!(refused(result), Refusal::NotAccepting);
@@ -1044,7 +1043,7 @@ mod tests {
     #[tokio::test]
     async fn closing_the_window_by_hand_stops_new_displays() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment.close_window();
         let result = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
         assert_eq!(refused(result), Refusal::NotAccepting);
@@ -1053,7 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn no_certificate_is_issued_until_the_owner_approves() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         for _ in 0..3 {
             let outcome = f
                 .enrollment
@@ -1067,7 +1066,7 @@ mod tests {
     #[tokio::test]
     async fn after_approval_the_next_request_gets_a_certificate() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1085,10 +1084,7 @@ mod tests {
             panic!("expected a certificate");
         };
         assert_eq!(certificate.der, b"certificate for kitchen");
-        assert_eq!(
-            certificate.not_after,
-            f.clock.now().to_utc() + Duration::days(365)
-        );
+        assert_eq!(certificate.not_after, f.clock.instant() + from_days(365));
         assert!(
             f.enrollment
                 .authenticate(&device("kitchen"), &held_key("k1"))
@@ -1101,12 +1097,12 @@ mod tests {
     async fn approval_works_after_the_window_has_closed() {
         // The window is for new displays to ask; the owner may take their time over the code.
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
-        f.advance(Duration::hours(2));
+        f.advance(SignedDuration::from_hours(2));
         f.enrollment
             .approve(&device("kitchen"), &f.code("kitchen", "k1"))
             .await
@@ -1123,7 +1119,7 @@ mod tests {
     async fn a_wrong_code_does_not_approve() {
         // A code that does not match is what someone between the display and the server causes.
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1156,7 +1152,7 @@ mod tests {
      {
         // Certificates last a year here: a display renews with 122 days left, and is late three days after that.
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         for (name, key) in [("kitchen", "k1"), ("hall", "k2")] {
             f.enrollment.enroll(&csr(name, key), None).await.unwrap();
             f.enrollment
@@ -1168,14 +1164,14 @@ mod tests {
         assert!(f.enrollment.overdue_renewals().await.unwrap().is_empty());
 
         // 250 days on: 115 left, past the point and its allowance. The hall has not been asked for a new one either.
-        f.advance(Duration::days(250));
+        f.advance(from_days(250));
         let mut overdue = f.enrollment.overdue_renewals().await.unwrap();
         overdue.sort_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(overdue.len(), 2, "{overdue:?}");
-        assert_eq!(overdue[0].1, Duration::days(115));
+        assert_eq!(overdue[0].1, from_days(115));
 
         // Out, they are expired and no longer overdue.
-        f.advance(Duration::days(120));
+        f.advance(from_days(120));
         assert!(f.enrollment.overdue_renewals().await.unwrap().is_empty());
     }
 
@@ -1191,7 +1187,7 @@ mod tests {
     #[tokio::test]
     async fn what_a_display_says_it_is_when_it_asks_is_kept_for_the_owner_to_see() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr_as("kitchen", "k1", "reTerminal E1003"), None)
             .await
@@ -1209,7 +1205,7 @@ mod tests {
     async fn a_waiting_display_that_comes_back_with_a_newer_profile_updates_it_and_one_that_says_nothing_keeps_the_old()
      {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr_as("kitchen", "k1", "Old Model"), None)
             .await
@@ -1229,7 +1225,7 @@ mod tests {
     #[tokio::test]
     async fn a_member_that_renews_says_what_it_is_now_and_one_that_cannot_keeps_what_it_said() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr_as("kitchen", "k1", "First"), None)
             .await
@@ -1259,7 +1255,7 @@ mod tests {
     #[tokio::test]
     async fn a_certificate_renewed_by_the_member_itself_says_what_the_display_is_now() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr_as("kitchen", "k1", "First"), None)
             .await
@@ -1298,7 +1294,7 @@ mod tests {
     #[tokio::test]
     async fn a_key_waiting_to_take_a_name_has_its_own_profile_and_the_members_is_left_alone() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr_as("kitchen", "k1", "Member Model"), None)
             .await
@@ -1345,7 +1341,7 @@ mod tests {
     #[tokio::test]
     async fn wrong_codes_in_a_row_lock_the_display_for_a_while_even_against_the_right_one() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1368,14 +1364,17 @@ mod tests {
         );
 
         // Locked: the right code is not looked at either, so the lock tells an attacker nothing.
-        f.advance(Duration::minutes(5));
+        f.advance(SignedDuration::from_mins(5));
         let result = f
             .enrollment
             .approve(&device("kitchen"), &f.code("kitchen", "k1"))
             .await;
         match result {
             Err(ApproveError::TooManyAttempts { retry_after, .. }) => {
-                assert_eq!(retry_after, WRONG_CODE_LOCKOUT - Duration::minutes(5));
+                assert_eq!(
+                    retry_after,
+                    WRONG_CODE_LOCKOUT - SignedDuration::from_mins(5)
+                );
             }
             other => panic!("expected the display to be locked, got {other:?}"),
         }
@@ -1397,7 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn the_right_code_in_time_clears_the_wrong_ones() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment.enroll(&csr("hall", "k2"), None).await.unwrap();
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
@@ -1428,7 +1427,7 @@ mod tests {
     #[tokio::test]
     async fn one_display_being_locked_does_not_lock_another() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1444,13 +1443,13 @@ mod tests {
     #[tokio::test]
     async fn after_a_lockout_there_is_a_fresh_run_of_tries() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::hours(1));
+        f.enrollment.open_window(SignedDuration::from_hours(1));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
         wrong_codes(&f, "kitchen", MAX_WRONG_CODES).await;
-        f.advance(WRONG_CODE_LOCKOUT + Duration::seconds(1));
+        f.advance(WRONG_CODE_LOCKOUT + SignedDuration::from_secs(1));
         let results = wrong_codes(&f, "kitchen", MAX_WRONG_CODES - 1).await;
         assert!(
             results
@@ -1465,7 +1464,7 @@ mod tests {
     #[tokio::test]
     async fn the_code_of_another_display_does_not_approve_this_one() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1497,7 +1496,7 @@ mod tests {
     #[tokio::test]
     async fn approving_twice_is_an_error_not_a_second_approval() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1524,7 +1523,7 @@ mod tests {
     async fn a_member_asking_again_with_its_key_gets_its_certificate_again() {
         // A display that was reset but kept its key, or lost the response.
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1550,7 +1549,7 @@ mod tests {
     async fn another_key_asking_for_a_members_name_waits_and_the_member_carries_on() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
 
         let outcome = f
             .enrollment
@@ -1560,7 +1559,7 @@ mod tests {
         assert_eq!(
             outcome,
             Outcome::Pending {
-                retry_after: Duration::minutes(5),
+                retry_after: SignedDuration::from_mins(5),
             }
         );
         // Asking again changes nothing, and the member is untouched while it waits.
@@ -1598,7 +1597,7 @@ mod tests {
     #[tokio::test]
     async fn while_waiting_a_new_key_replaces_the_old_and_the_code_changes() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1611,7 +1610,7 @@ mod tests {
         assert_eq!(
             outcome,
             Outcome::Pending {
-                retry_after: Duration::minutes(5),
+                retry_after: SignedDuration::from_mins(5),
             }
         );
         // The code of the replaced request no longer approves anything.
@@ -1625,7 +1624,7 @@ mod tests {
     #[tokio::test]
     async fn once_the_window_is_shut_a_waiting_display_can_not_be_replaced() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1638,7 +1637,7 @@ mod tests {
     #[tokio::test]
     async fn a_stranger_can_only_fill_so_many_places() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         for i in 0..MAX_PENDING {
             f.enrollment
                 .enroll(&csr(&format!("device-{i}"), "k"), None)
@@ -1657,7 +1656,7 @@ mod tests {
     #[tokio::test]
     async fn a_turned_down_display_stays_turned_down() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1676,7 +1675,7 @@ mod tests {
     }
 
     async fn member(f: &Fixture, name: &str, key: &str) {
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment.enroll(&csr(name, key), None).await.unwrap();
         f.enrollment
             .approve(&device(name), &f.code(name, key))
@@ -1690,7 +1689,7 @@ mod tests {
     async fn a_member_renews_without_the_owner() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.advance(Duration::days(300));
+        f.advance(from_days(300));
         let renewed = f
             .enrollment
             .renew(
@@ -1701,10 +1700,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            renewed.not_after,
-            f.clock.now().to_utc() + Duration::days(365)
-        );
+        assert_eq!(renewed.not_after, f.clock.instant() + from_days(365));
         assert!(
             f.enrollment
                 .authenticate(&device("kitchen"), &held_key("k1"))
@@ -1830,14 +1826,14 @@ mod tests {
     async fn membership_ends_when_the_certificate_does() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.advance(Duration::days(364));
+        f.advance(from_days(364));
         assert!(
             f.enrollment
                 .authenticate(&device("kitchen"), &held_key("k1"))
                 .await
                 .unwrap()
         );
-        f.advance(Duration::days(2));
+        f.advance(from_days(2));
         assert!(
             !f.enrollment
                 .authenticate(&device("kitchen"), &held_key("k1"))
@@ -1849,7 +1845,7 @@ mod tests {
     #[tokio::test]
     async fn only_a_member_can_be_revoked() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -1870,7 +1866,7 @@ mod tests {
     #[tokio::test]
     async fn a_request_with_a_bad_signature_is_refused_before_anything_is_recorded() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let result = f.enrollment.enroll(&csr("kitchen", "forged"), None).await;
         assert_eq!(
             refused(result),
@@ -1882,7 +1878,7 @@ mod tests {
     #[tokio::test]
     async fn a_request_that_names_an_invalid_device_is_refused() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let result = f.enrollment.enroll(b"bad name!|k1|", None).await;
         assert!(matches!(
             refused(result),
@@ -1893,7 +1889,7 @@ mod tests {
     #[tokio::test]
     async fn a_request_tied_to_its_connection_is_accepted_when_the_connection_matches() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let outcome = f
             .enrollment
             .enroll(b"kitchen|k1|abc", Some(b"abc"))
@@ -1906,7 +1902,7 @@ mod tests {
     async fn a_request_signed_on_another_connection_is_refused() {
         // A request replayed over a connection of the attacker's own.
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         for connection in [Some(&b"xyz"[..]), None] {
             let result = f.enrollment.enroll(b"kitchen|k1|abc", connection).await;
             assert_eq!(refused(result), Refusal::ChannelBindingMismatch);
@@ -1916,7 +1912,7 @@ mod tests {
     #[tokio::test]
     async fn without_the_policy_a_request_need_not_be_tied_to_its_connection() {
         let f = Fixture::with(false);
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let outcome = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), Some(b"abc"))
@@ -1928,7 +1924,7 @@ mod tests {
     #[tokio::test]
     async fn with_the_policy_a_request_must_be_tied_to_its_connection() {
         let f = Fixture::with(true);
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let result = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), Some(b"abc"))
@@ -2069,20 +2065,18 @@ mod tests {
     /// A member, "kitchen" (key k1), on a store that can hold one of its writes.
     async fn gated_member() -> (Arc<Enrollment>, Arc<GatedStore>) {
         let store = Arc::new(GatedStore::default());
-        let clock = Arc::new(TestClock(Mutex::new(
-            Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap(),
-        )));
+        let clock = Arc::new(TestClock(Mutex::new(utc(2026, 10, 8, 12, 0, 0))));
         let enrollment = Arc::new(Enrollment::new(
             Arc::new(FakeAuthority::new()),
             store.clone(),
             clock,
             EnrollmentPolicy {
-                certificate_lifetime: Duration::days(365),
-                retry_after: Duration::minutes(5),
+                certificate_lifetime: from_days(365),
+                retry_after: SignedDuration::from_mins(5),
                 require_channel_binding: false,
             },
         ));
-        enrollment.open_window(Duration::minutes(10));
+        enrollment.open_window(SignedDuration::from_mins(10));
         enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -2220,7 +2214,7 @@ mod tests {
         // is at the server: holding the key it joined with is enough, as it was to get the certificate.
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.advance(Duration::days(400));
+        f.advance(from_days(400));
         assert!(
             !f.enrollment
                 .authenticate(&device("kitchen"), &held_key("k1"))
@@ -2247,7 +2241,7 @@ mod tests {
     async fn an_expired_certificate_does_not_let_a_different_key_take_the_place() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.advance(Duration::days(400));
+        f.advance(from_days(400));
         let result = f.enrollment.enroll(&csr("kitchen", "k2"), None).await;
         assert_eq!(refused(result), Refusal::KeyMismatch);
     }
@@ -2256,7 +2250,7 @@ mod tests {
     async fn a_replacement_the_owner_approves_takes_the_name_and_the_old_key_is_done() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k9"), None)
             .await
@@ -2320,7 +2314,7 @@ mod tests {
                 .is_none()
         );
 
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k9"), None)
             .await
@@ -2346,7 +2340,7 @@ mod tests {
     async fn turning_a_replacement_down_leaves_the_member_as_it_was() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k9"), None)
             .await
@@ -2375,7 +2369,7 @@ mod tests {
     async fn a_second_replacement_takes_the_first_ones_place_and_its_code() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k8"), None)
             .await
@@ -2399,7 +2393,7 @@ mod tests {
     async fn displays_waiting_to_join_count_towards_the_limit_on_replacements() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         for i in 0..MAX_PENDING {
             f.enrollment
                 .enroll(&csr(&format!("device-{i}"), "k"), None)
@@ -2456,7 +2450,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            f.advance(Duration::days(days));
+            f.advance(from_days(days));
             assert_eq!(f.enrollment.window_closes_at(), None);
 
             // If the certificate has expired meanwhile, it asks again for one, with k2 and nothing else.
@@ -2563,8 +2557,8 @@ mod tests {
     #[tokio::test]
     async fn no_certificate_is_issued_while_the_clock_is_plainly_wrong() {
         let f = Fixture::new();
-        f.advance(Duration::days(-1000)); // a clock that has not been set
-        f.enrollment.open_window(Duration::minutes(10));
+        f.advance(from_days(-1000)); // a clock that has not been set
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
@@ -2579,7 +2573,7 @@ mod tests {
             "{result:?}"
         );
         // Nothing was issued, so once the clock is right the same request is granted.
-        f.advance(Duration::days(1000));
+        f.advance(from_days(1000));
         let outcome = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), None)
@@ -2603,7 +2597,7 @@ mod tests {
             )
             .await
             .unwrap();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k9"), None)
             .await
@@ -2646,10 +2640,10 @@ mod tests {
         for i in 0..MAX_PENDING {
             let name = format!("device-{i}");
             member(&f, &name, "k1").await;
-            f.enrollment.open_window(Duration::minutes(10));
+            f.enrollment.open_window(SignedDuration::from_mins(10));
             f.enrollment.enroll(&csr(&name, "k9"), None).await.unwrap();
         }
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let result = f.enrollment.enroll(&csr("newcomer", "k1"), None).await;
         assert_eq!(refused(result), Refusal::TooManyPending);
     }
@@ -2660,7 +2654,7 @@ mod tests {
         // there instead, and the check that the panel and the server agree would never be made.
         crate::captured_log::install();
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("logwatch-display", "k1"), None)
             .await
@@ -2696,7 +2690,7 @@ mod tests {
             .enroll(&csr("logwatch-display", "k1"), None)
             .await
             .unwrap();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("logwatch-display", "k8"), None)
             .await
@@ -2720,7 +2714,7 @@ mod tests {
     #[tokio::test]
     async fn requests_nobody_answers_lapse_and_stop_taking_a_place() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         for i in 0..MAX_PENDING {
             f.enrollment
                 .enroll(&csr(&format!("stray-{i}"), "k"), None)
@@ -2731,8 +2725,8 @@ mod tests {
         let full = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
         assert_eq!(refused(full), Refusal::TooManyPending);
 
-        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
-        f.enrollment.open_window(Duration::minutes(10));
+        f.advance(REQUEST_LIFETIME + SignedDuration::from_mins(1));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let outcome = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), None)
@@ -2754,12 +2748,12 @@ mod tests {
     #[tokio::test]
     async fn a_request_is_kept_for_the_whole_of_its_day() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
-        f.advance(REQUEST_LIFETIME - Duration::minutes(1));
+        f.advance(REQUEST_LIFETIME - SignedDuration::from_mins(1));
         assert_eq!(f.enrollment.pairings().await.unwrap().len(), 1);
         f.enrollment
             .approve(&device("kitchen"), &f.code("kitchen", "k1"))
@@ -2770,12 +2764,12 @@ mod tests {
     #[tokio::test]
     async fn approving_a_request_that_has_lapsed_is_as_if_it_never_asked() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
-        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        f.advance(REQUEST_LIFETIME + SignedDuration::from_mins(1));
         let result = f
             .enrollment
             .approve(&device("kitchen"), &f.code("kitchen", "k1"))
@@ -2796,16 +2790,16 @@ mod tests {
     #[tokio::test]
     async fn a_display_whose_request_lapsed_must_have_the_window_open_to_ask_again() {
         let f = Fixture::new();
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k1"), None)
             .await
             .unwrap();
-        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        f.advance(REQUEST_LIFETIME + SignedDuration::from_mins(1));
         // The window has closed too, so it is turned away rather than quietly kept.
         let shut = f.enrollment.enroll(&csr("kitchen", "k1"), None).await;
         assert_eq!(refused(shut), Refusal::NotAccepting);
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         let again = f
             .enrollment
             .enroll(&csr("kitchen", "k1"), None)
@@ -2813,7 +2807,7 @@ mod tests {
             .unwrap();
         assert!(matches!(again, Outcome::Pending { .. }));
         // It has a full day from now.
-        f.advance(Duration::hours(23));
+        f.advance(SignedDuration::from_hours(23));
         assert_eq!(f.enrollment.pairings().await.unwrap().len(), 1);
     }
 
@@ -2821,7 +2815,7 @@ mod tests {
     async fn a_replacement_nobody_answers_lapses_and_the_member_carries_on() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k9"), None)
             .await
@@ -2836,7 +2830,7 @@ mod tests {
                 .is_some()
         );
 
-        f.advance(REQUEST_LIFETIME + Duration::minutes(1));
+        f.advance(REQUEST_LIFETIME + SignedDuration::from_mins(1));
         let kitchen = f
             .enrollment
             .pairing(&device("kitchen"))
@@ -2857,13 +2851,13 @@ mod tests {
     async fn members_and_displays_the_owner_approved_never_lapse() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment.enroll(&csr("hall", "k2"), None).await.unwrap();
         f.enrollment
             .approve(&device("hall"), &f.code("hall", "k2"))
             .await
             .unwrap();
-        f.advance(Duration::days(400));
+        f.advance(from_days(400));
         let all = f.enrollment.pairings().await.unwrap();
         let states: Vec<&str> = all.iter().map(|p| p.state.name()).collect();
         assert_eq!(states, ["approved", "enrolled"], "{all:?}");
@@ -2875,7 +2869,7 @@ mod tests {
     async fn an_approved_replacement_cannot_be_displaced_by_another_key_before_it_collects() {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k9"), None)
             .await
@@ -2925,7 +2919,7 @@ mod tests {
      {
         let f = Fixture::new();
         member(&f, "kitchen", "k1").await;
-        f.enrollment.open_window(Duration::minutes(10));
+        f.enrollment.open_window(SignedDuration::from_mins(10));
         f.enrollment
             .enroll(&csr("kitchen", "k8"), None)
             .await
@@ -2952,20 +2946,18 @@ mod tests {
     #[tokio::test]
     async fn a_certificate_lifetime_too_long_to_add_to_a_date_is_an_error_not_a_panic() {
         for days in [4_000_000_000i64, i64::from(i32::MAX)] {
-            let clock = Arc::new(TestClock(Mutex::new(
-                Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap(),
-            )));
+            let clock = Arc::new(TestClock(Mutex::new(utc(2026, 10, 8, 12, 0, 0))));
             let enrollment = Enrollment::new(
                 Arc::new(FakeAuthority::new()),
                 Arc::new(MemoryStore::default()),
                 clock,
                 EnrollmentPolicy {
-                    certificate_lifetime: Duration::days(days),
-                    retry_after: Duration::minutes(5),
+                    certificate_lifetime: from_days(days),
+                    retry_after: SignedDuration::from_mins(5),
                     require_channel_binding: false,
                 },
             );
-            enrollment.open_window(Duration::minutes(10));
+            enrollment.open_window(SignedDuration::from_mins(10));
             enrollment
                 .enroll(&csr("kitchen", "k1"), None)
                 .await

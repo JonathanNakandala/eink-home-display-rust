@@ -181,7 +181,7 @@ pub(super) async fn token_endpoint(
                     access_token: grant.token.expose().to_owned(),
                     refresh_token: grant.refresh_token.map(|token| token.expose().to_owned()),
                     token_type: "Bearer",
-                    expires_in: grant.expires_in.num_seconds(),
+                    expires_in: grant.expires_in.as_secs(),
                     scope: grant.scope.to_scope_string(),
                 }),
             )

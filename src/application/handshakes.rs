@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use crate::domain::models::device_id::DeviceId;
 
@@ -35,7 +35,7 @@ pub struct DeviceHandshakes {
     pub last_resumed: bool,
     /// How long the latest one took, from accepting the connection to the end of the handshake.
     pub last_handshake: Duration,
-    pub last_at: DateTime<Utc>,
+    pub last_at: Timestamp,
 }
 
 impl Handshakes {
@@ -58,7 +58,7 @@ impl Handshakes {
         device: &DeviceId,
         resumed: bool,
         handshake: Duration,
-        at: DateTime<Utc>,
+        at: Timestamp,
     ) {
         let mut devices = self.devices.lock().unwrap_or_else(PoisonError::into_inner);
         if devices.len() >= MAX_DEVICES && !devices.contains_key(device) {
@@ -99,14 +99,15 @@ impl Handshakes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use crate::domain::services::clock::utc;
+    use jiff::Timestamp;
 
     fn device(name: &str) -> DeviceId {
         DeviceId::parse(name).unwrap()
     }
 
-    fn at(minute: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 10, 10, 12, minute, 0).unwrap()
+    fn at(minute: u32) -> Timestamp {
+        utc(2026, 10, 10, 12, minute as i8, 0)
     }
 
     #[test]

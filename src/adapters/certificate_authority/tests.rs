@@ -1,7 +1,6 @@
 //! The authority against real keys and real requests: what it accepts, what it refuses, and exactly
 //! what ends up in a certificate.
 
-use chrono::TimeZone;
 use rcgen::{
     Attribute, BasicConstraints, CertificateParams, DistinguishedName, DnType,
     ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
@@ -11,9 +10,10 @@ use x509_parser::prelude::*;
 
 use super::*;
 use crate::domain::models::device_id::DeviceId;
+use crate::domain::services::clock::{from_days, utc};
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap()
+fn now() -> Timestamp {
+    utc(2026, 10, 8, 12, 0, 0)
 }
 
 fn authority() -> PrivateAuthority {
@@ -56,7 +56,7 @@ fn challenge_password(text: &str) -> Attribute {
 fn issue(authority: &PrivateAuthority, request: &[u8]) -> IssuedCertificate {
     let request = authority.inspect(request).unwrap();
     authority
-        .issue(&request, now(), now() + Duration::days(365))
+        .issue(&request, now(), now() + from_days(365))
         .unwrap()
 }
 
@@ -242,14 +242,14 @@ fn a_certificate_names_the_display_and_is_valid_for_the_time_asked() {
     );
     assert_eq!(
         cert.validity().not_after.timestamp(),
-        (now() + Duration::days(365)).timestamp()
+        (now() + from_days(365)).as_second()
     );
     // Starts a little early to allow for a display clock that is behind.
     assert_eq!(
         cert.validity().not_before.timestamp(),
-        (now() - BACKDATE).timestamp()
+        (now() - BACKDATE).as_second()
     );
-    assert_eq!(issued.not_after, now() + Duration::days(365));
+    assert_eq!(issued.not_after, now() + from_days(365));
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn issuing_goes_by_the_request_not_by_what_the_caller_says_about_it() {
     let mut claimed = authority.inspect(&request).unwrap();
     claimed.device = DeviceId::parse("somebody-else").unwrap();
     let issued = authority
-        .issue(&claimed, now(), now() + Duration::days(1))
+        .issue(&claimed, now(), now() + from_days(1))
         .unwrap();
     let cert = parse(&issued);
     assert_eq!(
@@ -365,7 +365,7 @@ fn a_request_that_does_not_check_out_is_not_issued_even_if_it_was_passed_on() {
     };
     assert!(
         authority
-            .issue(&tampered, now(), now() + Duration::days(1))
+            .issue(&tampered, now(), now() + from_days(1))
             .is_err()
     );
 }
@@ -409,10 +409,7 @@ fn the_root_signs_one_level_of_authority_and_the_intermediate_none() {
     assert!(usage.key_cert_sign() && !usage.digital_signature());
     root.verify_signature(None)
         .expect("the root is self-signed");
-    assert_eq!(
-        authority.not_after(),
-        now() + Duration::days(365 * ROOT_YEARS)
-    );
+    assert_eq!(authority.not_after(), now() + from_days(365 * ROOT_YEARS));
 
     let (_, intermediate) = X509Certificate::from_der(authority.intermediate().unwrap()).unwrap();
     let constraints = intermediate.basic_constraints().unwrap().unwrap().value;
@@ -425,7 +422,7 @@ fn the_root_signs_one_level_of_authority_and_the_intermediate_none() {
         .expect("the root signed it");
     assert_eq!(
         authority.intermediate_not_after(),
-        now() + Duration::days(365 * INTERMEDIATE_YEARS)
+        now() + from_days(365 * INTERMEDIATE_YEARS)
     );
 }
 
@@ -452,7 +449,7 @@ fn names() -> Vec<String> {
 fn the_servers_certificate_names_the_server_and_is_for_proving_it_to_a_display() {
     let authority = authority();
     let identity = authority
-        .issue_server(&names(), now(), now() + Duration::days(90))
+        .issue_server(&names(), now(), now() + from_days(90))
         .unwrap();
     let (_, cert) = X509Certificate::from_der(&identity.certificate).unwrap();
     assert!(!cert.is_ca());
@@ -475,7 +472,7 @@ fn the_servers_certificate_names_the_server_and_is_for_proving_it_to_a_display()
     assert!(usage.digital_signature() && !usage.key_cert_sign());
     assert_eq!(
         cert.validity().not_after.timestamp(),
-        (now() + Duration::days(90)).timestamp()
+        (now() + from_days(90)).as_second()
     );
 }
 
@@ -483,7 +480,7 @@ fn the_servers_certificate_names_the_server_and_is_for_proving_it_to_a_display()
 fn the_servers_certificate_comes_with_its_intermediate_and_the_path_to_the_root_checks_out() {
     let authority = authority();
     let identity = authority
-        .issue_server(&names(), now(), now() + Duration::days(90))
+        .issue_server(&names(), now(), now() + from_days(90))
         .unwrap();
     let (_, root) = X509Certificate::from_der(authority.certificate()).unwrap();
     let (_, intermediate) = X509Certificate::from_der(&identity.intermediate).unwrap();
@@ -510,10 +507,10 @@ fn the_servers_certificate_comes_with_its_intermediate_and_the_path_to_the_root_
 fn each_server_certificate_has_a_key_of_its_own() {
     let authority = authority();
     let one = authority
-        .issue_server(&names(), now(), now() + Duration::days(90))
+        .issue_server(&names(), now(), now() + from_days(90))
         .unwrap();
     let two = authority
-        .issue_server(&names(), now(), now() + Duration::days(90))
+        .issue_server(&names(), now(), now() + from_days(90))
         .unwrap();
     assert_ne!(one.certificate.as_ref(), two.certificate.as_ref());
 }
@@ -536,7 +533,7 @@ fn a_server_certificate_needs_usable_names() {
     ] {
         assert!(
             authority
-                .issue_server(&bad, now(), now() + Duration::days(90))
+                .issue_server(&bad, now(), now() + from_days(90))
                 .is_err(),
             "{bad:?}"
         );
@@ -550,7 +547,7 @@ fn a_server_certificate_needs_usable_names() {
     ] {
         assert!(
             authority
-                .issue_server(&[good.to_owned()], now(), now() + Duration::days(90))
+                .issue_server(&[good.to_owned()], now(), now() + from_days(90))
                 .is_ok(),
             "{good}"
         );
@@ -558,62 +555,66 @@ fn a_server_certificate_needs_usable_names() {
 }
 
 /// An authority whose intermediate has `left` to run, made by an intermediate dated to end then.
-fn authority_ending_in(left: Duration) -> PrivateAuthority {
-    let (_, files) = PrivateAuthority::generate(Utc::now()).unwrap();
+fn authority_ending_in(left: SignedDuration) -> PrivateAuthority {
+    let (_, files) = PrivateAuthority::generate(Timestamp::now()).unwrap();
     let intermediate = new_intermediate(
         &files.root_certificate,
         &files.root_key,
-        Utc::now() - Duration::days(365 * INTERMEDIATE_YEARS) + left,
+        Timestamp::now() - from_days(365 * INTERMEDIATE_YEARS) + left,
     )
     .unwrap();
-    PrivateAuthority::from_pem(&files.root_certificate, &intermediate, &[], Utc::now()).unwrap()
+    PrivateAuthority::from_pem(
+        &files.root_certificate,
+        &intermediate,
+        &[],
+        Timestamp::now(),
+    )
+    .unwrap()
 }
 
 #[test]
 fn a_certificate_never_lasts_longer_than_the_intermediate_that_signed_it() {
-    let authority = authority_ending_in(Duration::days(10));
+    let authority = authority_ending_in(from_days(10));
     let ends = authority.intermediate_not_after();
     let (_, request) = display("kitchen");
     let request = authority.inspect(&request).unwrap();
-    let now = Utc::now();
-    let issued = authority
-        .issue(&request, now, now + Duration::days(90))
-        .unwrap();
+    let now = Timestamp::now();
+    let issued = authority.issue(&request, now, now + from_days(90)).unwrap();
     // What it says it lasts until, and what is in the certificate, are both the intermediate's end.
     assert_eq!(issued.not_after, ends);
     assert_eq!(
         parse(&issued).validity().not_after.timestamp(),
-        ends.timestamp()
+        ends.as_second()
     );
 
     // The same for the server's own, which reports its real end.
     let server = authority
-        .issue_server(&names(), now, now + Duration::days(90))
+        .issue_server(&names(), now, now + from_days(90))
         .unwrap();
     assert_eq!(server.not_after, ends);
     let (_, cert) = X509Certificate::from_der(&server.certificate).unwrap();
-    assert_eq!(cert.validity().not_after.timestamp(), ends.timestamp());
+    assert_eq!(cert.validity().not_after.timestamp(), ends.as_second());
 }
 
 #[test]
 fn a_certificate_that_ends_before_the_intermediate_is_left_as_asked() {
-    let authority = authority_ending_in(Duration::days(400));
+    let authority = authority_ending_in(from_days(400));
     let (_, request) = display("kitchen");
     let request = authority.inspect(&request).unwrap();
-    let now = Utc::now();
-    let asked = now + Duration::days(90);
+    let now = Timestamp::now();
+    let asked = now + from_days(90);
     let issued = authority.issue(&request, now, asked).unwrap();
-    assert_eq!(issued.not_after.timestamp(), asked.timestamp());
+    assert_eq!(issued.not_after.as_second(), asked.as_second());
 }
 
 #[test]
 fn nothing_is_signed_under_an_intermediate_that_has_ended() {
-    let authority = authority_ending_in(-Duration::days(1));
+    let authority = authority_ending_in(-from_days(1));
     let (_, request) = display("kitchen");
     let request = authority.inspect(&request).unwrap();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let error = authority
-        .issue(&request, now, now + Duration::days(1))
+        .issue(&request, now, now + from_days(1))
         .unwrap_err()
         .to_string();
     assert!(
@@ -621,7 +622,7 @@ fn nothing_is_signed_under_an_intermediate_that_has_ended() {
         "{error}"
     );
     let error = authority
-        .issue_server(&names(), now, now + Duration::days(1))
+        .issue_server(&names(), now, now + from_days(1))
         .err()
         .expect("should refuse")
         .to_string();
@@ -659,9 +660,9 @@ mod saved {
         assert!(error.contains("Failed to read"), "{error}");
     }
 
-    fn unset() -> DateTime<Utc> {
+    fn unset() -> Timestamp {
         // What a machine with no real-time clock reads until a time service sets it.
-        Utc.with_ymd_and_hms(1970, 1, 1, 0, 5, 0).unwrap()
+        utc(1970, 1, 1, 0, 5, 0)
     }
 
     #[test]
@@ -676,7 +677,11 @@ mod saved {
         assert!(!directory.exists(), "a refusal makes nothing");
         // The earliest plausible time is the first that is allowed; a second before it is not.
         assert!(
-            storage::create_all(&directory, earliest_plausible() - Duration::seconds(1)).is_err()
+            storage::create_all(
+                &directory,
+                earliest_plausible() - SignedDuration::from_secs(1)
+            )
+            .is_err()
         );
         assert!(!directory.exists());
         storage::create_all(&directory, earliest_plausible()).unwrap();
@@ -697,7 +702,7 @@ mod saved {
             before
         );
         assert!(!directory.path().join("retired.pem").exists());
-        storage::rotate_intermediate_at(directory.path(), None, Utc::now()).unwrap();
+        storage::rotate_intermediate_at(directory.path(), None, Timestamp::now()).unwrap();
         assert!(directory.path().join("retired.pem").exists());
     }
 
@@ -765,7 +770,7 @@ mod saved {
         let (_, request) = display("kitchen");
         issue(&again, &request);
         again
-            .issue_server(&names(), now(), now() + Duration::days(90))
+            .issue_server(&names(), now(), now() + from_days(90))
             .unwrap();
         // And nothing was made in its place.
         assert_eq!(files(directory.path()), ["intermediate.pem", "root.pem"]);
@@ -841,10 +846,10 @@ mod saved {
     }
 
     /// Replaces the intermediate in `directory` with one made `age` ago, as if the authority were that old.
-    fn age_the_intermediate(directory: &std::path::Path, age: Duration) {
+    fn age_the_intermediate(directory: &std::path::Path, age: SignedDuration) {
         let root = std::fs::read_to_string(directory.join("root.pem")).unwrap();
         let key = std::fs::read_to_string(directory.join("root.key")).unwrap();
-        let aged = new_intermediate(&root, &key, Utc::now() - age).unwrap();
+        let aged = new_intermediate(&root, &key, Timestamp::now() - age).unwrap();
         std::fs::write(directory.join("intermediate.pem"), aged).unwrap();
     }
 
@@ -852,10 +857,10 @@ mod saved {
     fn an_intermediate_near_its_end_is_replaced_when_the_roots_key_is_there() {
         let directory = tempfile::tempdir().unwrap();
         let first = open(directory.path(), Create::IfMissing).unwrap();
-        age_the_intermediate(directory.path(), Duration::days(365 * 4 + 200));
+        age_the_intermediate(directory.path(), from_days(365 * 4 + 200));
         let aged = open(directory.path(), Create::Never).unwrap();
         // Opening replaced it, so what is in use now has years left.
-        assert!(aged.intermediate_not_after() - Utc::now() > Duration::days(365 * 4));
+        assert!(aged.intermediate_not_after() - Timestamp::now() > from_days(365 * 4));
         assert_eq!(first.fingerprint(), aged.fingerprint());
         // The one it replaced is kept, with what it signed still good.
         assert!(directory.path().join("retired.pem").exists());
@@ -866,7 +871,7 @@ mod saved {
     fn an_intermediate_with_plenty_of_time_left_is_left_alone() {
         let directory = tempfile::tempdir().unwrap();
         open(directory.path(), Create::IfMissing).unwrap();
-        age_the_intermediate(directory.path(), Duration::days(365 * 3));
+        age_the_intermediate(directory.path(), from_days(365 * 3));
         let before = std::fs::read(directory.path().join("intermediate.pem")).unwrap();
         open(directory.path(), Create::Never).unwrap();
         assert_eq!(
@@ -880,12 +885,12 @@ mod saved {
     fn without_the_roots_key_an_intermediate_near_its_end_is_still_served_with_a_warning() {
         let directory = tempfile::tempdir().unwrap();
         open(directory.path(), Create::IfMissing).unwrap();
-        age_the_intermediate(directory.path(), Duration::days(365 * 4 + 200));
+        age_the_intermediate(directory.path(), from_days(365 * 4 + 200));
         let aged_file = std::fs::read(directory.path().join("intermediate.pem")).unwrap();
         std::fs::remove_file(directory.path().join("root.key")).unwrap();
         let authority = open(directory.path(), Create::Never).unwrap();
         // Still in use and untouched; replacing it waits for the key.
-        assert!(authority.intermediate_not_after() - Utc::now() < Duration::days(365));
+        assert!(authority.intermediate_not_after() - Timestamp::now() < from_days(365));
         assert_eq!(
             std::fs::read(directory.path().join("intermediate.pem")).unwrap(),
             aged_file
@@ -928,7 +933,7 @@ mod saved {
     fn a_retired_intermediate_that_has_ended_is_dropped() {
         let directory = tempfile::tempdir().unwrap();
         open(directory.path(), Create::IfMissing).unwrap();
-        age_the_intermediate(directory.path(), Duration::days(365 * 6));
+        age_the_intermediate(directory.path(), from_days(365 * 6));
         // It ended a year ago; rotating retires it, and the next open no longer carries it.
         rotate_intermediate(directory.path(), None).unwrap();
         let authority = open(directory.path(), Create::Never).unwrap();
@@ -1056,13 +1061,18 @@ mod saved {
     fn an_intermediate_never_outlives_the_root() {
         // The root was made 19 years ago, so it has a year left. An intermediate made now would run for
         // five, but it ends with the root.
-        let (_, files) = PrivateAuthority::generate(Utc::now() - Duration::days(365 * 19)).unwrap();
+        let (_, files) =
+            PrivateAuthority::generate(Timestamp::now() - from_days(365 * 19)).unwrap();
         let intermediate =
-            new_intermediate(&files.root_certificate, &files.root_key, Utc::now()).unwrap();
-        let authority =
-            PrivateAuthority::from_pem(&files.root_certificate, &intermediate, &[], Utc::now())
-                .unwrap();
-        assert!(authority.not_after() - Utc::now() < Duration::days(366));
+            new_intermediate(&files.root_certificate, &files.root_key, Timestamp::now()).unwrap();
+        let authority = PrivateAuthority::from_pem(
+            &files.root_certificate,
+            &intermediate,
+            &[],
+            Timestamp::now(),
+        )
+        .unwrap();
+        assert!(authority.not_after() - Timestamp::now() < from_days(366));
         assert_eq!(authority.intermediate_not_after(), authority.not_after());
     }
 }

@@ -24,6 +24,7 @@ use anyhow::Context;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
+use jiff::SignedDuration;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -42,6 +43,7 @@ use crate::application::renewal_watch::RenewalWatch;
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::pairing::PublicKey;
 use crate::domain::services::certificate_authority::CertificateAuthority;
+use crate::domain::services::clock::from_days;
 
 /// A name the server's certificate always has, whatever else it is configured with.
 ///
@@ -62,7 +64,7 @@ pub struct EstSettings {
     pub bind: SocketAddr,
     /// The names and addresses the server's certificate is for: what a display connects to.
     pub names: Vec<String>,
-    pub certificate_lifetime: chrono::Duration,
+    pub certificate_lifetime: SignedDuration,
     pub max_connections: usize,
     /// How many of those one source (an address; an IPv6 /64) may hold, so that one stranger can't take them all.
     pub max_connections_per_source: usize,
@@ -80,7 +82,7 @@ impl Default for EstSettings {
         Self {
             bind: "[::]:8443".parse().expect("a valid address"),
             names: Vec::new(),
-            certificate_lifetime: chrono::Duration::days(90),
+            certificate_lifetime: from_days(90),
             max_connections: 16,
             max_connections_per_source: 4,
             max_names_per_source: 4,
@@ -259,7 +261,7 @@ impl EstServer {
                                      renews with a third of its life left, so it is off, cannot reach this server, or \
                                      has a wrong clock; one that is switched on gets a new certificate by itself \
                                      once the old one has ended",
-                                    left.num_days().max(0)
+                                    (left.as_hours() / 24).max(0)
                                 );
                             }
                         }

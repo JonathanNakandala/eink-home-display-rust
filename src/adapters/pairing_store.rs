@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -161,8 +161,8 @@ struct Record {
     /// The display's public key, base64 of its DER.
     key: String,
     state: State,
-    requested_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    requested_at: Timestamp,
+    updated_at: Timestamp,
     /// Added after version 1 first shipped; a file without it is read as having none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rollover: Option<RolloverRecord>,
@@ -218,14 +218,14 @@ impl ProfileRecord {
 #[derive(Serialize, Deserialize)]
 struct RolloverRecord {
     key: String,
-    since: DateTime<Utc>,
+    since: Timestamp,
 }
 
 #[derive(Serialize, Deserialize)]
 struct ReplacementRecord {
     key: String,
     approved: bool,
-    requested_at: DateTime<Utc>,
+    requested_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     profile: Option<ProfileRecord>,
 }
@@ -237,7 +237,7 @@ enum State {
     Approved,
     Enrolled {
         serial: String,
-        not_after: DateTime<Utc>,
+        not_after: Timestamp,
     },
     Rejected,
     Revoked,
@@ -347,12 +347,13 @@ fn parse(bytes: &[u8]) -> anyhow::Result<BTreeMap<DeviceId, Pairing>> {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use crate::domain::services::clock::utc;
+    use jiff::Timestamp;
 
     use super::*;
 
-    fn at(minute: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 10, 8, 12, minute, 0).unwrap()
+    fn at(minute: u32) -> Timestamp {
+        utc(2026, 10, 8, 12, minute as i8, 0)
     }
 
     fn pairing(name: &str, state: PairingState) -> Pairing {

@@ -202,7 +202,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap()
-            .timestamp() as u64;
+            .as_second() as u64;
         assert_eq!(version, expected);
         assert_eq!(plan["changed"], true);
         assert_eq!(plan["stale"], false);

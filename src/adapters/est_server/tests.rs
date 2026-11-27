@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use chrono::Duration as ChronoDuration;
 use chrono_tz::Tz;
 use cms::cert::x509::der::Decode;
 use cms::content_info::ContentInfo;
 use cms::signed_data::SignedData;
+use jiff::{SignedDuration, Timestamp};
 use rcgen::{
     Attribute, CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256,
     PublicKeyData,
@@ -33,6 +33,7 @@ use crate::adapters::clock::SystemClock;
 use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::EnrollmentPolicy;
 use crate::domain::models::pairing::{Fingerprint, PairingCode, PublicKey};
+use crate::domain::services::clock::{from_days, utc};
 
 pub(crate) struct Harness {
     pub(crate) address: SocketAddr,
@@ -103,8 +104,8 @@ pub(crate) async fn start_full(
         Arc::new(store),
         Arc::new(SystemClock::new(Tz::UTC)),
         EnrollmentPolicy {
-            certificate_lifetime: ChronoDuration::days(365),
-            retry_after: ChronoDuration::minutes(5),
+            certificate_lifetime: from_days(365),
+            retry_after: SignedDuration::from_mins(5),
             require_channel_binding,
         },
     ));
@@ -450,7 +451,9 @@ async fn a_display_joins_waits_for_the_owner_collects_its_certificate_and_renews
     assert_eq!(refused.status, 403, "{}", refused.text());
 
     // 3. With the window open it is told to wait, and not told the code.
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let waiting = enroll(&harness, Trust::Authority(&authority), name, &key).await;
     assert_eq!(waiting.status, 202, "{}", waiting.text());
     assert_eq!(waiting.header("retry-after"), Some("300"));
@@ -516,7 +519,9 @@ async fn someone_in_the_middle_gives_the_display_a_different_code_than_the_serve
     let key = new_key();
     let (_, shown_by_display) = first_contact(&impostor, "kitchen", &key).await;
 
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let (genuine, _) = first_contact(&harness, "kitchen", &key).await;
     let waiting = enroll(&harness, Trust::Authority(&genuine), "kitchen", &key).await;
     assert_eq!(waiting.status, 202);
@@ -664,7 +669,9 @@ async fn what_the_server_asks_of_a_request_is_the_ecdsa_p256_attribute_list() {
 async fn a_request_signed_on_another_connection_is_refused() {
     // A request captured from one connection and replayed on another, which the binding catches.
     let harness = start().await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let key = new_key();
     let mut other = connect(&harness, Trust::Anything, None).await;
     let tied_elsewhere = request("kitchen", &key, Some(&binding(&other)));
@@ -686,7 +693,9 @@ async fn a_request_signed_on_another_connection_is_refused() {
 #[tokio::test]
 async fn when_required_a_request_must_carry_the_binding() {
     let harness = start_with(true, |_| {}).await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let key = new_key();
     let mut stream = connect(&harness, Trust::Anything, None).await;
     let untied = request("kitchen", &key, None);
@@ -733,7 +742,7 @@ async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_goo
 
     // A certificate from some other authority is refused at the handshake.
     let (other_authority, _) =
-        crate::adapters::certificate_authority::PrivateAuthority::generate(chrono::Utc::now())
+        crate::adapters::certificate_authority::PrivateAuthority::generate(Timestamp::now())
             .unwrap();
     let their_key = new_key();
     let csr = request("kitchen", &their_key, None);
@@ -742,8 +751,8 @@ async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_goo
     let issued = other_authority
         .issue(
             &request_read,
-            chrono::Utc::now(),
-            chrono::Utc::now() + ChronoDuration::days(1),
+            Timestamp::now(),
+            Timestamp::now() + from_days(1),
         )
         .unwrap();
     let stranger = Identity {
@@ -768,7 +777,9 @@ async fn renewing_needs_a_certificate_and_a_certificate_from_elsewhere_is_no_goo
 #[tokio::test]
 async fn badly_formed_requests_get_the_right_answers() {
     let harness = start().await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let key = new_key();
     let good = request("kitchen", &key, None);
 
@@ -826,7 +837,9 @@ async fn badly_formed_requests_get_the_right_answers() {
 async fn a_wrapped_request_body_is_accepted() {
     // MIME-style base64 has line breaks (RFC 8951 section 3.1 asks receivers to allow them).
     let harness = start().await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let key = new_key();
     let wrapped = request("kitchen", &key, None)
         .as_bytes()
@@ -939,7 +952,9 @@ async fn a_connection_that_goes_on_too_long_is_ended() {
 /// A display joining, start to finish, and holding its certificate.
 pub(crate) async fn join(harness: &Harness, name: &str, key: KeyPair) -> Identity {
     let (authority, code) = first_contact(harness, name, &key).await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let waiting = enroll(harness, Trust::Authority(&authority), name, &key).await;
     assert_eq!(waiting.status, 202, "{}", waiting.text());
     harness
@@ -991,8 +1006,8 @@ async fn the_servers_own_certificate_is_not_accepted_as_a_display() {
         .authority
         .issue_server(
             &["localhost".to_owned()],
-            chrono::Utc::now(),
-            chrono::Utc::now() + ChronoDuration::days(1),
+            Timestamp::now(),
+            Timestamp::now() + from_days(1),
         )
         .unwrap();
     let pkcs8 = PrivatePkcs8KeyDer::from(server.key.as_slice());
@@ -1232,17 +1247,16 @@ async fn a_refused_request_is_logged_with_where_it_came_from() {
 }
 
 /// A clock fixed at one moment.
-struct FixedClock(chrono::DateTime<chrono::Utc>);
+struct FixedClock(Timestamp);
 
 impl crate::domain::services::clock::Clock for FixedClock {
     fn now(&self) -> chrono::DateTime<chrono_tz::Tz> {
-        self.0.with_timezone(&chrono_tz::Tz::UTC)
+        crate::domain::services::clock::in_zone(self.0, chrono_tz::Tz::UTC)
     }
 }
 
 #[tokio::test]
 async fn the_server_does_not_start_while_its_clock_has_not_been_set() {
-    use chrono::TimeZone;
     let directory = tempfile::tempdir().unwrap();
     let authority = Arc::new(
         crate::adapters::certificate_authority::open(
@@ -1263,8 +1277,8 @@ async fn the_server_does_not_start_while_its_clock_has_not_been_set() {
                 Arc::new(store),
                 Arc::new(clock),
                 EnrollmentPolicy {
-                    certificate_lifetime: ChronoDuration::days(90),
-                    retry_after: ChronoDuration::minutes(5),
+                    certificate_lifetime: from_days(90),
+                    retry_after: SignedDuration::from_mins(5),
                     require_channel_binding: false,
                 },
             ))
@@ -1278,7 +1292,7 @@ async fn the_server_does_not_start_while_its_clock_has_not_been_set() {
 
     // A machine with no real-time clock reads 1970 until a time service sets it. The server will not come up
     // with a certificate dated from that, which no display with the right time would accept.
-    let unset = FixedClock(chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 3, 0).unwrap());
+    let unset = FixedClock(utc(1970, 1, 1, 0, 3, 0));
     let error = EstServer::bind(
         settings(),
         authority.clone(),
@@ -1291,7 +1305,7 @@ async fn the_server_does_not_start_while_its_clock_has_not_been_set() {
     assert!(error.contains("can't be right"), "{error}");
 
     // The same server, once the clock is right.
-    let set = FixedClock(chrono::Utc::now());
+    let set = FixedClock(Timestamp::now());
     assert!(
         EstServer::bind(
             settings(),
@@ -1440,7 +1454,9 @@ async fn one_source_can_not_hold_all_the_connections() {
 #[tokio::test]
 async fn one_source_can_not_fill_the_places_for_waiting_displays() {
     let harness = start_with(false, |s| s.max_names_per_source = 2).await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let authority = harness.authority.certificate().to_vec();
     let trust = || Trust::Authority(&authority);
     let kitchen = new_key();
@@ -1480,7 +1496,9 @@ async fn one_source_can_not_fill_the_places_for_waiting_displays() {
 #[tokio::test]
 async fn a_request_that_is_not_signed_does_not_count_against_the_names_a_source_may_ask_as() {
     let harness = start_with(false, |s| s.max_names_per_source = 1).await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let authority = harness.authority.certificate().to_vec();
     // Nonsense in the right wrapper is refused for what it is, however many times.
     for _ in 0..3 {
@@ -1517,7 +1535,9 @@ async fn someone_asking_to_join_is_not_told_which_names_the_server_knows() {
     // Window closed: nobody is accepted.
     let closed = enroll(&harness, trust(), "garage", &new_key()).await;
     // A display the owner turned down.
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let turned_down_key = new_key();
     enroll(&harness, trust(), "attic", &turned_down_key).await;
     harness.enrollment.reject(&device("attic")).await.unwrap();
@@ -1549,7 +1569,9 @@ async fn someone_asking_to_join_is_not_told_which_names_the_server_knows() {
 #[tokio::test]
 async fn a_display_that_showed_its_certificate_is_told_why_it_was_refused() {
     let harness = start().await;
-    harness.enrollment.open_window(ChronoDuration::minutes(10));
+    harness
+        .enrollment
+        .open_window(SignedDuration::from_mins(10));
     let key = new_key();
     let identity = join(&harness, "kitchen", key).await;
     harness.enrollment.revoke(&device("kitchen")).await.unwrap();
