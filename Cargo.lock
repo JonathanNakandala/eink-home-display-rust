@@ -1647,13 +1647,13 @@ dependencies = [
  "http-body-util",
  "httpdate",
  "httpmock",
- "humantime",
  "hyper",
  "hyper-util",
  "iana-time-zone",
  "if-addrs",
  "image",
  "interprocess",
+ "jiff",
  "jsonschema",
  "libc",
  "linux-embedded-hal",
@@ -1778,12 +1778,6 @@ dependencies = [
  "tracing",
  "url",
 ]
-
-[[package]]
-name = "humantime"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
 
 [[package]]
 name = "hybrid-array"
@@ -2143,10 +2137,12 @@ checksum = "107f2e89536b6818514025f6787b0d94d819e54fe3b40365275fc753de485b3f"
 dependencies = [
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "windows-link",
 ]
 
 [[package]]
@@ -2169,6 +2165,12 @@ dependencies = [
  "quote",
  "syn 3.0.10",
 ]
+
+[[package]]
+name = "jiff-tzdb"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12e71a1b68a875a44a33bb7a1dd84392cb77145a3367a552a3cfe6a4f5cf3afc"
 
 [[package]]
 name = "jni"

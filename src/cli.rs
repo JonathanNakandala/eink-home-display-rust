@@ -48,7 +48,7 @@ pub struct Args {
 
     /// After a restart, wait until this long has passed since the last render was attempted before
     /// the first one, so a crash loop can't hammer the APIs. e.g. 2m
-    #[arg(long, default_value = "2m", value_parser = humantime::parse_duration)]
+    #[arg(long, default_value = "2m", value_parser = crate::domain::models::schedule::parse_interval)]
     pub restart_cooldown: Duration,
 }
 
