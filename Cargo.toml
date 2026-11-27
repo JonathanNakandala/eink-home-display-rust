@@ -74,7 +74,7 @@ interprocess = { version = "2.4", features = ["tokio"] }
 hyper-util = { version = "0.1.21", features = ["server", "http1", "tokio", "service"] }
 arc-swap = "1.9.2"
 yasna = "0.6"
-qrcode = { version = "0.14.1", default-features = false }
+qrcode = { version = "0.15", default-features = false, features = ["std"] }
 rpassword = "7"
 
 # Only with `--features otel`; see src/bootstrap/telemetry.rs. Spans and logs go to an OTLP collector (Grafana Alloy) over HTTP.
