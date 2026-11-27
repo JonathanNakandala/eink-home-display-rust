@@ -48,7 +48,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 embedded-hal = "1.0.0"
 schemars = "1"
 toml = "1"
-croner = "4.0.0"
+croner = "5"
 humantime = "2.4.0"
 mdns-sd = "0.21.4"
 if-addrs = "0.15"
@@ -93,7 +93,7 @@ tokio = { version = "1", features = ["test-util"] }
 httpmock = "0.8"
 speculoos = "0.13"
 cms = "0.2.3"
-jsonschema = { version = "0.59", default-features = false }
+jsonschema = { version = "0.63", default-features = false }
 rqrr = "0.11.0"
 
 [target.'cfg(unix)'.dependencies]
