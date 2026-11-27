@@ -24,7 +24,7 @@ pub(super) async fn image_written_at(
         .images
         .published_at(&layout.name, published.format)
         .await?
-        .map(|at| at.with_timezone(&zone)))
+        .map(|at| crate::domain::services::clock::in_zone(at, zone)))
 }
 
 /// The version `/plan` gives the image of `layout`, if it has been rendered.

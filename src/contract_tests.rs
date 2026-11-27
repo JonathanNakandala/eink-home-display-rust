@@ -311,10 +311,9 @@ fn the_names_and_numbers_both_sides_share_are_what_the_vectors_say() {
 fn what_a_display_says_it_is_is_not_put_in_its_certificate() {
     use crate::adapters::certificate_authority::PrivateAuthority;
     use crate::domain::services::certificate_authority::CertificateAuthority;
-    use chrono::TimeZone;
     use x509_parser::prelude::FromDer;
 
-    let now = chrono::Utc.with_ymd_and_hms(2026, 10, 8, 12, 0, 0).unwrap();
+    let now = crate::domain::services::clock::utc(2026, 10, 8, 12, 0, 0);
     let authority = PrivateAuthority::generate(now).unwrap().0;
     let case = vectors!("csr.vectors")
         .into_iter()
@@ -323,7 +322,11 @@ fn what_a_display_says_it_is_is_not_put_in_its_certificate() {
     let request = request::read(&from_hex(case.need("request"))).unwrap();
     assert!(request.profile.is_some());
     let certificate = authority
-        .issue(&request, now, now + chrono::Duration::days(90))
+        .issue(
+            &request,
+            now,
+            now + crate::domain::services::clock::from_days(90),
+        )
         .unwrap();
     let (_, parsed) =
         x509_parser::certificate::X509Certificate::from_der(&certificate.der).unwrap();

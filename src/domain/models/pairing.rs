@@ -11,12 +11,13 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::profile::DeviceProfile;
+use crate::domain::services::clock::from_days;
 
 /// SHA-256 of a certificate's DER encoding: what is shown to compare two certificates by eye.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -193,7 +194,7 @@ pub enum PairingState {
     /// Holds a certificate.
     Enrolled {
         serial: String,
-        not_after: DateTime<Utc>,
+        not_after: Timestamp,
     },
     /// The owner turned it down. Stays refused until the owner removes it.
     Rejected,
@@ -225,7 +226,7 @@ impl PairingState {
 pub struct Rollover {
     pub key: PublicKey,
     /// When the change was made, for whoever is looking at why a display has two keys.
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
 }
 
 /// A different key asking to take over a member's name, as when the display was reflashed and lost its
@@ -234,7 +235,7 @@ pub struct Rollover {
 pub struct Replacement {
     pub key: PublicKey,
     pub approved: bool,
-    pub requested_at: DateTime<Utc>,
+    pub requested_at: Timestamp,
     /// What the display with this key says it is, shown to the owner before the key is approved.
     pub profile: Option<DeviceProfile>,
 }
@@ -245,8 +246,8 @@ pub struct Pairing {
     pub device: DeviceId,
     pub key: PublicKey,
     pub state: PairingState,
-    pub requested_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub requested_at: Timestamp,
+    pub updated_at: Timestamp,
     /// A key being changed to, while both are members.
     pub rollover: Option<Rollover>,
     /// A key waiting for the owner to approve taking over the name.
@@ -256,7 +257,7 @@ pub struct Pairing {
 }
 
 impl Pairing {
-    pub fn new(device: DeviceId, key: PublicKey, state: PairingState, now: DateTime<Utc>) -> Self {
+    pub fn new(device: DeviceId, key: PublicKey, state: PairingState, now: Timestamp) -> Self {
         Self {
             device,
             key,
@@ -281,15 +282,17 @@ impl Pairing {
 /// False once the certificate has ended (`remaining` is not positive): that is its own, louder state, and a display
 /// that is switched off would otherwise be reported for good. A display that is switched on gets a new certificate
 /// by itself.
-pub fn renewal_overdue(remaining: Duration, lifetime: Duration) -> bool {
+pub fn renewal_overdue(remaining: SignedDuration, lifetime: SignedDuration) -> bool {
     // Long enough for a display that sleeps its longest and backs off, but never most of a short certificate's life.
-    let allowance = Duration::days(3).min(lifetime / 6);
-    remaining > Duration::zero() && remaining < lifetime / 3 - allowance
+    let allowance = from_days(3).min(lifetime / 6);
+    remaining > SignedDuration::ZERO && remaining < lifetime / 3 - allowance
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::services::clock::from_days;
+    use jiff::SignedDuration;
 
     fn device(name: &str) -> DeviceId {
         DeviceId::parse(name).unwrap()
@@ -466,38 +469,38 @@ mod tests {
 
     #[test]
     fn a_certificate_is_overdue_for_renewal_a_few_days_after_the_third_of_its_life_that_is_left() {
-        let life = Duration::days(90);
+        let life = from_days(90);
         // Fresh, halfway, and at the point where a display renews: not overdue, a display does that on its next wake.
-        assert!(!renewal_overdue(Duration::days(90), life));
-        assert!(!renewal_overdue(Duration::days(45), life));
-        assert!(!renewal_overdue(Duration::days(30), life));
+        assert!(!renewal_overdue(from_days(90), life));
+        assert!(!renewal_overdue(from_days(45), life));
+        assert!(!renewal_overdue(from_days(30), life));
         // The allowance for a display that sleeps for a day and backs off: still not.
-        assert!(!renewal_overdue(Duration::days(27), life));
+        assert!(!renewal_overdue(from_days(27), life));
         // Past it: it has stopped renewing.
         assert!(renewal_overdue(
-            Duration::days(27) - Duration::seconds(1),
+            from_days(27) - SignedDuration::from_secs(1),
             life
         ));
-        assert!(renewal_overdue(Duration::days(5), life));
-        assert!(renewal_overdue(Duration::seconds(1), life));
+        assert!(renewal_overdue(from_days(5), life));
+        assert!(renewal_overdue(SignedDuration::from_secs(1), life));
     }
 
     #[test]
     fn a_certificate_that_has_ended_is_expired_and_not_overdue() {
-        let life = Duration::days(90);
-        assert!(!renewal_overdue(Duration::zero(), life));
-        assert!(!renewal_overdue(-Duration::days(2), life));
+        let life = from_days(90);
+        assert!(!renewal_overdue(SignedDuration::ZERO, life));
+        assert!(!renewal_overdue(-from_days(2), life));
     }
 
     #[test]
     fn a_short_lived_certificate_keeps_most_of_its_life_before_it_is_overdue() {
         // The allowance is a sixth of the life at most, so one day's certificate is not overdue at once.
-        let life = Duration::days(1);
+        let life = from_days(1);
         assert!(!renewal_overdue(life / 3 - life / 6, life));
         assert!(renewal_overdue(
-            life / 3 - life / 6 - Duration::seconds(1),
+            life / 3 - life / 6 - SignedDuration::from_secs(1),
             life
         ));
-        assert!(!renewal_overdue(Duration::hours(20), life));
+        assert!(!renewal_overdue(SignedDuration::from_hours(20), life));
     }
 }

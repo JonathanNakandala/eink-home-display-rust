@@ -15,7 +15,7 @@ use std::fmt;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
@@ -255,19 +255,19 @@ pub enum ViewerState {
     /// Made, and the link not used yet. The code works until `code_expires_at`, once.
     Pending {
         code: SecretHash,
-        code_expires_at: DateTime<Utc>,
+        code_expires_at: Timestamp,
     },
     /// The code was exchanged. The token works until `expires_at`.
     Active {
         token: SecretHash,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         /// When it was last used, to within a few minutes (it is not written on every request).
-        last_used_at: Option<DateTime<Utc>>,
+        last_used_at: Option<Timestamp>,
         /// For a refreshing viewer, where its refresh tokens stand.
         refresh: Option<RefreshState>,
     },
     Revoked {
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
 }
 
@@ -280,13 +280,13 @@ pub struct RefreshState {
     /// later, it is a copy, and the session ends.
     pub previous: Option<Rotated>,
     /// When the session ends whatever is shown: the viewer's lifetime from when it signed in.
-    pub session_ends_at: DateTime<Utc>,
+    pub session_ends_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rotated {
     pub hash: SecretHash,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 /// Where a viewer stands, in words for the owner.
@@ -320,15 +320,15 @@ pub struct Viewer {
     pub label: ViewerLabel,
     pub scope: LayoutScope,
     /// How long the token lasts once the link has been used; for a refreshing viewer, how long the session does.
-    pub lifetime: Duration,
+    pub lifetime: SignedDuration,
     /// Whether it is given short-lived access tokens and refresh tokens, and not one that lasts.
     pub refreshing: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub state: ViewerState,
 }
 
 impl Viewer {
-    pub fn standing(&self, now: DateTime<Utc>) -> ViewerStanding {
+    pub fn standing(&self, now: Timestamp) -> ViewerStanding {
         match &self.state {
             ViewerState::Pending {
                 code_expires_at, ..
@@ -364,6 +364,8 @@ pub enum ViewerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::services::clock::from_days;
+    use jiff::{SignedDuration, Timestamp};
 
     fn layout(name: &str) -> LayoutName {
         LayoutName::parse(name).unwrap()
@@ -481,13 +483,13 @@ mod tests {
 
     #[test]
     fn where_a_viewer_stands_follows_its_state_and_the_time() {
-        let at = |minutes: i64| Utc::now() + Duration::minutes(minutes);
+        let at = |minutes: i64| Timestamp::now() + SignedDuration::from_mins(minutes);
         let now = at(0);
         let viewer = |state| Viewer {
             id: ViewerId::from_random(&[1; 5]),
             label: ViewerLabel::parse("tablet").unwrap(),
             scope: LayoutScope::All,
-            lifetime: Duration::days(90),
+            lifetime: from_days(90),
             refreshing: false,
             created_at: now,
             state,

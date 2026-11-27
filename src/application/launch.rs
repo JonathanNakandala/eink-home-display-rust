@@ -18,7 +18,7 @@ use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::{LayoutName, Layouts};
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::models::schedule::Schedule;
-use crate::domain::services::clock::Clock;
+use crate::domain::services::clock::{Clock, in_zone};
 use crate::domain::services::published_images::PublishedImages;
 use crate::domain::services::render_observer::RenderObserver;
 
@@ -59,9 +59,7 @@ pub async fn served_image_is_current(
         .await
         .ok()
         .flatten()
-        .and_then(|rendered| {
-            render_due(now, rendered.with_timezone(&now.timezone()), schedule).ok()
-        })
+        .and_then(|rendered| render_due(now, in_zone(rendered, now.timezone()), schedule).ok())
         .is_some_and(|due| !due)
 }
 

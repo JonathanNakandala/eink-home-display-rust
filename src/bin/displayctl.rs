@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use home_display_server::adapters::admin::{
     AdminClient, CallError, IssueViewer, approved, credential_changed, describe,
@@ -14,6 +13,8 @@ use home_display_server::adapters::admin::{
     revoked, viewer_changed, viewer_issued,
 };
 use home_display_server::bootstrap::load_application_config;
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 
 /// Talks to a running server's admin interface. The server offers it when it serves HTTPS
 /// (`transport = "prefer-https"` or `"https"`).
@@ -250,21 +251,27 @@ async fn run(args: Args) -> Result<(), String> {
                 WindowAction::Close => client.close_window().await,
             }
             .map_err(failed)?;
-            println!("{}", describe_window(&state, Utc::now(), &Local));
+            println!(
+                "{}",
+                describe_window(&state, Timestamp::now(), &TimeZone::system())
+            );
             Ok(())
         }
         Command::Displays { action } => {
             match action {
                 DisplaysAction::List => {
                     let list = client.displays().await.map_err(failed)?;
-                    println!("{}", describe_list(&list, Utc::now(), &Local));
+                    println!(
+                        "{}",
+                        describe_list(&list, Timestamp::now(), &TimeZone::system())
+                    );
                 }
                 DisplaysAction::Show { name } => {
                     let entry = client.display(&name).await.map_err(failed)?;
                     println!(
                         "{}: {}",
                         entry.name,
-                        describe_entry(&entry, Utc::now(), &Local)
+                        describe_entry(&entry, Timestamp::now(), &TimeZone::system())
                     );
                 }
             }
@@ -308,7 +315,10 @@ async fn run(args: Args) -> Result<(), String> {
                         })
                         .await
                         .map_err(failed)?;
-                    println!("{}", viewer_issued(&issued, Utc::now(), &Local));
+                    println!(
+                        "{}",
+                        viewer_issued(&issued, Timestamp::now(), &TimeZone::system())
+                    );
                     if qr || (!no_qr && std::io::stdout().is_terminal()) {
                         match qr_for_terminal(&issued.link) {
                             Ok(code) => println!(
@@ -323,7 +333,10 @@ async fn run(args: Args) -> Result<(), String> {
                 }
                 ViewerAction::List => {
                     let list = client.viewers().await.map_err(failed)?;
-                    println!("{}", describe_viewers(&list, Utc::now(), &Local));
+                    println!(
+                        "{}",
+                        describe_viewers(&list, Timestamp::now(), &TimeZone::system())
+                    );
                 }
                 ViewerAction::Revoke { id } => {
                     let entry = client.revoke_viewer(&id).await.map_err(failed)?;
@@ -340,7 +353,7 @@ async fn run(args: Args) -> Result<(), String> {
             match action {
                 CredentialAction::List => {
                     let list = client.credentials().await.map_err(failed)?;
-                    println!("{}", describe_credentials(&list, Utc::now()));
+                    println!("{}", describe_credentials(&list, Timestamp::now()));
                 }
                 CredentialAction::Set { name, remember } => {
                     let key = read_key(&name).map_err(|e| e.to_string())?;

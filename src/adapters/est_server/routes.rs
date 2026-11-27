@@ -21,6 +21,7 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, RETRY_AFTER};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use jiff::Timestamp;
 use tower_http::timeout::TimeoutLayer;
 
 use super::limits::Limits;
@@ -82,7 +83,7 @@ impl HandshakeFacts {
     }
 
     /// Notes the connection against `device`, once.
-    pub fn note(&self, device: &DeviceId, at: chrono::DateTime<chrono::Utc>) {
+    pub fn note(&self, device: &DeviceId, at: Timestamp) {
         let Some(tally) = &self.tally else { return };
         if !self.noted.swap(true, std::sync::atomic::Ordering::Relaxed) {
             tally.record_device(device, self.resumed, self.took, at);
@@ -225,7 +226,7 @@ async fn simple_enroll(
             (
                 StatusCode::ACCEPTED,
                 [
-                    (RETRY_AFTER, retry_after.num_seconds().max(1).to_string()),
+                    (RETRY_AFTER, retry_after.as_secs().max(1).to_string()),
                     (CONTENT_TYPE, "text/plain; charset=utf-8".to_owned()),
                 ],
                 "Waiting for the owner to approve this display. Ask again later.\n",

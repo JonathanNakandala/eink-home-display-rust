@@ -2,7 +2,7 @@
 //! inside a certificate request, and how a certificate is made, are the adapter's business; the
 //! application only asks who a request is from, and for a certificate once the owner has agreed.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use thiserror::Error;
 
 use crate::domain::models::device_id::DeviceId;
@@ -31,7 +31,7 @@ pub struct CertificateRequest {
 pub struct IssuedCertificate {
     pub der: Vec<u8>,
     pub serial: String,
-    pub not_after: DateTime<Utc>,
+    pub not_after: Timestamp,
 }
 
 /// Why a request was not usable. These are the sender's mistakes; the authority failing is an error.
@@ -66,7 +66,7 @@ pub trait CertificateAuthority: Send + Sync {
     fn issue(
         &self,
         request: &CertificateRequest,
-        now: DateTime<Utc>,
-        not_after: DateTime<Utc>,
+        now: Timestamp,
+        not_after: Timestamp,
     ) -> anyhow::Result<IssuedCertificate>;
 }

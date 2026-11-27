@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::Router;
-use chrono::Duration;
+use jiff::SignedDuration;
 
 use crate::adapters::admin;
 use crate::adapters::certificate_authority::{self, Create, PrivateAuthority};
@@ -38,14 +38,14 @@ use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::{LayoutName, Layouts};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::certificate_authority::CertificateAuthority;
-use crate::domain::services::clock::Clock;
+use crate::domain::services::clock::{Clock, from_days};
 use crate::domain::services::layout_choices::LayoutChoices;
 use crate::domain::services::published_images::PublishedImages;
 use image_server::Handles;
 
 /// The authority's certificate ending within this long is worth a warning at start-up: nothing yet
 /// carries displays across a change of authority, so every one would have to be paired again.
-const AUTHORITY_WARNING: Duration = Duration::days(2 * 365);
+const AUTHORITY_WARNING: SignedDuration = from_days(2 * 365);
 
 /// Listeners that are open and not yet serving.
 pub struct Listening {
@@ -133,7 +133,7 @@ pub async fn open_security(
                 clock.clone(),
                 Arc::new(OsEntropy),
             )
-            .with_access_lifetime(chrono::Duration::minutes(
+            .with_access_lifetime(SignedDuration::from_mins(
                 config.web.access_token_minutes.into(),
             )),
         ),
@@ -187,7 +187,7 @@ pub async fn start(
     let est_settings = EstSettings {
         bind: config.tls.bind,
         names: config.certificate_names(),
-        certificate_lifetime: Duration::days(config.tls.server_certificate_days.into()),
+        certificate_lifetime: from_days(config.tls.server_certificate_days.into()),
         ..EstSettings::default()
     };
 
@@ -399,16 +399,16 @@ async fn open_authority(
             )
         })?,
     );
-    let remaining = authority.not_after() - clock.now().to_utc();
+    let remaining = authority.not_after().duration_since(clock.instant());
     tracing::info!(
         root = %authority.fingerprint(),
-        root_valid_until = %authority.not_after().format("%Y-%m-%d"),
-        intermediate_valid_until = %authority.intermediate_not_after().format("%Y-%m-%d"),
+        root_valid_until = %authority.not_after().strftime("%Y-%m-%d"),
+        intermediate_valid_until = %authority.intermediate_not_after().strftime("%Y-%m-%d"),
         "Certificate authority"
     );
     if remaining < AUTHORITY_WARNING {
         tracing::warn!(
-            root_valid_until = %authority.not_after().format("%Y-%m-%d"),
+            root_valid_until = %authority.not_after().strftime("%Y-%m-%d"),
             "The certificate authority's root is nearing its end; every display has to be paired again by then"
         );
     }
@@ -432,8 +432,8 @@ async fn open_authority(
         Arc::new(store),
         clock,
         EnrollmentPolicy {
-            certificate_lifetime: Duration::days(tls.device_certificate_days.into()),
-            retry_after: Duration::minutes(tls.pairing_retry_minutes.into()),
+            certificate_lifetime: from_days(tls.device_certificate_days.into()),
+            retry_after: SignedDuration::from_mins(tls.pairing_retry_minutes.into()),
             require_channel_binding: tls.require_channel_binding,
         },
     ));

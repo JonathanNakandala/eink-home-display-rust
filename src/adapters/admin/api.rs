@@ -8,7 +8,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Utc};
+use jiff::{SignedDuration, Timestamp};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, IntoResponses, ToSchema};
@@ -31,7 +31,8 @@ pub struct WindowState {
     pub open: bool,
     /// When the window closes by itself. Only present while it is open.
     #[schema(examples("2026-10-08T12:15:00Z"))]
-    pub closes_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub closes_at: Option<Timestamp>,
 }
 
 /// How long to open the pairing window for.
@@ -72,9 +73,11 @@ pub struct DisplayEntry {
     pub state: DisplayState,
     /// When the request that is waiting was made: the display's own request to join, or (for a member) another
     /// key's request to take its name. A request lapses a day after this if nobody answers it.
-    pub waiting_since: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub waiting_since: Option<Timestamp>,
     /// For a member, when the latest certificate it was given ends.
-    pub certificate_not_after: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub certificate_not_after: Option<Timestamp>,
     /// A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one at the
     /// server, the next time it is switched on.
     pub certificate_expired: bool,
@@ -106,7 +109,7 @@ impl DisplayEntry {
     }
 
     /// `lifetime` is how long the certificates this server issues last.
-    pub fn of(pairing: &Pairing, now: DateTime<Utc>, lifetime: chrono::Duration) -> Self {
+    pub fn of(pairing: &Pairing, now: Timestamp, lifetime: SignedDuration) -> Self {
         let (state, ends) = match &pairing.state {
             PairingState::Pending => (DisplayState::Waiting, None),
             PairingState::Approved => (DisplayState::Approved, None),
@@ -224,18 +227,22 @@ pub struct ViewerEntry {
     pub scope: String,
     /// Whether it has short-lived access tokens and a refresh token, and not one token that lasts.
     pub refreshing: bool,
-    pub created_at: DateTime<Utc>,
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: Timestamp,
     /// For one waiting, when its link stops working.
-    pub link_expires_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub link_expires_at: Option<Timestamp>,
     /// Once signed in, when its access ends: for a plain viewer, when the token runs out, and for a refreshing one, when the
     /// session does (its access tokens run out and are renewed all the time).
-    pub expires_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expires_at: Option<Timestamp>,
     /// When it was last used, to within ten minutes or so.
-    pub last_used_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_used_at: Option<Timestamp>,
 }
 
 impl ViewerEntry {
-    pub fn of(viewer: &crate::domain::models::viewer::Viewer, now: DateTime<Utc>) -> Self {
+    pub fn of(viewer: &crate::domain::models::viewer::Viewer, now: Timestamp) -> Self {
         use crate::domain::models::viewer::ViewerState;
         let (link_expires_at, expires_at, last_used_at) = match &viewer.state {
             ViewerState::Pending {
@@ -285,7 +292,8 @@ pub struct ViewerIssued {
     /// a browser keeps to itself and never sends to the server.
     #[schema(examples("https://display.local:8443/view#code=hdc1_…"))]
     pub link: String,
-    pub link_expires_at: DateTime<Utc>,
+    #[schema(value_type = String, format = DateTime)]
+    pub link_expires_at: Timestamp,
     /// Things the owner should know about what this viewer will see, such as a layout the page is set not to show. The viewer is
     /// made all the same.
     #[serde(default)]
@@ -370,7 +378,8 @@ pub struct CredentialEntry {
     pub source: Option<KeySource>,
     /// When it was set with this API. Not present for a key from the configuration file, or from an earlier run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub since: Option<Timestamp>,
     /// Whether a copy is kept on disk, so that the key outlasts a restart.
     pub remembered: bool,
 }

@@ -7,16 +7,16 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 
 use crate::domain::models::device_id::DeviceId;
 
 /// How long before a display that is still overdue is named again.
-pub const REPEAT: Duration = Duration::hours(24);
+pub const REPEAT: SignedDuration = SignedDuration::from_hours(24);
 
 #[derive(Debug, Default)]
 pub struct RenewalWatch {
-    told: HashMap<DeviceId, DateTime<Utc>>,
+    told: HashMap<DeviceId, Timestamp>,
 }
 
 impl RenewalWatch {
@@ -29,9 +29,9 @@ impl RenewalWatch {
     /// falls behind again.
     pub fn to_report(
         &mut self,
-        overdue: Vec<(DeviceId, Duration)>,
-        now: DateTime<Utc>,
-    ) -> Vec<(DeviceId, Duration)> {
+        overdue: Vec<(DeviceId, SignedDuration)>,
+        now: Timestamp,
+    ) -> Vec<(DeviceId, SignedDuration)> {
         self.told
             .retain(|device, _| overdue.iter().any(|(d, _)| d == device));
         overdue
@@ -53,20 +53,21 @@ impl RenewalWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use crate::domain::services::clock::{from_days, utc};
+    use jiff::{SignedDuration, Timestamp};
 
     fn device(name: &str) -> DeviceId {
         DeviceId::parse(name).unwrap()
     }
 
-    fn at(hours: i64) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 10, 8, 0, 0, 0).unwrap() + Duration::hours(hours)
+    fn at(hours: i64) -> Timestamp {
+        utc(2026, 10, 8, 0, 0, 0) + SignedDuration::from_hours(hours)
     }
 
-    fn overdue(names: &[&str]) -> Vec<(DeviceId, Duration)> {
+    fn overdue(names: &[&str]) -> Vec<(DeviceId, SignedDuration)> {
         names
             .iter()
-            .map(|name| (device(name), Duration::days(20)))
+            .map(|name| (device(name), from_days(20)))
             .collect()
     }
 

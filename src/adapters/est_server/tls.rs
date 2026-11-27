@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use arc_swap::ArcSwap;
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use rustls::client::danger::HandshakeSignatureValid;
 use rustls::crypto::aws_lc_rs as provider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, UnixTime};
@@ -39,9 +39,9 @@ pub struct RenewingCertificate {
 struct Current {
     key: Arc<CertifiedKey>,
     /// The time the certificate was made at, by the clock that made it.
-    issued_at: DateTime<Utc>,
+    issued_at: Timestamp,
     /// When it really ends: the end asked for, or the intermediate's if that comes first.
-    not_after: DateTime<Utc>,
+    not_after: Timestamp,
 }
 
 impl std::fmt::Debug for RenewingCertificate {
@@ -56,15 +56,15 @@ impl RenewingCertificate {
     pub fn new(
         authority: &PrivateAuthority,
         names: &[String],
-        now: DateTime<Utc>,
-        lifetime: Duration,
+        now: Timestamp,
+        lifetime: SignedDuration,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             current: ArcSwap::from_pointee(issue(authority, names, now, lifetime)?),
         })
     }
 
-    pub fn not_after(&self) -> DateTime<Utc> {
+    pub fn not_after(&self) -> Timestamp {
         self.current.load().not_after
     }
 
@@ -74,8 +74,8 @@ impl RenewingCertificate {
         &self,
         authority: &PrivateAuthority,
         names: &[String],
-        now: DateTime<Utc>,
-        lifetime: Duration,
+        now: Timestamp,
+        lifetime: SignedDuration,
     ) -> anyhow::Result<bool> {
         let current = self.current.load();
         if !is_due(current.issued_at, current.not_after, now) {
@@ -100,25 +100,25 @@ impl ResolvesServerCert for RenewingCertificate {
 ///   wrong guess to the right time, and a certificate dated from the wrong one is not valid yet.
 ///
 /// A clock that has jumped forward needs no case of its own: the certificate is then past its end, or nearly.
-fn is_due(issued_at: DateTime<Utc>, not_after: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    now < issued_at || not_after - now < (not_after - issued_at) / 3
+fn is_due(issued_at: Timestamp, not_after: Timestamp, now: Timestamp) -> bool {
+    now < issued_at || not_after.duration_since(now) < not_after.duration_since(issued_at) / 3
 }
 
 fn issue(
     authority: &PrivateAuthority,
     names: &[String],
-    now: DateTime<Utc>,
-    lifetime: Duration,
+    now: Timestamp,
+    lifetime: SignedDuration,
 ) -> anyhow::Result<Current> {
     // A server certificate dated from a clock that has not been set would be valid in 1970 and no later: the
     // displays would refuse it as soon as their clocks were right, or the server's was corrected.
     if now < earliest_plausible() {
         anyhow::bail!(implausible(now));
     }
-    let not_after = now.checked_add_signed(lifetime).with_context(|| {
+    let not_after = now.checked_add(lifetime).with_context(|| {
         format!(
             "a certificate lifetime of {} days is too long to add to {now}",
-            lifetime.num_days()
+            lifetime.as_hours() / 24
         )
     })?;
     let ServerIdentity {
@@ -233,13 +233,14 @@ pub fn server_config(
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use crate::domain::services::clock::{from_days, utc};
+    use jiff::{SignedDuration, Timestamp};
 
     use super::*;
     use crate::domain::services::certificate_authority::CertificateAuthority;
 
-    fn at(day: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 10, day, 0, 0, 0).unwrap()
+    fn at(day: u32) -> Timestamp {
+        utc(2026, 10, day as i8, 0, 0, 0)
     }
 
     #[test]
@@ -283,7 +284,7 @@ mod tests {
     #[test]
     fn the_certificate_in_use_is_swapped_when_it_is_due_and_not_before() {
         let authority = authority();
-        let lifetime = Duration::days(9);
+        let lifetime = from_days(9);
         let certificate = RenewingCertificate::new(&authority, &names(), at(1), lifetime).unwrap();
         assert_eq!(certificate.not_after(), at(10));
         let before = certificate.current.load().key.cert[0].clone();
@@ -307,9 +308,8 @@ mod tests {
     #[test]
     fn only_tls_1_3_is_configured() {
         let authority = authority();
-        let certificate = Arc::new(
-            RenewingCertificate::new(&authority, &names(), at(1), Duration::days(9)).unwrap(),
-        );
+        let certificate =
+            Arc::new(RenewingCertificate::new(&authority, &names(), at(1), from_days(9)).unwrap());
         let config = server_config(certificate, &authority).unwrap();
         assert_eq!(config.alpn_protocols, [b"http/1.1".to_vec()]);
         // The configuration offers no older version: a TLS 1.2-only client is refused (see the
@@ -328,10 +328,8 @@ mod tests {
             .push(rcgen::DnType::CommonName, "kitchen");
         let request = params.serialize_request(&key).unwrap();
         let request = authority.inspect(request.der()).unwrap();
-        let now = Utc::now();
-        let issued = authority
-            .issue(&request, now, now + Duration::days(90))
-            .unwrap();
+        let now = Timestamp::now();
+        let issued = authority.issue(&request, now, now + from_days(90)).unwrap();
         CertificateDer::from(issued.der)
     }
 
@@ -360,17 +358,17 @@ mod tests {
 
     #[test]
     fn a_bare_certificate_is_checked_against_the_servers_intermediates() {
-        let authority = PrivateAuthority::generate(Utc::now()).unwrap().0;
+        let authority = PrivateAuthority::generate(Timestamp::now()).unwrap().0;
         let leaf = display_certificate(&authority);
         assert!(accepts(&authority, &leaf));
         // A certificate of some other authority's is not.
-        let other = PrivateAuthority::generate(Utc::now()).unwrap().0;
+        let other = PrivateAuthority::generate(Timestamp::now()).unwrap().0;
         assert!(!accepts(&authority, &display_certificate(&other)));
     }
 
     #[test]
     fn a_certificate_from_an_intermediate_that_was_replaced_is_still_good_while_it_is_kept() {
-        let (first, files) = PrivateAuthority::generate(Utc::now()).unwrap();
+        let (first, files) = PrivateAuthority::generate(Timestamp::now()).unwrap();
         let leaf = display_certificate(&first);
         let (old_certificate, _) = files.intermediate.split_at(
             files
@@ -381,7 +379,7 @@ mod tests {
         let new = crate::adapters::certificate_authority::new_intermediate(
             &files.root_certificate,
             &files.root_key,
-            Utc::now(),
+            Timestamp::now(),
         )
         .unwrap();
 
@@ -389,7 +387,7 @@ mod tests {
             &files.root_certificate,
             &new,
             &[old_certificate.to_owned()],
-            Utc::now(),
+            Timestamp::now(),
         )
         .unwrap();
         assert_ne!(kept.intermediate(), first.intermediate());
@@ -400,7 +398,8 @@ mod tests {
 
         // Once it is no longer kept, what it signed has no path and is refused (until renewed).
         let forgotten =
-            PrivateAuthority::from_pem(&files.root_certificate, &new, &[], Utc::now()).unwrap();
+            PrivateAuthority::from_pem(&files.root_certificate, &new, &[], Timestamp::now())
+                .unwrap();
         assert!(!accepts(&forgotten, &leaf));
         // And what the new one signs is good either way.
         assert!(accepts(&forgotten, &display_certificate(&forgotten)));
@@ -409,8 +408,8 @@ mod tests {
     #[test]
     fn no_server_certificate_is_made_from_a_clock_that_has_not_been_set() {
         let authority = authority();
-        let unset = Utc.with_ymd_and_hms(1970, 1, 1, 0, 5, 0).unwrap();
-        let error = RenewingCertificate::new(&authority, &names(), unset, Duration::days(90))
+        let unset = utc(1970, 1, 1, 0, 5, 0);
+        let error = RenewingCertificate::new(&authority, &names(), unset, from_days(90))
             .unwrap_err()
             .to_string();
         assert!(error.contains("can't be right"), "{error}");
@@ -420,13 +419,13 @@ mod tests {
     fn when_the_clock_is_found_wrong_the_certificate_in_use_stays() {
         let authority = authority();
         let certificate =
-            RenewingCertificate::new(&authority, &names(), at(1), Duration::days(9)).unwrap();
+            RenewingCertificate::new(&authority, &names(), at(1), from_days(9)).unwrap();
         let before = certificate.current.load().key.cert[0].clone();
         // Due, but the clock now reads 1970: nothing is made, and what there is carries on.
-        let unset = Utc.with_ymd_and_hms(1970, 1, 1, 0, 5, 0).unwrap();
+        let unset = utc(1970, 1, 1, 0, 5, 0);
         assert!(
             certificate
-                .renew_if_due(&authority, &names(), unset, Duration::days(9))
+                .renew_if_due(&authority, &names(), unset, from_days(9))
                 .is_err()
         );
         assert_eq!(certificate.current.load().key.cert[0], before);
@@ -437,11 +436,11 @@ mod tests {
         let authority = authority();
         // Made on the 20th by a clock that was wrong; the real time is the 5th.
         let certificate =
-            RenewingCertificate::new(&authority, &names(), at(20), Duration::days(9)).unwrap();
+            RenewingCertificate::new(&authority, &names(), at(20), from_days(9)).unwrap();
         let before = certificate.current.load().key.cert[0].clone();
         assert!(
             certificate
-                .renew_if_due(&authority, &names(), at(5), Duration::days(9))
+                .renew_if_due(&authority, &names(), at(5), from_days(9))
                 .unwrap()
         );
         assert_ne!(certificate.current.load().key.cert[0], before);
@@ -452,8 +451,7 @@ mod tests {
     fn a_lifetime_too_long_to_add_to_a_date_is_an_error_and_not_a_panic() {
         let authority = authority();
         for days in [4_000_000_000, i64::from(i32::MAX)] {
-            let result =
-                RenewingCertificate::new(&authority, &names(), at(1), Duration::days(days));
+            let result = RenewingCertificate::new(&authority, &names(), at(1), from_days(days));
             let error = result.unwrap_err().to_string();
             assert!(
                 error.contains("too long") || error.contains("out of range"),
@@ -466,29 +464,29 @@ mod tests {
     fn a_certificate_cannot_outlast_its_intermediate_and_is_judged_by_the_life_it_has() {
         use crate::adapters::certificate_authority::new_intermediate;
         // An intermediate with ten days left: made five years less ten days ago.
-        let (_, files) = PrivateAuthority::generate(Utc::now()).unwrap();
-        let now = Utc::now();
+        let (_, files) = PrivateAuthority::generate(Timestamp::now()).unwrap();
+        let now = Timestamp::now();
         let intermediate = new_intermediate(
             &files.root_certificate,
             &files.root_key,
-            now - Duration::days(365 * 5 - 10),
+            now - from_days(365 * 5 - 10),
         )
         .unwrap();
         let authority =
             PrivateAuthority::from_pem(&files.root_certificate, &intermediate, &[], now).unwrap();
         let certificate =
-            RenewingCertificate::new(&authority, &names(), now, Duration::days(90)).unwrap();
+            RenewingCertificate::new(&authority, &names(), now, from_days(90)).unwrap();
         let end = certificate.not_after();
         assert_eq!(end, authority.intermediate_not_after());
-        assert!(end - now < Duration::days(11), "{end}");
+        assert!(end - now < from_days(11), "{end}");
         // Not remade every check, as it would be if judged by the 90 days asked for.
         assert!(
             !certificate
                 .renew_if_due(
                     &authority,
                     &names(),
-                    now + Duration::hours(1),
-                    Duration::days(90)
+                    now + SignedDuration::from_hours(1),
+                    from_days(90)
                 )
                 .unwrap()
         );

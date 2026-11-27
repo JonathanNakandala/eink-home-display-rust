@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -19,6 +19,7 @@ use crate::domain::models::viewer::{
     ViewerLabel, ViewerStanding, ViewerState, ViewerToken,
 };
 use crate::domain::services::clock::Clock;
+use crate::domain::services::clock::from_days;
 use crate::domain::services::entropy::Entropy;
 use crate::domain::services::viewer_registry::ViewerRegistry;
 
@@ -39,10 +40,10 @@ pub const MOST_ACCESS_MINUTES: u32 = 24 * 60;
 /// How soon after a refresh token was used for the last time it may be shown again and be taken for a retry, not a copy: a
 /// request whose answer was lost on a bad connection is sent again with the same token, and ending the session for that would
 /// punish the one who is meant to have it. Shown after this, it is a copy, and ends the session (RFC 9700 section 4.14.2).
-pub const REFRESH_LEEWAY: Duration = Duration::seconds(30);
+pub const REFRESH_LEEWAY: SignedDuration = SignedDuration::from_secs(30);
 /// How often the time a token was last used is written down: a request is far more often than that, and each write is the
 /// whole file.
-const LAST_USED_EVERY: Duration = Duration::minutes(10);
+const LAST_USED_EVERY: SignedDuration = SignedDuration::from_mins(10);
 
 /// What the owner asks for.
 #[derive(Debug, Clone, Default)]
@@ -85,7 +86,7 @@ pub struct Grant {
     pub token: ViewerToken,
     /// For a refreshing viewer, the token to ask for the next one with, which replaces the one just used.
     pub refresh_token: Option<RefreshToken>,
-    pub expires_in: Duration,
+    pub expires_in: SignedDuration,
     pub scope: LayoutScope,
     pub viewer: ViewerId,
 }
@@ -130,7 +131,7 @@ pub struct Viewers {
     clock: Arc<dyn Clock>,
     entropy: Arc<dyn Entropy>,
     /// How long an access token lasts for a refreshing viewer.
-    access_lifetime: Duration,
+    access_lifetime: SignedDuration,
     changes: Mutex<()>,
 }
 
@@ -144,19 +145,19 @@ impl Viewers {
             registry,
             clock,
             entropy,
-            access_lifetime: Duration::minutes(DEFAULT_ACCESS_MINUTES.into()),
+            access_lifetime: SignedDuration::from_mins(DEFAULT_ACCESS_MINUTES.into()),
             changes: Mutex::new(()),
         }
     }
 
     /// How long an access token lasts for a refreshing viewer, in place of the default.
-    pub fn with_access_lifetime(mut self, lifetime: Duration) -> Self {
+    pub fn with_access_lifetime(mut self, lifetime: SignedDuration) -> Self {
         self.access_lifetime = lifetime;
         self
     }
 
-    fn now(&self) -> DateTime<Utc> {
-        self.clock.now().to_utc()
+    fn now(&self) -> Timestamp {
+        self.clock.instant()
     }
 
     fn random(&self) -> [u8; 32] {
@@ -215,12 +216,12 @@ impl Viewers {
             id,
             label,
             scope: LayoutScope::of(scope),
-            lifetime: Duration::days(lifetime_days.into()),
+            lifetime: from_days(lifetime_days.into()),
             refreshing: request.refreshing,
             created_at: now,
             state: ViewerState::Pending {
                 code: code.hash(),
-                code_expires_at: now + Duration::minutes(code_minutes.into()),
+                code_expires_at: now + SignedDuration::from_mins(code_minutes.into()),
             },
         };
         self.registry.put(&viewer).await?;
@@ -403,7 +404,7 @@ impl Viewers {
 
     /// Notes that `token` was used, if it still is the viewer's, so a revoke that came just before isn't undone. Best
     /// effort: a request is worth more than knowing when it was made.
-    async fn note_use(&self, id: &ViewerId, token: &ViewerToken, now: DateTime<Utc>) {
+    async fn note_use(&self, id: &ViewerId, token: &ViewerToken, now: Timestamp) {
         let _changing = self.changes.lock().await;
         let outcome = async {
             let Some(mut viewer) = self.registry.get(id).await? else {
@@ -485,13 +486,15 @@ impl Viewers {
     }
 
     /// The time the server goes by.
-    pub fn time(&self) -> DateTime<Utc> {
+    pub fn time(&self) -> Timestamp {
         self.now()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::services::clock::from_days;
+    use jiff::SignedDuration;
     use std::sync::atomic::{AtomicU8, Ordering};
 
     use chrono_tz::Europe::London;
@@ -519,8 +522,8 @@ mod tests {
     }
 
     fn at(minutes: i64) -> chrono::DateTime<chrono_tz::Tz> {
-        use chrono::TimeZone;
-        London.with_ymd_and_hms(2026, 10, 12, 9, 0, 0).unwrap() + Duration::minutes(minutes)
+        chrono::TimeZone::with_ymd_and_hms(&London, 2026, 10, 12, 9, 0, 0).unwrap()
+            + chrono::Duration::minutes(minutes)
     }
 
     async fn rig() -> Rig {
@@ -573,7 +576,7 @@ mod tests {
         let viewer = &issued.viewer;
         assert_eq!(viewer.label.as_str(), "kitchen tablet");
         assert_eq!(viewer.scope, LayoutScope::All);
-        assert_eq!(viewer.lifetime, Duration::days(90));
+        assert_eq!(viewer.lifetime, from_days(90));
         assert_eq!(viewer.standing(rig.viewers.time()), ViewerStanding::Waiting);
         assert!(issued.code.expose().starts_with("hdc1_"));
         // What is kept is a hash: the code is not in the registry, and a viewer is listed.
@@ -647,7 +650,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ok.viewer.scope.to_scope_string(), "layout:departures");
-        assert_eq!(ok.viewer.lifetime, Duration::days(30));
+        assert_eq!(ok.viewer.lifetime, from_days(30));
     }
 
     #[tokio::test]
@@ -662,7 +665,7 @@ mod tests {
         let grant = rig.viewers.exchange(issued.code.expose()).await.unwrap();
 
         assert!(grant.token.expose().starts_with("hdv1_"));
-        assert_eq!(grant.expires_in, Duration::days(90));
+        assert_eq!(grant.expires_in, from_days(90));
         assert_eq!(grant.scope.to_scope_string(), "layout:*");
         // The code is spent: the same one again is no good, and the token is not shown anywhere it can be read back.
         assert!(matches!(
@@ -762,9 +765,9 @@ mod tests {
 
         // Still good the day before, gone on the day.
         rig.clock
-            .set(at(0) + Duration::days(90) - Duration::minutes(1));
+            .set(at(0) + chrono::Duration::days(90) - chrono::Duration::minutes(1));
         assert!(rig.viewers.authenticate(token.expose()).await.is_ok());
-        rig.clock.set(at(0) + Duration::days(90));
+        rig.clock.set(at(0) + chrono::Duration::days(90));
         assert!(matches!(
             rig.viewers.authenticate(token.expose()).await,
             Err(AuthError::InvalidToken)
@@ -989,7 +992,7 @@ mod tests {
                 .starts_with("hdr1_")
         );
         // An hour for the access token, though the session is ninety days.
-        assert_eq!(grant.expires_in, Duration::minutes(60));
+        assert_eq!(grant.expires_in, SignedDuration::from_mins(60));
         let viewer = rig.viewers.get(&id).await.unwrap();
         assert!(viewer.refreshing);
         assert_eq!(viewer.standing(rig.viewers.time()), ViewerStanding::Active);
@@ -1003,7 +1006,7 @@ mod tests {
             .unwrap();
         let plain_grant = rig.viewers.exchange(plain.code.expose()).await.unwrap();
         assert!(plain_grant.refresh_token.is_none());
-        assert_eq!(plain_grant.expires_in, Duration::days(90));
+        assert_eq!(plain_grant.expires_in, from_days(90));
     }
 
     #[tokio::test]
@@ -1032,7 +1035,7 @@ mod tests {
 
         assert_ne!(second.token.expose(), first.token.expose());
         assert_ne!(refresh_of(&second), refresh_of(&first));
-        assert_eq!(second.expires_in, Duration::minutes(60));
+        assert_eq!(second.expires_in, SignedDuration::from_mins(60));
         assert_eq!(second.scope, first.scope);
         assert_eq!(second.viewer, id);
         assert!(
@@ -1069,7 +1072,7 @@ mod tests {
         let second = rig.viewers.refresh(&old).await.unwrap();
 
         // The answer was lost and the same request is sent again, a few seconds on: answered afresh, and the session lives.
-        rig.clock.set(at(0) + Duration::seconds(10));
+        rig.clock.set(at(0) + chrono::Duration::seconds(10));
         let retry = rig.viewers.refresh(&old).await.unwrap();
         assert!(rig.viewers.authenticate(retry.token.expose()).await.is_ok());
         // (What the retry replaced is the answer that was lost.)
@@ -1081,7 +1084,7 @@ mod tests {
         );
 
         // The same request again (it may have been lost again), still within the leeway of the first: answered too.
-        rig.clock.set(at(0) + Duration::seconds(20));
+        rig.clock.set(at(0) + chrono::Duration::seconds(20));
         assert!(rig.viewers.refresh(&old).await.is_ok());
         let current = refresh_of(&rig.viewers.refresh(&old).await.unwrap());
 
@@ -1113,7 +1116,8 @@ mod tests {
         let old = refresh_of(&first);
         rig.viewers.refresh(&old).await.unwrap();
 
-        rig.clock.set(at(0) + REFRESH_LEEWAY + Duration::seconds(1));
+        rig.clock
+            .set(at(0) + chrono::Duration::seconds(REFRESH_LEEWAY.as_secs() + 1));
 
         assert!(matches!(
             rig.viewers.refresh(&old).await,
@@ -1189,11 +1193,11 @@ mod tests {
 
         // Late in a one-day session, an access token is cut to what is left.
         rig.clock
-            .set(at(0) + Duration::hours(23) + Duration::minutes(30));
+            .set(at(0) + chrono::Duration::minutes(23 * 60 + 30));
         let late = rig.viewers.refresh(&refresh_of(&first)).await.unwrap();
-        assert_eq!(late.expires_in, Duration::minutes(30));
+        assert_eq!(late.expires_in, SignedDuration::from_mins(30));
 
-        rig.clock.set(at(0) + Duration::days(1));
+        rig.clock.set(at(0) + chrono::Duration::days(1));
         assert!(matches!(
             rig.viewers.refresh(&refresh_of(&late)).await,
             Err(ExchangeError::InvalidGrant)
@@ -1219,11 +1223,11 @@ mod tests {
             clock.clone(),
             Arc::new(Counting(AtomicU8::new(1))),
         )
-        .with_access_lifetime(Duration::minutes(5));
+        .with_access_lifetime(SignedDuration::from_mins(5));
         let layouts = Layouts::default();
         let issued = viewers.issue(refreshing("tablet"), &layouts).await.unwrap();
         let grant = viewers.exchange(issued.code.expose()).await.unwrap();
-        assert_eq!(grant.expires_in, Duration::minutes(5));
+        assert_eq!(grant.expires_in, SignedDuration::from_mins(5));
 
         viewers.revoke(&grant.viewer).await.unwrap();
 

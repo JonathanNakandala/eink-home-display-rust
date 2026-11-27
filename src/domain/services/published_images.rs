@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::LayoutName;
@@ -24,7 +24,7 @@ pub trait PublishedImages: Send + Sync {
         &self,
         layout: &LayoutName,
         format: ImageFormat,
-    ) -> anyhow::Result<Option<DateTime<Utc>>>;
+    ) -> anyhow::Result<Option<Timestamp>>;
 
     /// The image of `layout` in `format`, or None if there isn't one (or it was just replaced).
     async fn read(

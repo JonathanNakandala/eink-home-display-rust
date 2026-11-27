@@ -3,7 +3,8 @@
 //! Kept apart from the program so what it says can be tested. Times are shown in the zone the caller passes (the
 //! local one, for the command), and ages are relative to `now`, so the same answer reads sensibly later.
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp};
 
 use super::api::{
     CredentialEntry, CredentialList, DisplayEntry, DisplayList, DisplayState, KeySource,
@@ -11,8 +12,8 @@ use super::api::{
 };
 
 /// How long ago, or how long to go, in the largest units that matter: `just now`, `3 min`, `2 h 5 min`, `3 days`.
-pub fn age(span: Duration) -> String {
-    let seconds = span.num_seconds().max(0);
+pub fn age(span: SignedDuration) -> String {
+    let seconds = span.as_secs().max(0);
     let (days, hours, minutes) = (
         seconds / 86_400,
         seconds % 86_400 / 3_600,
@@ -31,21 +32,14 @@ pub fn age(span: Duration) -> String {
 }
 
 /// The state of the window in a sentence for a person, with times in `zone`.
-pub fn describe_window<Z: chrono::TimeZone>(
-    state: &WindowState,
-    now: chrono::DateTime<chrono::Utc>,
-    zone: &Z,
-) -> String
-where
-    Z::Offset: std::fmt::Display,
-{
+pub fn describe_window(state: &WindowState, now: Timestamp, zone: &TimeZone) -> String {
     match state.closes_at {
         Some(closes) if state.open => {
-            let left = (closes - now).num_seconds().max(0);
+            let left = closes.duration_since(now).as_secs().max(0);
             let (minutes, seconds) = (left / 60, left % 60);
             format!(
                 "The pairing window is open until {} ({minutes} min {seconds:02} s from now). A display that has not joined can ask now.",
-                closes.with_timezone(zone).format("%H:%M:%S")
+                closes.to_zoned_datetime(zone.clone()).strftime("%H:%M:%S")
             )
         }
         _ => "The pairing window is closed. Open it with `displayctl window open` to let a display ask to join."
@@ -54,15 +48,8 @@ where
 }
 
 /// Where a display stands, in a phrase that says what to do about it, if anything.
-pub fn describe_entry<Z: chrono::TimeZone>(
-    entry: &DisplayEntry,
-    now: DateTime<Utc>,
-    zone: &Z,
-) -> String
-where
-    Z::Offset: std::fmt::Display,
-{
-    let ago = |at: DateTime<Utc>| age(now - at);
+pub fn describe_entry(entry: &DisplayEntry, now: Timestamp, zone: &TimeZone) -> String {
+    let ago = |at: Timestamp| age(now.duration_since(at));
     let mut text = match entry.state {
         DisplayState::Waiting => format!(
             "asked {} ago{}. Check the code on its own panel, then approve it",
@@ -80,17 +67,17 @@ where
         DisplayState::Member => match entry.certificate_not_after {
             Some(end) if entry.certificate_expired => format!(
                 "certificate ran out {} ago. It gets a new one by itself when it is next switched on",
-                age(now - end)
+                age(now.duration_since(end))
             ),
             Some(end) if entry.renewal_overdue => format!(
                 "certificate until {} ({} left), and it should have been renewed by now. Check that the display is on and can reach the server",
-                end.with_timezone(zone).format("%Y-%m-%d"),
-                age(end - now)
+                end.to_zoned_datetime(zone.clone()).strftime("%Y-%m-%d"),
+                age(end.duration_since(now))
             ),
             Some(end) => format!(
                 "certificate until {} ({} left)",
-                end.with_timezone(zone).format("%Y-%m-%d"),
-                age(end - now)
+                end.to_zoned_datetime(zone.clone()).strftime("%Y-%m-%d"),
+                age(end.duration_since(now))
             ),
             None => "member".to_owned(),
         },
@@ -133,14 +120,7 @@ pub fn label(state: DisplayState) -> &'static str {
 }
 
 /// Every display as a table: name, state, and what to do about it.
-pub fn describe_list<Z: chrono::TimeZone>(
-    list: &DisplayList,
-    now: DateTime<Utc>,
-    zone: &Z,
-) -> String
-where
-    Z::Offset: std::fmt::Display,
-{
+pub fn describe_list(list: &DisplayList, now: Timestamp, zone: &TimeZone) -> String {
     if list.displays.is_empty() {
         return "No display has asked to join yet. Open the pairing window with `displayctl window open`, then \
                 start the display."
@@ -201,14 +181,7 @@ pub fn layout_changed(entry: &DisplayEntry) -> String {
 }
 
 /// The viewers, as a table.
-pub fn describe_viewers<Z: chrono::TimeZone>(
-    list: &ViewerList,
-    now: DateTime<Utc>,
-    zone: &Z,
-) -> String
-where
-    Z::Offset: std::fmt::Display,
-{
+pub fn describe_viewers(list: &ViewerList, now: Timestamp, zone: &TimeZone) -> String {
     if list.viewers.is_empty() {
         return "There are no viewers. Make one with `displayctl viewer create --label NAME`."
             .to_owned();
@@ -230,7 +203,7 @@ where
                 "link works for {} more; {}",
                 viewer
                     .link_expires_at
-                    .map_or_else(|| "a while".to_owned(), |at| age(at - now)),
+                    .map_or_else(|| "a while".to_owned(), |at| age(at.duration_since(now))),
                 viewer.scope
             ),
             ViewerStatus::LinkExpired => {
@@ -244,13 +217,14 @@ where
                     "until"
                 },
                 viewer.expires_at.map_or_else(String::new, |at| at
-                    .with_timezone(zone)
-                    .format("%Y-%m-%d")
+                    .to_zoned_datetime(zone.clone())
+                    .strftime("%Y-%m-%d")
                     .to_string()),
                 viewer.scope,
-                viewer
-                    .last_used_at
-                    .map_or_else(String::new, |at| format!("; used {} ago", age(now - at)))
+                viewer.last_used_at.map_or_else(String::new, |at| format!(
+                    "; used {} ago",
+                    age(now.duration_since(at))
+                ))
             ),
             ViewerStatus::Expired => "its token has run out; make another viewer".to_owned(),
             ViewerStatus::Revoked => "revoked; forget it to free its place".to_owned(),
@@ -276,14 +250,7 @@ fn viewer_label(status: ViewerStatus) -> &'static str {
 }
 
 /// What to say when a viewer was made: the link, once, and what it will and won't do.
-pub fn viewer_issued<Z: chrono::TimeZone>(
-    issued: &ViewerIssued,
-    now: DateTime<Utc>,
-    zone: &Z,
-) -> String
-where
-    Z::Offset: std::fmt::Display,
-{
+pub fn viewer_issued(issued: &ViewerIssued, now: Timestamp, zone: &TimeZone) -> String {
     let notes: String = issued
         .warnings
         .iter()
@@ -297,8 +264,11 @@ where
         issued.viewer.id,
         issued.viewer.label,
         issued.viewer.scope,
-        age(issued.link_expires_at - now),
-        issued.link_expires_at.with_timezone(zone).format("%H:%M"),
+        age(issued.link_expires_at.duration_since(now)),
+        issued
+            .link_expires_at
+            .to_zoned_datetime(zone.clone())
+            .strftime("%H:%M"),
         issued.link
     )
 }
@@ -373,7 +343,7 @@ pub fn viewer_changed(entry: &ViewerEntry, forgotten: bool) -> String {
 }
 
 /// The keys, as a table: whether each is set and where it came from. Never a key.
-pub fn describe_credentials(list: &CredentialList, now: DateTime<Utc>) -> String {
+pub fn describe_credentials(list: &CredentialList, now: Timestamp) -> String {
     let width = list
         .credentials
         .iter()
@@ -388,9 +358,10 @@ pub fn describe_credentials(list: &CredentialList, now: DateTime<Utc>) -> String
             (true, Some(KeySource::Remembered)) => "set earlier and kept for a restart".to_owned(),
             (true, _) => format!(
                 "set{}; {}",
-                entry
-                    .since
-                    .map_or_else(String::new, |at| format!(" {} ago", age(now - at))),
+                entry.since.map_or_else(String::new, |at| format!(
+                    " {} ago",
+                    age(now.duration_since(at))
+                )),
                 if entry.remembered {
                     "kept for a restart"
                 } else {

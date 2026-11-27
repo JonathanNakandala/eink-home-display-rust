@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::Arc;
 
-use chrono::Duration;
 use chrono_tz::Tz;
 use home_display_server::adapters::admin;
 use home_display_server::adapters::certificate_authority::{self, Create};
@@ -18,7 +17,9 @@ use home_display_server::config::application::ApplicationConfig;
 use home_display_server::domain::models::device_id::DeviceId;
 use home_display_server::domain::models::pairing::{PairingCode, PublicKey};
 use home_display_server::domain::services::certificate_authority::CertificateAuthority;
+use home_display_server::domain::services::clock::from_days;
 use home_display_server::domain::services::layout_choices::LayoutChoices;
+use jiff::{SignedDuration, Timestamp};
 use rcgen::PublicKeyData;
 use std::os::unix::fs::PermissionsExt;
 
@@ -52,8 +53,8 @@ async fn start() -> Server {
         Arc::new(store),
         Arc::new(SystemClock::new(Tz::UTC)),
         EnrollmentPolicy {
-            certificate_lifetime: Duration::days(90),
-            retry_after: Duration::minutes(5),
+            certificate_lifetime: from_days(90),
+            retry_after: SignedDuration::from_mins(5),
             require_channel_binding: false,
         },
     ));
@@ -155,7 +156,7 @@ async fn it_opens_for_fifteen_minutes_when_not_told() {
     let opened = displayctl(&["--socket", path(&server.socket), "window", "open"]).await;
     assert!(opened.status.success(), "{}", err(&opened));
     let closes = server.enrollment.window_closes_at().unwrap();
-    let minutes = (closes - chrono::Utc::now()).num_minutes();
+    let minutes = closes.duration_since(Timestamp::now()).as_mins();
     assert!((14..=15).contains(&minutes), "{minutes}");
 }
 
@@ -349,7 +350,7 @@ async fn a_display_is_given_a_layout_and_has_it_taken_away_with_the_real_command
     let server = start().await;
     let socket = path(&server.socket);
     let hall = Display::new("hall");
-    server.enrollment.open_window(Duration::minutes(10));
+    server.enrollment.open_window(SignedDuration::from_mins(10));
     hall.asks(&server).await;
 
     let listed = ctl(socket, &["layout", "list"]).await;

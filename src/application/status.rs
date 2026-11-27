@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::DateTime;
 use chrono_tz::Tz;
+use jiff::SignedDuration;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -22,6 +23,7 @@ use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 use crate::domain::models::profile::DeviceProfile;
 use crate::domain::models::render_report::{LayoutReport, RenderReport, SourceReport};
 use crate::domain::models::schedule::Schedule;
+use crate::domain::services::clock::{in_zone, instant_of};
 use crate::domain::services::render_observer::RenderObserver;
 
 /// Long enough for a render error to be recognisable, short enough for a one-line log or a page.
@@ -160,20 +162,20 @@ impl MemberStatus {
     }
 
     /// `lifetime` is how long the certificates this server issues last.
-    pub fn of(pairing: &Pairing, now: DateTime<Tz>, lifetime: chrono::Duration) -> Self {
+    pub fn of(pairing: &Pairing, now: DateTime<Tz>, lifetime: SignedDuration) -> Self {
         let (state, ends) = match &pairing.state {
             PairingState::Enrolled { not_after, .. } => ("member", Some(*not_after)),
             other => (other.name(), None),
         };
-        let seconds = ends.map(|end| (end - now.to_utc()).num_seconds());
+        let seconds = ends.map(|end| end.duration_since(instant_of(now)).as_secs());
         Self {
             name: pairing.device.to_string(),
             state,
-            certificate_not_after: ends.map(|end| end.with_timezone(&now.timezone())),
+            certificate_not_after: ends.map(|end| in_zone(end, now.timezone())),
             certificate_expires_in_seconds: seconds,
             certificate_expired: seconds.is_some_and(|s| s <= 0),
             renewal_overdue: seconds
-                .is_some_and(|s| renewal_overdue(chrono::Duration::seconds(s), lifetime)),
+                .is_some_and(|s| renewal_overdue(SignedDuration::from_secs(s), lifetime)),
             changing_keys: pairing.rollover.is_some(),
             replacement_waiting: pairing.replacement.is_some(),
             profile: pairing.profile.as_ref().map(ProfileStatus::from),
@@ -377,6 +379,7 @@ mod tests {
 
     use super::*;
     use crate::domain::models::render_report::SourceState;
+    use crate::domain::services::clock::from_days;
 
     const TIMING: PlanTiming = PlanTiming {
         wake_delay: Duration::from_secs(30),
@@ -541,19 +544,19 @@ mod tests {
         );
     }
 
-    const LIFETIME: chrono::Duration = chrono::Duration::days(90);
+    const LIFETIME: SignedDuration = from_days(90);
 
     fn pairing(state: PairingState) -> Pairing {
         use crate::domain::models::device_id::DeviceId;
         use crate::domain::models::pairing::PublicKey;
         let device = DeviceId::parse("kitchen").unwrap();
         let key = PublicKey::from_der(vec![1; 91]);
-        Pairing::new(device, key, state, at(8, 0, 0).to_utc())
+        Pairing::new(device, key, state, instant_of(at(8, 0, 0)))
     }
 
     #[test]
     fn a_member_shows_when_its_certificate_ends() {
-        let ends = at(12, 0, 0).to_utc() + chrono::Duration::days(3);
+        let ends = instant_of(at(12, 0, 0)) + from_days(3);
         let member = MemberStatus::of(
             &pairing(PairingState::Enrolled {
                 serial: "01".to_owned(),
@@ -565,13 +568,13 @@ mod tests {
         assert_eq!(member.name, "kitchen");
         assert_eq!(member.state, "member");
         assert_eq!(member.certificate_expires_in_seconds, Some(3 * 86_400));
-        assert_eq!(member.certificate_not_after.unwrap().to_utc(), ends);
+        assert_eq!(instant_of(member.certificate_not_after.unwrap()), ends);
         assert!(!member.certificate_expired);
     }
 
     #[test]
     fn a_certificate_that_has_run_out_is_shown_as_expired_with_a_negative_time_left() {
-        let ended = at(12, 0, 0).to_utc() - chrono::Duration::days(2);
+        let ended = instant_of(at(12, 0, 0)) - from_days(2);
         let member = MemberStatus::of(
             &pairing(PairingState::Enrolled {
                 serial: "01".to_owned(),
@@ -592,7 +595,7 @@ mod tests {
             MemberStatus::of(
                 &pairing(PairingState::Enrolled {
                     serial: "01".to_owned(),
-                    not_after: at(12, 0, 0).to_utc() + chrono::Duration::days(days_left),
+                    not_after: instant_of(at(12, 0, 0)) + from_days(days_left),
                 }),
                 at(12, 0, 0),
                 LIFETIME,
@@ -623,7 +626,7 @@ mod tests {
         };
         let mut member = pairing(PairingState::Enrolled {
             serial: "01".to_owned(),
-            not_after: at(12, 0, 0).to_utc() + chrono::Duration::days(60),
+            not_after: instant_of(at(12, 0, 0)) + from_days(60),
         });
         assert_eq!(
             MemberStatus::of(&member, at(12, 0, 0), LIFETIME).profile,
@@ -633,7 +636,7 @@ mod tests {
         member.replacement = Some(Replacement {
             key: PublicKey::from_der(vec![3; 91]),
             approved: false,
-            requested_at: at(10, 0, 0).to_utc(),
+            requested_at: instant_of(at(10, 0, 0)),
             profile: Some(profile("Waiting Model")),
         });
         let status = MemberStatus::of(&member, at(12, 0, 0), LIFETIME);
@@ -677,12 +680,12 @@ mod tests {
         assert!(!MemberStatus::of(&changing, at(12, 0, 0), LIFETIME).changing_keys);
         changing.rollover = Some(Rollover {
             key: PublicKey::from_der(vec![2; 91]),
-            since: at(9, 0, 0).to_utc(),
+            since: instant_of(at(9, 0, 0)),
         });
         changing.replacement = Some(Replacement {
             key: PublicKey::from_der(vec![3; 91]),
             approved: false,
-            requested_at: at(10, 0, 0).to_utc(),
+            requested_at: instant_of(at(10, 0, 0)),
             profile: None,
         });
         let status = MemberStatus::of(&changing, at(12, 0, 0), LIFETIME);

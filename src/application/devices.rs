@@ -285,7 +285,7 @@ impl ConnectionStatus {
             last_resumed: handshakes.last_resumed,
             last_handshake_milliseconds: u32::try_from(handshakes.last_handshake.as_millis())
                 .unwrap_or(u32::MAX),
-            last_at: handshakes.last_at.with_timezone(&zone),
+            last_at: crate::domain::services::clock::in_zone(handshakes.last_at, zone),
         }
     }
 }

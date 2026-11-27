@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -44,7 +44,7 @@ pub struct CredentialStatus {
     /// Where the key in use came from; none if there is no key.
     pub origin: Option<Origin>,
     /// When the owner set it. Not known for one from the configuration file.
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
     /// Whether a copy is kept on disk, so that it outlasts a restart.
     pub remembered: bool,
 }
@@ -77,7 +77,7 @@ pub struct ClearError(anyhow::Error);
 struct Chosen {
     key: SecretString,
     origin: Origin,
-    since: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
     remembered: bool,
 }
 
@@ -161,7 +161,7 @@ impl Credentials {
             (false, Some(store)) => store.forget(name).await.map_err(SetError::NotKept)?,
             (false, None) => {}
         }
-        let since = Some(self.clock.now().with_timezone(&Utc));
+        let since = Some(self.clock.instant());
         let mut keys = self.keys.write().expect("the keys are not poisoned");
         keys.chosen.insert(
             name,
@@ -239,7 +239,6 @@ impl CredentialSource for Credentials {
 mod tests {
     use std::sync::Mutex;
 
-    use chrono::TimeZone;
     use chrono_tz::Tz;
     use secrecy::ExposeSecret;
 
@@ -248,7 +247,8 @@ mod tests {
     struct FixedClock;
 
     impl Clock for FixedClock {
-        fn now(&self) -> DateTime<Tz> {
+        fn now(&self) -> chrono::DateTime<Tz> {
+            use chrono::TimeZone;
             chrono_tz::UTC
                 .with_ymd_and_hms(2026, 10, 17, 12, 0, 0)
                 .unwrap()

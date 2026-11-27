@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -45,7 +45,7 @@ struct Record {
     /// Added after version 1 first shipped; a file without it is read as a plain viewer.
     #[serde(default, skip_serializing_if = "is_false")]
     refreshing: bool,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     state: State,
 }
 
@@ -55,19 +55,19 @@ enum State {
     Pending {
         /// SHA-256 of the code, base64url.
         code: String,
-        code_expires_at: DateTime<Utc>,
+        code_expires_at: Timestamp,
     },
     Active {
         /// SHA-256 of the token, base64url.
         token: String,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        last_used_at: Option<DateTime<Utc>>,
+        last_used_at: Option<Timestamp>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         refresh: Option<RefreshRecord>,
     },
     Revoked {
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
 }
 
@@ -81,13 +81,13 @@ struct RefreshRecord {
     current: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     previous: Option<RotatedRecord>,
-    session_ends_at: DateTime<Utc>,
+    session_ends_at: Timestamp,
 }
 
 #[derive(Serialize, Deserialize)]
 struct RotatedRecord {
     hash: String,
-    at: DateTime<Utc>,
+    at: Timestamp,
 }
 
 fn write_hash(hash: &SecretHash) -> String {
@@ -111,7 +111,7 @@ impl From<&Viewer> for Record {
             id: viewer.id.to_string(),
             label: viewer.label.to_string(),
             scope: viewer.scope.to_scope_string(),
-            lifetime_seconds: viewer.lifetime.num_seconds(),
+            lifetime_seconds: viewer.lifetime.as_secs(),
             refreshing: viewer.refreshing,
             created_at: viewer.created_at,
             state: match &viewer.state {
@@ -155,7 +155,7 @@ impl Record {
                 .with_context(|| format!("The label of {id} is not valid"))?,
             scope: LayoutScope::from_scope_string(&self.scope)
                 .with_context(|| format!("The scope of {id} is not valid"))?,
-            lifetime: Duration::seconds(self.lifetime_seconds),
+            lifetime: SignedDuration::from_secs(self.lifetime_seconds),
             refreshing: self.refreshing,
             created_at: self.created_at,
             state: match self.state {
@@ -328,9 +328,11 @@ impl ViewerRegistry for FileViewerRegistry {
 mod tests {
     use super::*;
     use crate::domain::models::viewer::{ExchangeCode, RefreshToken, ViewerToken};
+    use crate::domain::services::clock::from_days;
+    use jiff::{SignedDuration, Timestamp};
 
-    fn at(minutes: i64) -> DateTime<Utc> {
-        DateTime::from_timestamp(1_790_000_000, 0).unwrap() + Duration::minutes(minutes)
+    fn at(minutes: i64) -> Timestamp {
+        Timestamp::from_second(1_790_000_000).unwrap() + SignedDuration::from_mins(minutes)
     }
 
     fn viewer(seed: u8, state: ViewerState) -> Viewer {
@@ -338,7 +340,7 @@ mod tests {
             id: ViewerId::from_random(&[seed; 5]),
             label: ViewerLabel::parse(&format!("viewer {seed}")).unwrap(),
             scope: LayoutScope::All,
-            lifetime: Duration::days(90),
+            lifetime: from_days(90),
             refreshing: false,
             created_at: at(i64::from(seed)),
             state,

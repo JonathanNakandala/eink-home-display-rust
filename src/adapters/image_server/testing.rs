@@ -1,6 +1,7 @@
 //! Helpers for the route tests: a server on a free port over a temporary directory.
 
 use chrono_tz::Europe::London;
+use jiff::{SignedDuration, Timestamp};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +25,7 @@ use crate::domain::models::layout::{Layout, LayoutName, Layouts};
 use crate::domain::models::pairing::{Pairing, PairingState, PublicKey};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
+use crate::domain::services::clock::from_days;
 use crate::domain::services::layout_choices::LayoutChoices;
 use crate::domain::services::pairing_store::PairingStore;
 use crate::domain::services::published_images::PublishedImages;
@@ -236,7 +238,7 @@ impl PublishedImages for Faulty {
         &self,
         layout: &LayoutName,
         format: ImageFormat,
-    ) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
+    ) -> anyhow::Result<Option<Timestamp>> {
         anyhow::ensure!(self.cannot_inspect != Some(format), "permission denied");
         self.inner.published_at(layout, format).await
     }
@@ -269,7 +271,7 @@ pub(super) async fn members(displays: &[(&str, PairingState)]) -> Members {
             .await
             .unwrap(),
     );
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     for (name, state) in displays {
         store
             .put(&Pairing::new(
@@ -286,8 +288,8 @@ pub(super) async fn members(displays: &[(&str, PairingState)]) -> Members {
         store,
         Arc::new(SystemClock::new(London)),
         EnrollmentPolicy {
-            certificate_lifetime: chrono::Duration::days(90),
-            retry_after: chrono::Duration::minutes(5),
+            certificate_lifetime: from_days(90),
+            retry_after: SignedDuration::from_mins(5),
             require_channel_binding: false,
         },
     ));
@@ -303,6 +305,6 @@ pub(super) async fn members(displays: &[(&str, PairingState)]) -> Members {
 pub(super) fn enrolled() -> PairingState {
     PairingState::Enrolled {
         serial: "01".to_owned(),
-        not_after: chrono::Utc::now() + chrono::Duration::days(20),
+        not_after: Timestamp::now() + from_days(20),
     }
 }
