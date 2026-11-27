@@ -4,7 +4,7 @@
   "type": "object",
   "properties": {
     "cache": {
-      "description": "Re-creatable files kept between runs, such as a downloaded Chrome.",
+      "description": "Re-creatable files kept between runs, such as the mark of the last render.",
       "$ref": "#/$defs/CacheConfig",
       "default": {
         "directory": "cache"
@@ -139,7 +139,7 @@
       }
     },
     "CacheConfig": {
-      "description": "Where files that can be re-created (a downloaded Chrome, for one) are kept between runs.",
+      "description": "Where files that can be re-created (the mark of the last render, for one) are kept between runs.",
       "type": "object",
       "properties": {
         "directory": {
@@ -379,7 +379,7 @@
           "minimum": 0
         },
         "render_deadline_seconds": {
-          "description": "Fetching the sources and drawing the default layout, which is what makes a run, is abandoned after this long. Leave room for the\nsources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.",
+          "description": "Fetching the sources and drawing the default layout, which is what makes a run, is abandoned after this long. Leave room for the\nsources' timeout plus Chrome (30 s, and a relaunch).",
           "type": "integer",
           "format": "uint32",
           "default": 120,

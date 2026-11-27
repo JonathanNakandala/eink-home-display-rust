@@ -58,4 +58,4 @@ directory = "/var/lib/home-display/pki"     # the certificate authority and the 
 save_directory = "/var/lib/home-display/output"
 
 [cache]
-directory = "/var/lib/home-display/cache"   # a downloaded Chrome, if no installed one is used
+directory = "/var/lib/home-display/cache"   # what can be made again, such as the mark of the last render

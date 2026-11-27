@@ -29,7 +29,7 @@ config = { version = "0.15", features = ["toml"] }
 derive-new = "0.7"
 flate2 = "1.0"
 handlebars = "6.0.0"
-headless_chrome = { version = "1.0.22", features = ["fetch"] }
+headless_chrome = "1.0.22"
 image = "0.25.2"
 log = "0.4.22"
 reqwest = { version = "0.13", features = ["json", "query", "rustls"], default-features = false }

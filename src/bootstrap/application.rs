@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::adapters::departures::DeparturesServiceImpl;
 use crate::adapters::display_image_generator::chrome_render::{
-    ChromeRenderDisplayImageGenerator, ChromeSource, Templates,
+    ChromeRenderDisplayImageGenerator, Templates,
 };
 use crate::adapters::image_display_service::web_screen::WebScreenAdapter;
 use crate::adapters::image_repository::file_store::FileStoreImageRepository;
@@ -12,7 +12,6 @@ use crate::adapters::published_images::DirectoryImages;
 use crate::adapters::weather::WeatherServiceImpl;
 use crate::application::{Application, RenderPolicy};
 use crate::config::application::{ApplicationConfig, LayoutsConfig};
-use crate::config::cache::CachePaths;
 use crate::domain::models::layout::Layouts;
 use crate::domain::services::ImageDisplayService;
 use crate::domain::services::clock::Clock;
@@ -87,9 +86,7 @@ pub fn load_layouts(config: &LayoutsConfig, directory: Option<&Path>) -> anyhow:
 #[allow(clippy::too_many_arguments)]
 pub fn from_config(
     config: &ApplicationConfig,
-    cache: &CachePaths,
     chrome_idle_timeout: Duration,
-    chrome_source: ChromeSource,
     images: Arc<dyn PublishedImages>,
     layouts: LayoutSet,
     credentials: Arc<dyn CredentialSource>,
@@ -105,7 +102,7 @@ pub fn from_config(
 > {
     let mut application = assemble(
         config,
-        ChromeRenderDisplayImageGenerator::new(cache.chrome(), chrome_idle_timeout, chrome_source)
+        ChromeRenderDisplayImageGenerator::new(chrome_idle_timeout)
             .with_templates(layouts.templates),
         setup_display(&config.display, images),
         FileStoreImageRepository::new(config.file_store.save_directory.clone()),

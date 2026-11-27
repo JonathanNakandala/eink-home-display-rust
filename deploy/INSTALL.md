@@ -11,9 +11,12 @@ layouts, monitoring), is in the archive under `deploy/`, and in a package it is 
 - x86-64 with AVX2 (Intel Core from 2013, AMD from 2017): the release is built for it. On anything else, build with
   `cargo build --release` and give `install.sh --bin-dir target/release`.
 - systemd, and a clock that is kept right (`timedatectl set-ntp true`): the schedule and the certificates depend on it.
-- **Chrome**, which draws the pictures. Google Chrome from google.com/chrome (a `.deb` or `.rpm`), or on Fedora
-  `dnf install chromium`. **Not Ubuntu's `chromium` package**: it is a snap, which a service cannot start. Without one the
-  server downloads Chrome into its cache on the first render, which works but needs the network and several hundred MB.
+- **Chrome or Chromium, installed on the machine**, which draws the pictures. Google Chrome from google.com/chrome (a `.deb`
+  or `.rpm`), or on Fedora `dnf install chromium`. **Not Ubuntu's `chromium` package**: it is a snap, which a service cannot
+  start. The server does not download a Chrome of its own (it used to, and `--bundled-chrome` asked for that): without an
+  installed one every render fails, and the log says "No Chrome or Chromium is installed". It looks for `google-chrome-stable`,
+  `google-chrome`, `chromium`, `chromium-browser` and `chrome` on the path; to use one elsewhere, set `CHROME` to its path in
+  the unit (`systemctl edit home-display`).
 - `curl`, for the health check.
 
 `install.sh` checks all of this first (`preflight.sh`, which you can also run on its own) and says what to do about anything.

@@ -6,7 +6,7 @@ use image::GrayImage;
 
 use home_display_server::adapters::clock::SystemClock;
 use home_display_server::adapters::display_image_generator::chrome_render::{
-    ChromeRenderDisplayImageGenerator, ChromeSource, DEFAULT_IDLE_TIMEOUT,
+    ChromeRenderDisplayImageGenerator, DEFAULT_IDLE_TIMEOUT,
 };
 use home_display_server::adapters::image_display_service::quantise::quantise_grey;
 use home_display_server::adapters::published_images::DirectoryImages;
@@ -81,12 +81,8 @@ async fn main() -> Result<()> {
         args.templates_dir.as_deref(),
     )?;
     let layouts = loaded.layouts;
-    let generator = ChromeRenderDisplayImageGenerator::new(
-        cache.chrome(),
-        DEFAULT_IDLE_TIMEOUT,
-        ChromeSource::from(args.bundled_chrome),
-    )
-    .with_templates(loaded.templates);
+    let generator = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT)
+        .with_templates(loaded.templates);
 
     for kind in kinds {
         let name = file_name(kind);

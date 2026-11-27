@@ -10,7 +10,7 @@ use handlebars::Handlebars;
 use headless_chrome::browser::default_executable;
 use headless_chrome::protocol::cdp::Emulation::SetDeviceMetricsOverride;
 use headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption;
-use headless_chrome::{Browser, FetcherOptions, LaunchOptions, Tab};
+use headless_chrome::{Browser, LaunchOptions, Tab};
 use url::Url;
 
 use super::Templates;
@@ -107,16 +107,6 @@ const ICONS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Which Chrome to render with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ChromeSource {
-    /// An installed Chrome if one works, else the pinned download.
-    #[default]
-    PreferSystem,
-    /// Always the pinned download in the cache, so renders don't vary with the host's Chrome.
-    Bundled,
-}
-
 /// Renders the dashboard template in headless Chrome at the display's native
 /// size and returns the screenshot. Reducing it to the panel's colour depth is
 /// the display adapter's job.
@@ -130,10 +120,7 @@ pub struct ChromeRenderDisplayImageGenerator {
 }
 
 struct Inner {
-    /// Where a downloaded Chrome is extracted, and found again on later runs.
-    chrome_install_dir: PathBuf,
     idle_timeout: Duration,
-    source: ChromeSource,
     browser: Mutex<Option<LaunchedBrowser>>,
     /// The process id of the running Chrome, or 0. Kept outside the lock above, which a render in
     /// progress holds, so a stuck one can be stopped from outside (see `AbandonGuard`).
@@ -216,33 +203,39 @@ const WINDOW: (u32, u32) = (3840, 2160);
 /// The longest a Chrome may take to say its version. Where `--version` works it prints and exits at once.
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn find_system_chrome() -> Option<PathBuf> {
-    let path = match default_executable() {
-        Ok(path) => path,
-        Err(reason) => {
-            tracing::info!("No system Chrome found ({reason}); will use a downloaded one");
-            return None;
-        }
-    };
+/// The Chrome or Chromium installed on the machine, which is what draws the pictures: the one the `CHROME` environment variable
+/// names, else the first of the usual names on the path. The program does not download one.
+fn find_chrome() -> anyhow::Result<PathBuf> {
+    let path = default_executable().map_err(|reason| {
+        anyhow::anyhow!(
+            "No Chrome or Chromium is installed ({reason}). Install Google Chrome (or Chromium, but not Ubuntu's, which is a snap), \
+             or set CHROME to the path of one"
+        )
+    })?;
+    check_runs(path)
+}
+
+/// `path` if it can be run, or why it cannot.
+fn check_runs(path: PathBuf) -> anyhow::Result<PathBuf> {
     // `chrome.exe --version` prints nothing on Windows: it starts the browser, a whole one with a window, on the user's own
     // profile, and that does not exit. Asked here it hung every render until the user's Chrome happened to be running (which
     // takes the command line and exits), and otherwise left a Chrome window open on their desktop. So it is not asked. The
     // version is logged when the browser is launched ("Rendering with ..."), and a Chrome that cannot start fails there.
     if cfg!(windows) {
-        tracing::info!("Found system Chrome at {}", path.display());
-        return Some(path);
+        tracing::info!("Found Chrome at {}", path.display());
+        return Ok(path);
     }
     let mut command = Command::new(&path);
     command.arg("--version");
     match output_within(command, VERSION_PROBE_TIMEOUT) {
         Ok(version) => {
-            tracing::info!("Found system Chrome at {}: {version}", path.display());
-            Some(path)
+            tracing::info!("Found Chrome at {}: {version}", path.display());
+            Ok(path)
         }
-        Err(reason) => {
-            tracing::warn!("{} --version {reason}; ignoring it", path.display());
-            None
-        }
+        Err(reason) => Err(anyhow::anyhow!(
+            "Chrome at {} cannot be used: --version {reason}",
+            path.display()
+        )),
     }
 }
 
@@ -288,28 +281,6 @@ const EXPLAIN_TIMEOUT: Duration = Duration::from_secs(8);
 const CHROME_NOISE: &[&str] = &[
     "dbus", "DBus", "ALSA", "udev", "gcm", "GCM", "vaapi", "libva",
 ];
-
-/// The Chrome that was downloaded into `dir` (headless_chrome does not say where it put it): the program called chrome, a few
-/// folders down.
-fn find_downloaded_chrome(dir: &Path) -> Option<PathBuf> {
-    let name = if cfg!(windows) {
-        "chrome.exe"
-    } else {
-        "chrome"
-    };
-    let mut folders = vec![(dir.to_owned(), 0)];
-    while let Some((folder, depth)) = folders.pop() {
-        for entry in std::fs::read_dir(&folder).ok()?.flatten() {
-            let path = entry.path();
-            if path.is_dir() && depth < 3 {
-                folders.push((path, depth + 1));
-            } else if path.file_name().is_some_and(|n| n == name) && path.is_file() {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
 
 /// What `chrome` says when it is run as the server runs it, for the log. Launching reads this and throws it away, so a Chrome that
 /// would not start (a sandbox the system refuses, a library missing) failed with a timeout and no reason.
@@ -402,12 +373,10 @@ fn explain_launch_failure(chrome: &Path, timeout: Duration) -> String {
 }
 
 impl ChromeRenderDisplayImageGenerator {
-    pub fn new(chrome_install_dir: PathBuf, idle_timeout: Duration, source: ChromeSource) -> Self {
+    pub fn new(idle_timeout: Duration) -> Self {
         Self {
             inner: Arc::new(Inner {
-                chrome_install_dir,
                 idle_timeout,
-                source,
                 browser: Mutex::new(None),
                 chrome_pid: AtomicU32::new(0),
             }),
@@ -537,36 +506,19 @@ impl Inner {
     }
 
     fn launch(&self, window: (u32, u32)) -> anyhow::Result<Browser> {
-        let fetcher_options = FetcherOptions::default()
-            .with_allow_download(true)
-            .with_install_dir(Some(self.chrome_install_dir.clone()));
-        let path = match self.source {
-            ChromeSource::PreferSystem => find_system_chrome(),
-            ChromeSource::Bundled => {
-                tracing::info!(
-                    "Using the bundled Chrome in {}",
-                    self.chrome_install_dir.display()
-                );
-                None
-            }
-        };
+        let path = find_chrome()?;
         let launcher_options = LaunchOptions::default_builder()
             .window_size(Some(window))
             .devtools(false)
             .headless(true)
-            // None makes headless_chrome download its pinned revision instead.
-            .path(path.clone())
-            .fetcher_options(fetcher_options)
+            .path(Some(path.clone()))
             .idle_browser_timeout(self.idle_timeout)
             .build()?;
         let browser = match Browser::new(launcher_options) {
             Ok(browser) => browser,
             Err(e) => {
                 // The crate reads what Chrome says on the way out and drops it; the reason is in that.
-                let chrome = path.or_else(|| find_downloaded_chrome(&self.chrome_install_dir));
-                if let Some(chrome) = chrome {
-                    tracing::warn!("{}", explain_launch_failure(&chrome, EXPLAIN_TIMEOUT));
-                }
+                tracing::warn!("{}", explain_launch_failure(&path, EXPLAIN_TIMEOUT));
                 return Err(e).context("Failed to create browser instance");
             }
         };
@@ -671,11 +623,7 @@ mod tests {
     use super::*;
 
     fn html_for(data: &GlanceData) -> String {
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            PathBuf::from("unused"),
-            DEFAULT_IDLE_TIMEOUT,
-            ChromeSource::PreferSystem,
-        );
+        let generator = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT);
         generator
             .render_html(&LayoutName::parse(DASHBOARD).unwrap(), data)
             .unwrap()
@@ -725,13 +673,9 @@ mod tests {
     }
 
     fn page_of(layout: &str, data: &GlanceData) -> String {
-        ChromeRenderDisplayImageGenerator::new(
-            PathBuf::from("unused"),
-            DEFAULT_IDLE_TIMEOUT,
-            ChromeSource::PreferSystem,
-        )
-        .render_html(&LayoutName::parse(layout).unwrap(), data)
-        .unwrap()
+        ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT)
+            .render_html(&LayoutName::parse(layout).unwrap(), data)
+            .unwrap()
     }
 
     #[test]
@@ -767,11 +711,7 @@ mod tests {
 
     #[test]
     fn a_layout_that_does_not_exist_is_an_error() {
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            PathBuf::from("unused"),
-            DEFAULT_IDLE_TIMEOUT,
-            ChromeSource::PreferSystem,
-        );
+        let generator = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT);
         let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
 
         let error = generator
@@ -856,28 +796,23 @@ mod tests {
         assert!(!said.contains("dbus"), "{said}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_installed_chrome_that_will_not_run_is_an_error_and_not_a_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let chrome = failing_chrome(dir.path());
+
+        let error = check_runs(chrome.clone()).unwrap_err().to_string();
+
+        assert!(error.contains(&chrome.display().to_string()), "{error}");
+        assert!(error.contains("cannot be used"), "{error}");
+    }
+
     #[test]
     fn a_chrome_that_cannot_be_run_is_said_to_be_so() {
         let said = explain_launch_failure(Path::new("/nowhere/chrome"), Duration::from_secs(20));
 
         assert!(said.contains("could not be run"), "{said}");
-    }
-
-    #[test]
-    fn a_downloaded_chrome_is_found_in_its_folders() {
-        let name = if cfg!(windows) {
-            "chrome.exe"
-        } else {
-            "chrome"
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let folder = dir.path().join("linux-1095492").join("chrome-linux");
-        std::fs::create_dir_all(&folder).unwrap();
-        std::fs::write(folder.join("chrome_sandbox"), "").unwrap();
-        std::fs::write(folder.join(name), "").unwrap();
-
-        assert_eq!(find_downloaded_chrome(dir.path()), Some(folder.join(name)));
-        assert_eq!(find_downloaded_chrome(&dir.path().join("none")), None);
     }
 
     #[test]
@@ -923,11 +858,7 @@ mod tests {
 
     #[cfg(unix)]
     fn a_stand_in_for_chrome() -> (Arc<Inner>, std::process::Child) {
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            PathBuf::from("unused"),
-            DEFAULT_IDLE_TIMEOUT,
-            ChromeSource::PreferSystem,
-        );
+        let generator = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT);
         let child = std::process::Command::new("sleep")
             .arg("60")
             .spawn()
@@ -973,11 +904,7 @@ mod tests {
 
     #[test]
     fn an_abandoned_render_does_not_launch_a_chrome_for_nobody() {
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            PathBuf::from("unused"),
-            DEFAULT_IDLE_TIMEOUT,
-            ChromeSource::PreferSystem,
-        );
+        let generator = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT);
         let profile = DisplayProfile {
             width: 10,
             height: 10,
@@ -1012,14 +939,10 @@ mod tests {
             DateInfo::new(chrono::Utc::now().with_timezone(&London)),
         );
 
-        let image = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("home_display_test_chrome"),
-            DEFAULT_IDLE_TIMEOUT,
-            ChromeSource::PreferSystem,
-        )
-        .generate(data, &profile, &dashboard())
-        .await
-        .unwrap();
+        let image = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT)
+            .generate(data, &profile, &dashboard())
+            .await
+            .unwrap();
 
         let decoded = image::load_from_memory(&image.data).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (800, 480));
@@ -1049,11 +972,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn one_chrome_draws_pictures_of_different_sizes_each_at_its_own() {
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("home_display_test_chrome"),
-            Duration::from_secs(300),
-            ChromeSource::PreferSystem,
-        );
+        let generator = ChromeRenderDisplayImageGenerator::new(Duration::from_secs(300));
         let sizes = [
             (800, 480),
             (1920, 1080),
@@ -1107,11 +1026,7 @@ mod tests {
             height: 480,
             palette: Palette::Mono,
         };
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("home_display_test_chrome"),
-            Duration::from_secs(300),
-            ChromeSource::PreferSystem,
-        );
+        let generator = ChromeRenderDisplayImageGenerator::new(Duration::from_secs(300));
 
         generator
             .generate(sample_data(), &profile, &dashboard())
@@ -1139,44 +1054,5 @@ mod tests {
             .unwrap();
         let relaunched = kept_pid(&generator).expect("Chrome is kept after relaunch");
         assert_ne!(relaunched, first, "a dead Chrome was replaced");
-    }
-
-    /// Needs network on first run to download Chrome, so run with `--ignored`.
-    #[tokio::test]
-    #[ignore]
-    async fn renders_and_reuses_the_bundled_chrome() {
-        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
-        let profile = DisplayProfile {
-            width: 800,
-            height: 480,
-            palette: Palette::Mono,
-        };
-        let generator = ChromeRenderDisplayImageGenerator::new(
-            std::env::temp_dir().join("home_display_test_chrome"),
-            Duration::from_secs(300),
-            ChromeSource::Bundled,
-        );
-
-        let started = std::time::Instant::now();
-        let image = generator
-            .generate(sample_data(), &profile, &dashboard())
-            .await
-            .unwrap();
-        let decoded = image::load_from_memory(&image.data).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (800, 480));
-        let first = kept_pid(&generator).expect("Chrome is kept after a render");
-
-        let second_started = std::time::Instant::now();
-        generator
-            .generate(sample_data(), &profile, &dashboard())
-            .await
-            .unwrap();
-        assert_eq!(kept_pid(&generator), Some(first), "second render reused it");
-        assert!(
-            second_started.elapsed() < Duration::from_secs(15),
-            "a reused render took {:?} (first took {:?})",
-            second_started.elapsed(),
-            started.elapsed()
-        );
     }
 }
