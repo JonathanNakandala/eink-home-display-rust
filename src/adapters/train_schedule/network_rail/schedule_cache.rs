@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use chrono::{Datelike, NaiveDate};
+use jiff::SignedDuration;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
 use crate::adapters::train_schedule::network_rail::response::{JsonScheduleV1, RecordEnvelope};
@@ -133,7 +134,7 @@ fn resolve_record(
 
 /// Resolves, per train UID, which cached schedule applies on `date` (STP overlay rank +
 /// day-of-week bitmask + validity range), returning already-adjusted passage timestamps.
-pub fn passages_on_date(records: &[CachedScheduleRecord], date: NaiveDate) -> Vec<TrainPassage> {
+pub fn passages_on_date(records: &[CachedScheduleRecord], date: Date) -> Vec<TrainPassage> {
     let interest: HashSet<&str> = records
         .iter()
         .filter(|r| r.minutes_past_midnight.is_some())
@@ -147,9 +148,9 @@ pub fn passages_on_date(records: &[CachedScheduleRecord], date: NaiveDate) -> Ve
         }
     }
 
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let day_of_week = date.weekday().num_days_from_monday() as usize;
-    let midnight = date.and_hms_opt(0, 0, 0).unwrap();
+    let date_str = date.to_string();
+    let day_of_week = date.weekday().to_monday_zero_offset() as usize;
+    let midnight = date.at(0, 0, 0, 0);
 
     let mut out = Vec::new();
     for (uid, recs) in by_uid {
@@ -172,7 +173,7 @@ pub fn passages_on_date(records: &[CachedScheduleRecord], date: NaiveDate) -> Ve
             let total_seconds = (minutes * 60.0).round() as i64;
             out.push(TrainPassage::new(
                 uid.to_owned(),
-                midnight + chrono::Duration::seconds(total_seconds),
+                midnight + SignedDuration::from_secs(total_seconds),
             ));
         }
     }
@@ -236,8 +237,8 @@ mod tests {
         }
     }
 
-    fn wednesday() -> NaiveDate {
-        NaiveDate::from_ymd_opt(2024, 1, 10).unwrap()
+    fn wednesday() -> Date {
+        jiff::civil::date(2024, 1, 10)
     }
 
     #[test]
@@ -264,9 +265,8 @@ mod tests {
         let passages = passages_on_date(&records, wednesday());
 
         assert_that!(passages).has_length(1);
-        assert_that!(passages[0].scheduled_at).is_equal_to(
-            wednesday().and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::minutes(1100),
-        );
+        assert_that!(passages[0].scheduled_at)
+            .is_equal_to(wednesday().at(0, 0, 0, 0) + SignedDuration::from_mins(1100));
     }
 
     #[test]

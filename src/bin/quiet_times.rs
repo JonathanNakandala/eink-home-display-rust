@@ -1,6 +1,7 @@
 use anyhow::Context;
-use chrono::{Duration, NaiveDate, NaiveTime};
 use clap::Parser;
+use jiff::SignedDuration;
+use jiff::civil::{Date, Time};
 
 use home_display_server::adapters::train_schedule::network_rail::cif_feed;
 use home_display_server::adapters::train_schedule::network_rail::network_rail_train_schedule_service::NetworkRailTrainScheduleServiceAdapter;
@@ -61,10 +62,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let start = match &args.start {
-        Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").context("Invalid --start date")?,
-        None => chrono::Utc::now()
-            .with_timezone(&home_display_server::adapters::zone::host())
-            .date_naive(),
+        Some(s) => Date::strptime("%Y-%m-%d", s).context("Invalid --start date")?,
+        None => {
+            use chrono::Datelike;
+            let today = chrono::Utc::now()
+                .with_timezone(&home_display_server::adapters::zone::host())
+                .date_naive();
+            jiff::civil::date(today.year() as i16, today.month() as i8, today.day() as i8)
+        }
     };
 
     let app = QuietTimesApplication::new(
@@ -74,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Only affects which gaps are worth listing individually; the day's single
     // largest gap is always reported regardless of this threshold.
-    let min_gap = Duration::minutes(config.rules.min_gap_minutes);
+    let min_gap = SignedDuration::from_mins(config.rules.min_gap_minutes);
 
     let report = app.run(start, args.days).await?;
     print_chronological(&report, min_gap);
@@ -92,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
 
 fn build_rules(config: &QuietTimesRulesConfig) -> anyhow::Result<QuietTimesRules> {
     Ok(QuietTimesRules::new(
-        Duration::minutes(config.buffer_minutes),
+        SignedDuration::from_mins(config.buffer_minutes),
         parse_window(&config.weekday_window)?,
         parse_window(&config.weekend_window)?,
         config.use_time_windows,
@@ -101,18 +106,18 @@ fn build_rules(config: &QuietTimesRulesConfig) -> anyhow::Result<QuietTimesRules
 
 fn parse_window((start, end): &(String, String)) -> anyhow::Result<TimeWindow> {
     Ok(TimeWindow {
-        start: NaiveTime::parse_from_str(start, "%H:%M").context("Invalid window start time")?,
-        end: NaiveTime::parse_from_str(end, "%H:%M").context("Invalid window end time")?,
+        start: Time::strptime("%H:%M", start).context("Invalid window start time")?,
+        end: Time::strptime("%H:%M", end).context("Invalid window end time")?,
     })
 }
 
-fn print_chronological(report: &QuietTimesReport, min_gap: Duration) {
+fn print_chronological(report: &QuietTimesReport, min_gap: SignedDuration) {
     for day in &report.days {
         println!(
             "\n{}  {}-{}  trains: {}",
-            day.date.format("%a %d %b"),
-            day.window_start.format("%H:%M"),
-            day.window_end.format("%H:%M"),
+            day.date.strftime("%a %d %b"),
+            day.window_start.strftime("%H:%M"),
+            day.window_end.strftime("%H:%M"),
             day.train_count
         );
         let notable_gaps: Vec<_> = day
@@ -121,7 +126,7 @@ fn print_chronological(report: &QuietTimesReport, min_gap: Duration) {
             .filter(|g| g.duration() >= min_gap)
             .collect();
         if notable_gaps.is_empty() {
-            println!("  no gaps of {} min or more", min_gap.num_minutes());
+            println!("  no gaps of {} min or more", min_gap.as_mins());
         }
         for gap in notable_gaps {
             println!("  {}", format_gap(gap));
@@ -132,20 +137,20 @@ fn print_chronological(report: &QuietTimesReport, min_gap: Duration) {
     }
 }
 
-fn print_longest_gaps_table(gaps: &[(NaiveDate, Gap)]) {
+fn print_longest_gaps_table(gaps: &[(Date, Gap)]) {
     println!("\nLongest gaps:");
     if gaps.is_empty() {
         println!("  none found");
     }
     for (date, gap) in gaps {
-        println!("  {}  {}", date.format("%a %d %b"), format_gap(gap));
+        println!("  {}  {}", date.strftime("%a %d %b"), format_gap(gap));
     }
 }
 
 fn print_top_gaps_per_day(report: &QuietTimesReport, limit: usize) {
     println!("\nTop {} gaps per day:", limit);
     for day in &report.days {
-        println!("\n{}", day.date.format("%a %d %b"));
+        println!("\n{}", day.date.strftime("%a %d %b"));
         let top = day.longest_gaps(limit);
         if top.is_empty() {
             println!("  no gaps found");
@@ -159,8 +164,8 @@ fn print_top_gaps_per_day(report: &QuietTimesReport, limit: usize) {
 fn format_gap(gap: &Gap) -> String {
     format!(
         "{} - {}  ({} min)",
-        gap.start.format("%H:%M"),
-        gap.end.format("%H:%M"),
-        gap.duration().num_minutes()
+        gap.start.strftime("%H:%M"),
+        gap.end.strftime("%H:%M"),
+        gap.duration().as_mins()
     )
 }
