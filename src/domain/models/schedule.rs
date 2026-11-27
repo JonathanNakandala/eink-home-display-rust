@@ -44,7 +44,7 @@ impl Schedule {
     }
 
     pub fn parse_every(period: &str) -> anyhow::Result<Self> {
-        let period = humantime::parse_duration(period)
+        let period = parse_interval(period)
             .with_context(|| format!("Invalid interval {period:?}, expected e.g. 10m or 90s"))?;
         anyhow::ensure!(!period.is_zero(), "The interval must be longer than zero");
         Ok(Self::Every(period))
@@ -84,7 +84,7 @@ impl Schedule {
                 .iter()
                 .map(|cron| format!("{}  {}", cron.as_str(), cron.describe()))
                 .collect(),
-            Self::Every(period) => vec![format!("Every {}", humantime::format_duration(*period))],
+            Self::Every(period) => vec![format!("Every {}", format_interval(*period))],
         }
     }
 
@@ -119,6 +119,23 @@ impl Schedule {
                 Ok(at)
             })
             .collect()
+    }
+}
+
+/// A length of time written as people write it: `90s`, `10m`, `1h 30m`, `2 days`. Months and years are not lengths
+/// (they differ from one to the next), so they are not accepted. Nothing negative either.
+pub fn parse_interval(text: &str) -> anyhow::Result<Duration> {
+    let span: jiff::Span = text.trim().parse()?;
+    let length = span.to_duration(jiff::SpanRelativeTo::days_are_24_hours())?;
+    Duration::try_from(length).map_err(|_| anyhow!("An interval can't be negative"))
+}
+
+/// A length of time as `parse_interval` reads it: `1m 30s`.
+pub fn format_interval(period: Duration) -> String {
+    match jiff::SignedDuration::try_from(period) {
+        Ok(length) => format!("{length:#}"),
+        // Too long for a signed duration; the plain form is still true.
+        Err(_) => format!("{period:?}"),
     }
 }
 
@@ -158,13 +175,27 @@ mod tests {
 
     #[test]
     fn an_interval_too_long_to_add_is_an_error_not_a_panic() {
-        let schedule = Schedule::parse_every("999999999y").unwrap();
-        assert!(schedule.next_after(at(8, 0, 0)).is_err());
         assert!(
             Schedule::Every(Duration::MAX)
                 .next_after(at(8, 0, 0))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn intervals_are_read_as_people_write_them() {
+        let secs = |text| parse_interval(text).unwrap().as_secs();
+        assert_eq!(secs("90s"), 90);
+        assert_eq!(secs("10m"), 600);
+        assert_eq!(secs("1h 30m"), 5400);
+        assert_eq!(secs("2 days"), 2 * 24 * 3600);
+        assert_eq!(parse_interval("1ms").unwrap(), Duration::from_millis(1));
+        for bad in ["10", "-5m", "1y", "2mo", ""] {
+            assert!(
+                parse_interval(bad).is_err(),
+                "{bad:?} should not be an interval"
+            );
+        }
     }
 
     #[test]
