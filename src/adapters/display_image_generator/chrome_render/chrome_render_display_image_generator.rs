@@ -22,6 +22,12 @@ use crate::domain::services::display_image_generator::DisplayImageGenerator;
 
 const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How many tabs one Chrome opens before it is replaced by a fresh one.
+///
+/// headless_chrome starts a thread for each tab and does not end it when the tab is closed, only when the whole browser is
+/// dropped. A Chrome kept for days therefore piled up a thread for every tab, until the service could start no more.
+const TABS_PER_CHROME: u32 = 50;
+
 /// How long an unused Chrome stays connected. Long-running callers should pass
 /// something longer than the gap between renders, or every render relaunches.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -194,6 +200,13 @@ fn kill_process(pid: u32) {
 
 struct LaunchedBrowser {
     browser: Browser,
+    /// How many tabs it has been given, which is how many threads it holds on to (see `TABS_PER_CHROME`).
+    tabs: u32,
+}
+
+/// Whether a Chrome that has opened `tabs` tabs should be replaced before it opens another.
+fn worn_out(tabs: u32) -> bool {
+    tabs >= TABS_PER_CHROME
 }
 
 /// The window Chrome is launched with: as large as any output is drawn at, so that the one Chrome serves them all. A tab's
@@ -477,7 +490,21 @@ impl Inner {
     ) -> anyhow::Result<Vec<u8>> {
         let mut slot = self.browser.lock().unwrap_or_else(|e| e.into_inner());
 
-        if let Some(launched) = slot.as_ref() {
+        if slot
+            .as_ref()
+            .is_some_and(|launched| worn_out(launched.tabs))
+        {
+            tracing::info!(
+                tabs = TABS_PER_CHROME,
+                "Chrome has opened its share of tabs; replacing it"
+            );
+            // Dropping it ends the threads its tabs left behind.
+            *slot = None;
+            self.chrome_pid.store(0, Ordering::SeqCst);
+        }
+
+        if let Some(launched) = slot.as_mut() {
+            launched.tabs += 1;
             match capture_in_new_tab(&launched.browser, page, profile) {
                 Ok(png) => return Ok(png),
                 Err(e) => {
@@ -498,7 +525,7 @@ impl Inner {
             .store(browser.get_process_id().unwrap_or(0), Ordering::SeqCst);
         match capture_in_new_tab(&browser, page, profile) {
             Ok(png) => {
-                *slot = Some(LaunchedBrowser { browser });
+                *slot = Some(LaunchedBrowser { browser, tabs: 1 });
                 Ok(png)
             }
             Err(e) => {
@@ -861,6 +888,14 @@ mod tests {
         );
 
         assert!(result.unwrap_err().contains("could not be run"));
+    }
+
+    #[test]
+    fn a_chrome_is_replaced_once_it_has_opened_its_share_of_tabs() {
+        assert!(!worn_out(0));
+        assert!(!worn_out(TABS_PER_CHROME - 1));
+        assert!(worn_out(TABS_PER_CHROME));
+        assert!(worn_out(TABS_PER_CHROME + 1));
     }
 
     #[test]
