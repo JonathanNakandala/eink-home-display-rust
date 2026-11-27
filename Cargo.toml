@@ -50,7 +50,7 @@ schemars = "1"
 toml = "1"
 croner = "5"
 humantime = "2.4.0"
-mdns-sd = "0.21.4"
+mdns-sd = "0.22"
 if-addrs = "0.15"
 socket2 = { version = "0.6", features = ["all"] }
 httpdate = "1.0.3"
