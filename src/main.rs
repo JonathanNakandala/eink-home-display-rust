@@ -5,9 +5,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use home_display_server::adapters::clock::SystemClock;
-use home_display_server::adapters::display_image_generator::chrome_render::{
-    ChromeSource, DEFAULT_IDLE_TIMEOUT,
-};
+use home_display_server::adapters::display_image_generator::chrome_render::DEFAULT_IDLE_TIMEOUT;
 use home_display_server::adapters::image_server::{Handles, ServerSettings, router};
 use home_display_server::adapters::published_images::DirectoryImages;
 use home_display_server::application::devices::DeviceBoard;
@@ -30,7 +28,7 @@ const STOP_WAIT: Duration = Duration::from_secs(5);
 fn main() -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let result = runtime.block_on(run());
-    // A render may be inside a blocking call that nothing can interrupt: Chrome being downloaded or started, which takes up to 30 s.
+    // A render may be inside a blocking call that nothing can interrupt: Chrome being started, which takes up to 30 s.
     // Dropping the runtime, as `#[tokio::main]` does, waits for every such call however long it takes, and a stop then ran out
     // the unit's time and was killed. This waits a few seconds and goes: what is left is a thread, and ending the process ends it
     // (and systemd ends any Chrome it left, which it does by the whole cgroup).
@@ -66,7 +64,6 @@ async fn run() -> Result<()> {
             .unwrap_or_else(|| config.cache.directory.clone()),
     );
     cache.ensure_exists()?;
-    let chrome_source = ChromeSource::from(args.bundled_chrome);
     let zone = bootstrap::resolve_zone(&config.location)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(zone));
 
@@ -94,9 +91,7 @@ async fn run() -> Result<()> {
     let Some(schedule) = args.schedule(configured)? else {
         return bootstrap::from_config(
             &config,
-            &cache,
             DEFAULT_IDLE_TIMEOUT,
-            chrome_source,
             Arc::new(DirectoryImages::new(config.server.directory.clone())),
             layouts,
             credentials,
@@ -161,9 +156,7 @@ async fn run() -> Result<()> {
     // Built once so the Chrome it launches is kept between runs.
     let app = bootstrap::from_config(
         &config,
-        &cache,
         PERIODIC_IDLE_TIMEOUT,
-        chrome_source,
         images.clone(),
         layouts,
         credentials.clone(),

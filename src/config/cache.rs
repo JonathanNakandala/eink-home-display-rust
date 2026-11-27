@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_CACHE_DIR: &str = "cache";
 
-/// Where files that can be re-created (a downloaded Chrome, for one) are kept between runs.
+/// Where files that can be re-created (the mark of the last render, for one) are kept between runs.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CacheConfig {
     /// Relative paths are resolved against the working directory.
@@ -41,24 +41,15 @@ impl CachePaths {
         &self.root
     }
 
-    /// Where a downloaded Chrome is extracted.
-    pub fn chrome(&self) -> PathBuf {
-        self.root.join("chrome")
-    }
-
     /// Touched whenever a render starts, so a restarted process knows how recently one was attempted.
     pub fn render_attempt(&self) -> PathBuf {
         self.root.join("last_render_attempt")
     }
 
-    /// Creates the cache directory and its sub-folders if missing.
+    /// Creates the cache directory if missing.
     pub fn ensure_exists(&self) -> anyhow::Result<()> {
-        {
-            let dir = self.chrome();
-            std::fs::create_dir_all(&dir)
-                .with_context(|| format!("Failed to create cache directory {}", dir.display()))?;
-        }
-        Ok(())
+        std::fs::create_dir_all(&self.root)
+            .with_context(|| format!("Failed to create cache directory {}", self.root.display()))
     }
 }
 
@@ -85,6 +76,6 @@ mod tests {
         paths.ensure_exists().unwrap();
         paths.ensure_exists().unwrap(); // idempotent
 
-        assert!(paths.chrome().is_dir());
+        assert!(paths.root().is_dir());
     }
 }

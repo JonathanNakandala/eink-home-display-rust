@@ -26,7 +26,7 @@ pub struct ApplicationConfig {
     pub providers: ProvidersConfig,
     pub location: LocationConfig,
     pub file_store: FileStoreConfig,
-    /// Re-creatable files kept between runs, such as a downloaded Chrome.
+    /// Re-creatable files kept between runs, such as the mark of the last render.
     #[serde(default)]
     pub cache: CacheConfig,
     pub display: DisplayConfig,
@@ -168,7 +168,7 @@ pub struct LimitsConfig {
     #[serde(default = "default_source_timeout")]
     pub source_timeout_seconds: u32,
     /// Fetching the sources and drawing the default layout, which is what makes a run, is abandoned after this long. Leave room for the
-    /// sources' timeout plus Chrome (30 s, and a relaunch), and for a first-run Chrome download.
+    /// sources' timeout plus Chrome (30 s, and a relaunch).
     #[serde(default = "default_render_deadline")]
     pub render_deadline_seconds: u32,
     /// Each layout after the default has this long to be drawn and published. A layout that overruns is reported (the

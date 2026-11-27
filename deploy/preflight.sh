@@ -56,9 +56,9 @@ for name in google-chrome-stable google-chrome chromium chromium-browser chrome;
     if have "$name"; then chrome=$(command -v "$name"); break; fi
 done
 if [ -z "$chrome" ]; then
-    warn "no Chrome or Chromium: the server will download one into its cache on the first render (needs the network, and several hundred MB). Better to install one: Google Chrome from google.com/chrome, or on Fedora: dnf install chromium"
+    fail "no Chrome or Chromium: the server draws the pictures with an installed one and does not download one, so it cannot render without. Install Google Chrome from google.com/chrome (a .deb or .rpm), or on Fedora: dnf install chromium"
 elif [[ "$(readlink -f "$chrome")" == */snap/* ]] || { have snap && snap list chromium > /dev/null 2>&1; }; then
-    warn "Chromium here is a snap ($chrome), which a service with no login cannot start under the sandbox the unit sets: install Google Chrome from google.com/chrome instead, or give --bundled-chrome in the unit to use the download"
+    fail "Chromium here is a snap ($chrome), which a service with no login cannot start under the sandbox the unit sets, and the server does not download one of its own: install Google Chrome from google.com/chrome instead"
 else
     ok "Chrome: $chrome"
 fi

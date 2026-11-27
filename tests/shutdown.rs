@@ -1,6 +1,6 @@
 //! The real server, stopped while a render is stuck in something that cannot be cancelled.
 //!
-//! A render starts Chrome, or downloads it, in a blocking call that nothing can interrupt, and takes up to 30 s. A stop used to wait
+//! A render starts Chrome in a blocking call that nothing can interrupt, and takes up to 30 s. A stop used to wait
 //! for it to end (the runtime waits for every blocking call when it is dropped), which outlasted the unit's TimeoutStopSec, so
 //! systemd killed the program and called the stop a failure. It now goes within a few seconds.
 
