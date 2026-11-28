@@ -16,6 +16,14 @@
       "draft": true,
       "prerelease": false,
       "exclude-paths": ["esphome"],
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance Improvements" },
+        { "type": "revert", "section": "Reverts" },
+        { "type": "build", "section": "Build and Dependencies" },
+        { "type": "refactor", "section": "Code Refactoring" }
+      ],
       "extra-files": [
         { "type": "json", "path": "config/openapi.json", "jsonpath": "$.info.version" },
         { "type": "json", "path": "config/admin-openapi.json", "jsonpath": "$.info.version" }
