@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.2](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-server-v0.3.1...home-display-server-v0.3.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* Replace the kept Chrome after 50 tabs so its threads do not pile up ([07d5554](https://github.com/JonathanNakandala/eink-home-display-rust/commit/07d5554f19aa1e5a0b8b4de9697b0c3b9635fc10))
+
+
+### Build and Dependencies
+
+* Build only the image formats used, which drops paste ([425419f](https://github.com/JonathanNakandala/eink-home-display-rust/commit/425419f87b0a992a5a3eab01ed27119693a8529e))
+* Drop headless_chrome's fetch feature, so Chrome must be installed ([845b051](https://github.com/JonathanNakandala/eink-home-display-rust/commit/845b051feba139b7814e21b06c9956021baad61d))
+* Drop the advisory ignore for paste, which is no longer built ([819222c](https://github.com/JonathanNakandala/eink-home-display-rust/commit/819222cf2426477a0f18c7d3a8b633912b02f921))
+* Drop the unused trait-variant dependency ([1415193](https://github.com/JonathanNakandala/eink-home-display-rust/commit/1415193f736978d761e00ee121a05d584339aa5c))
+* Remove chrono, chrono-tz and iana-time-zone ([8d7346d](https://github.com/JonathanNakandala/eink-home-display-rust/commit/8d7346d277310598c154bdadca67f3e91b47f75f))
+* Replace humantime with jiff for reading and showing intervals ([f9d104b](https://github.com/JonathanNakandala/eink-home-display-rust/commit/f9d104b8782b0dca028bd694f2819982675ca629))
+* Show build and refactor commits in the server's changelog ([0b54af4](https://github.com/JonathanNakandala/eink-home-display-rust/commit/0b54af4987d18b6feeaf2d365e83e04c3feea025))
+* Update croner to 5 and jsonschema to 0.63 ([557c670](https://github.com/JonathanNakandala/eink-home-display-rust/commit/557c670864ec1a35d6c1d0933f20a969c9298dc4))
+* Update mdns-sd to 0.22 ([88de440](https://github.com/JonathanNakandala/eink-home-display-rust/commit/88de4406d9a42f8610e487a04e6b5dcd36988f7a))
+* Update qrcode to 0.15, with its std feature ([3ee542f](https://github.com/JonathanNakandala/eink-home-display-rust/commit/3ee542f0cd2497e8f80a0db6c690860cc5d54903))
+* Update the locked dependencies to their latest compatible versions ([9a248a2](https://github.com/JonathanNakandala/eink-home-display-rust/commit/9a248a207f373224ebf72d5b176a556fab024589))
+
+
+### Code Refactoring
+
+* Use jiff for the clock and the server's timezone ([0583a47](https://github.com/JonathanNakandala/eink-home-display-rust/commit/0583a4775321e344dde6d40f2738c3afdb0a497c))
+* Use jiff for the dates and times of the quiet-times report ([6c95c15](https://github.com/JonathanNakandala/eink-home-display-rust/commit/6c95c152149dc95bd9496f9029a9b381af0ff991))
+* Use jiff for the moments certificates, pairings and viewers are kept by ([73c6ea7](https://github.com/JonathanNakandala/eink-home-display-rust/commit/73c6ea71c1c125cf7e8a9e83e3139c302ae8e647))
+
 ## [0.3.1](https://github.com/JonathanNakandala/eink-home-display-rust/compare/home-display-server-v0.3.0...home-display-server-v0.3.1) (2026-10-25)
 
 
