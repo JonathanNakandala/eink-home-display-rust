@@ -5,7 +5,10 @@
 [advisories]
 version = 2
 # Known vulnerabilities and unmaintained crates fail the check. What is ignored is here with the reason, so that it is looked at again.
-ignore = []
+ignore = [
+    # paste is a macro crate (no code at run time) that is no longer maintained; nothing here chooses it, and no fork has taken its place.
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained macro crate pulled in by a dependency; no replacement yet" },
+]
 
 [sources]
 # Crates from crates.io only: nothing from a git repository or another registry, which no advisory database watches.
