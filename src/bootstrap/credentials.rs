@@ -28,14 +28,14 @@ pub fn report_missing_keys(config: &ApplicationConfig, credentials: &Credentials
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Tz;
+    use jiff::tz::TimeZone;
 
     use super::*;
     use crate::adapters::clock::SystemClock;
     use crate::domain::models::credential::CredentialName;
 
     fn clock() -> Arc<dyn Clock> {
-        Arc::new(SystemClock::new(Tz::UTC))
+        Arc::new(SystemClock::new(TimeZone::UTC))
     }
 
     #[test]

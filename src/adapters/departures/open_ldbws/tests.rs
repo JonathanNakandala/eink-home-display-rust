@@ -1,17 +1,15 @@
-use std::sync::Arc;
-
-use chrono::{DateTime, TimeZone};
-use chrono_tz::Europe::London;
-use chrono_tz::Tz;
 use httpmock::prelude::*;
 use speculoos::prelude::*;
+use std::sync::Arc;
 
 use crate::adapters::departures::open_ldbws::open_ldbws_departures_service::OpenLdbwsDeparturesServiceAdapter;
 use crate::domain::models::credential::CredentialName;
 use crate::domain::models::departures::{DepartureService, DepartureStatus, Departures};
 use crate::domain::models::source_error::SourceError;
+use crate::domain::services::clock::{local, london, zone};
 use crate::domain::services::credential_source::{CredentialSource, FixedCredentials};
 use crate::domain::services::departures_service::DeparturesService;
+use jiff::{SignedDuration, ZonedDateTime};
 
 fn fixed_key() -> Arc<dyn CredentialSource> {
     Arc::new(FixedCredentials::none().with(CredentialName::OpenLdbws, "apikey"))
@@ -68,8 +66,8 @@ const SAMPLE_RESPONSE: &str = r#"{
 }"#;
 
 /// The sample board was generated at 18:00.
-fn now() -> DateTime<Tz> {
-    London.with_ymd_and_hms(2024, 1, 10, 18, 0, 0).unwrap()
+fn now() -> ZonedDateTime {
+    local(&london(), 2024, 1, 10, 18, 0, 0)
 }
 
 #[tokio::test]
@@ -184,8 +182,6 @@ async fn caps_the_time_offset_at_what_the_api_accepts() {
 
 #[tokio::test]
 async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
-    use chrono_tz::Australia::Sydney;
-
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method(GET).path("/GetArrDepBoardWithDetails/HRN");
@@ -204,8 +200,11 @@ async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
 
     // 18:00 in London is 05:00 the next morning in Sydney (UTC+11 in January). The board's times are UK times:
     // read as the display's own, "18:04" would be 13 hours away and show as 18:04 on a clock that says 05:00.
-    let in_sydney = now().with_timezone(&Sydney);
-    let departures = under_test.get_departures(4, in_sydney).await.unwrap();
+    let in_sydney = now().with_time_zone(zone("Australia/Sydney"));
+    let departures = under_test
+        .get_departures(4, in_sydney.clone())
+        .await
+        .unwrap();
 
     assert_that(&departures).is_equal_to(Departures::new(
         "Hornsey".to_owned(),
@@ -235,8 +234,8 @@ async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
     ));
 
     // Cached, then shown four minutes later: the first is due, and the rest count down from the same moments.
-    let later = in_sydney + chrono::Duration::minutes(4);
-    let again = departures.as_of(later);
+    let later = &in_sydney + SignedDuration::from_mins(4);
+    let again = departures.as_of(later.clone());
     assert_eq!(
         again
             .services
@@ -249,7 +248,7 @@ async fn a_uk_board_is_read_on_the_uk_clock_and_shown_on_the_displays() {
     // A minute on, the 05:04 has gone.
     assert_eq!(
         departures
-            .as_of(later + chrono::Duration::minutes(1))
+            .as_of(&later + SignedDuration::from_mins(1))
             .services
             .len(),
         2

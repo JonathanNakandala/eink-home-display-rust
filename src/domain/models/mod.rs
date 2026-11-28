@@ -1,5 +1,3 @@
-use chrono::{DateTime, Duration, Timelike};
-use chrono_tz::Tz;
 use serde::Serialize;
 
 use crate::domain::models::air_quality::AirQuality;
@@ -9,6 +7,7 @@ use crate::domain::models::weather::{
     PrecipitationKind, PrecipitationOutlook, PrecipitationSlot, SunTimes, UvIndex,
     WeatherCondition, WeatherInformation,
 };
+use jiff::{SignedDuration, ZonedDateTime};
 
 pub mod air_quality;
 pub mod arrival;
@@ -69,7 +68,7 @@ impl DepartureBoardData {
         name: String,
         station: String,
         services: Vec<DepartureService>,
-        age: Duration,
+        age: SignedDuration,
     ) -> Self {
         Self {
             age: format_age(age),
@@ -99,11 +98,11 @@ pub struct DateInfo {
 }
 
 impl DateInfo {
-    pub fn new(now: DateTime<Tz>) -> Self {
+    pub fn new(now: ZonedDateTime) -> Self {
         Self {
-            current_time: now.format("%H:%M").to_string(),
-            current_day: now.format("%a").to_string(),
-            current_date: now.format("%-d %b").to_string(),
+            current_time: now.strftime("%H:%M").to_string(),
+            current_day: now.strftime("%a").to_string(),
+            current_date: now.strftime("%-d %b").to_string(),
         }
     }
 }
@@ -147,7 +146,7 @@ impl GlanceData {
     }
 
     /// The weather is from `age` ago.
-    pub fn with_weather_age(mut self, age: Duration) -> Self {
+    pub fn with_weather_age(mut self, age: SignedDuration) -> Self {
         self.weather_age = format_age(age);
         self
     }
@@ -166,10 +165,10 @@ impl GlanceData {
 impl GlanceData {
     /// The sample with some sources failed, to preview how that looks: the first board and the
     /// weather are from earlier fetches, and the last board is unavailable.
-    pub fn sample_degraded(now: DateTime<Tz>) -> Self {
+    pub fn sample_degraded(now: ZonedDateTime) -> Self {
         let mut data = Self::sample(now);
         if let Some(first) = data.departures.first_mut() {
-            first.age = format_age(Duration::minutes(8));
+            first.age = format_age(SignedDuration::from_mins(8));
         }
         if let Some(last) = data.departures.pop() {
             data.departures
@@ -180,17 +179,17 @@ impl GlanceData {
             .iter()
             .map(|board| 1 + board.services.len().max(1))
             .sum();
-        data.with_weather_age(Duration::minutes(40))
+        data.with_weather_age(SignedDuration::from_mins(40))
     }
 
     /// Made-up but representative data (on time, delayed, cancelled and live
     /// services), timed relative to `now`, for previewing the layout offline.
     /// The first service on each board leaves after the journey to it: 5 minutes
     /// to Hornsey and 15 to Turnpike Lane.
-    pub fn sample(now: DateTime<Tz>) -> Self {
+    pub fn sample(now: ZonedDateTime) -> Self {
         let at = |minutes: i64| {
-            (now + Duration::minutes(minutes))
-                .format("%H:%M")
+            (now.clone() + SignedDuration::from_mins(minutes))
+                .strftime("%H:%M")
                 .to_string()
         };
         let timetabled = |minutes: i64, destination: &str, status, expected: Option<i64>| {
@@ -213,16 +212,16 @@ impl GlanceData {
             )
         };
         // Dry for the first three quarters of an hour, then a shower.
-        let local = now.naive_local();
+        let local = now.datetime();
         let quarter = local
-            - Duration::minutes(local.minute() as i64 % 15)
-            - Duration::seconds(local.second() as i64);
+            - SignedDuration::from_mins(local.minute() as i64 % 15)
+            - SignedDuration::from_secs(local.second() as i64);
         let showers = [0.0, 0.0, 0.0, 0.4, 1.2, 2.0, 1.0, 0.3]
             .iter()
             .enumerate()
             .map(|(i, rate)| {
                 PrecipitationSlot::new(
-                    quarter + Duration::minutes(15 * i as i64),
+                    quarter + SignedDuration::from_mins(15 * i as i64),
                     *rate,
                     0.0,
                     PrecipitationKind::Rain,
@@ -236,8 +235,8 @@ impl GlanceData {
                     .with_uv_index(Some(UvIndex::new(6.0)))
                     .with_feels_like(Some(9.0))
                     .with_sun(Some(SunTimes::new(
-                        local.date().and_hms_opt(6, 51, 0).unwrap(),
-                        local.date().and_hms_opt(18, 29, 0).unwrap(),
+                        local.date().at(6, 51, 0, 0),
+                        local.date().at(18, 29, 0, 0),
                     )))
                     .with_air_quality(AirQuality::new(
                         Some(62.0),

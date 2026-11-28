@@ -349,7 +349,9 @@ mod api_description {
     use super::testing::{publish, set_age, start, start_with_status};
     use super::*;
     use crate::application::status::Status;
+    use crate::domain::services::clock::{local, london};
     use crate::domain::services::render_observer::RenderObserver;
+    use jiff::{Timestamp, ZonedDateTime};
 
     fn described() -> Value {
         serde_json::from_str(&openapi_json()).unwrap()
@@ -442,11 +444,8 @@ mod api_description {
         crate::adapters::api_doc_testing::problems(&described(), name, instance)
     }
 
-    fn at(hour: u32) -> chrono::DateTime<chrono_tz::Tz> {
-        use chrono::TimeZone;
-        chrono_tz::Europe::London
-            .with_ymd_and_hms(2026, 10, 8, hour, 0, 0)
-            .unwrap()
+    fn at(hour: u32) -> ZonedDateTime {
+        local(&london(), 2026, 10, 8, hour as i8, 0, 0)
     }
 
     /// A status with everything filled in: every optional field present, every kind of source, a display that
@@ -629,7 +628,7 @@ mod api_description {
         let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         status.render_succeeded(
-            chrono::Utc::now().with_timezone(&chrono_tz::Europe::London),
+            Timestamp::now().to_zoned_datetime(london()),
             &crate::domain::models::render_report::RenderReport {
                 sources: vec![crate::domain::models::render_report::SourceReport {
                     name: "weather".to_owned(),

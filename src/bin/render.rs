@@ -22,6 +22,8 @@ use home_display_server::domain::models::location::Location;
 use home_display_server::domain::services::display_image_generator::DisplayImageGenerator;
 use home_display_server::domain::services::image_display_service::ImageDisplayService;
 use home_display_server::domain::services::image_repository::ImageRepository;
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 
 /// Renders every layout to PNG files without touching any display, one set per display type.
 #[tokio::main]
@@ -60,8 +62,10 @@ async fn main() -> Result<()> {
 
     let data = match (&config, args.live) {
         (Some(config), true) => fetch_live(config, zone).await?,
-        _ if args.degraded => GlanceData::sample_degraded(chrono::Utc::now().with_timezone(&zone)),
-        _ => GlanceData::sample(chrono::Utc::now().with_timezone(&zone)),
+        _ if args.degraded => {
+            GlanceData::sample_degraded(Timestamp::now().to_zoned_datetime(zone.clone()))
+        }
+        _ => GlanceData::sample(Timestamp::now().to_zoned_datetime(zone.clone())),
     };
 
     std::fs::create_dir_all(&args.output_dir)
@@ -140,7 +144,7 @@ fn file_name(kind: DisplayKind) -> &'static str {
     }
 }
 
-async fn fetch_live(config: &ApplicationConfig, zone: chrono_tz::Tz) -> Result<GlanceData> {
+async fn fetch_live(config: &ApplicationConfig, zone: TimeZone) -> Result<GlanceData> {
     // A live fetch uses the weather settings, so those are checked; the sample render never does.
     config
         .weather

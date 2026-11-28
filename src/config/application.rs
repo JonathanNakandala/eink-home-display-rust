@@ -1,10 +1,8 @@
-use std::path::{Path, PathBuf};
-
-use chrono::{NaiveTime, Weekday};
 use config::{Config, ConfigError, Environment, File};
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 use crate::config::cache::CacheConfig;
 use crate::config::departures::{DepartureBoardConfig, DepartureSource, ProvidersConfig};
@@ -14,6 +12,9 @@ use crate::config::weather::WeatherConfig;
 use crate::domain::models::credential::CredentialName;
 use crate::domain::models::display::{Dither, ImageFormat};
 use crate::domain::models::layout::{LayoutName, LayoutRule, LayoutSchedule};
+use jiff::SignedDuration;
+use jiff::civil::{Time, Weekday};
+use jiff::tz::TimeZone;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ApplicationConfig {
@@ -97,6 +98,20 @@ impl LayoutsConfig {
     }
 }
 
+/// A day of the week by its name: `mon`, `tue`... or in full (`monday`), in any case.
+fn parse_weekday(text: &str) -> Option<Weekday> {
+    Some(match text.trim().to_ascii_lowercase().as_str() {
+        "mon" | "monday" => Weekday::Monday,
+        "tue" | "tues" | "tuesday" => Weekday::Tuesday,
+        "wed" | "wednesday" => Weekday::Wednesday,
+        "thu" | "thur" | "thurs" | "thursday" => Weekday::Thursday,
+        "fri" | "friday" => Weekday::Friday,
+        "sat" | "saturday" => Weekday::Saturday,
+        "sun" | "sunday" => Weekday::Sunday,
+        _ => return None,
+    })
+}
+
 impl LayoutRuleConfig {
     fn to_rule(&self) -> Result<LayoutRule, String> {
         let layout = LayoutName::parse(&self.layout).map_err(|e| e.to_string())?;
@@ -104,13 +119,13 @@ impl LayoutRuleConfig {
             .days
             .iter()
             .map(|day| {
-                day.parse::<Weekday>().map_err(|_| {
+                parse_weekday(day).ok_or_else(|| {
                     format!("{day:?} is not a day: write mon, tue, wed, thu, fri, sat or sun")
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let time = |what: &str, text: &str| {
-            NaiveTime::parse_from_str(text, "%H:%M").map_err(|_| {
+            Time::strptime("%H:%M", text).map_err(|_| {
                 format!("{what} {text:?} is not a time: write it as HH:MM, like 06:30")
             })
         };
@@ -155,8 +170,8 @@ impl Default for StaleDataConfig {
 impl From<&StaleDataConfig> for crate::application::MaxAge {
     fn from(config: &StaleDataConfig) -> Self {
         Self {
-            departures: chrono::Duration::minutes(config.departures_max_age_minutes.into()),
-            weather: chrono::Duration::minutes(config.weather_max_age_minutes.into()),
+            departures: SignedDuration::from_mins(config.departures_max_age_minutes.into()),
+            weather: SignedDuration::from_mins(config.weather_max_age_minutes.into()),
         }
     }
 }
@@ -225,11 +240,11 @@ pub struct LocationConfig {
 
 impl LocationConfig {
     /// The configured zone, None if there is none, or an error naming it if it is not an IANA zone.
-    pub fn zone(&self) -> anyhow::Result<Option<chrono_tz::Tz>> {
+    pub fn zone(&self) -> anyhow::Result<Option<TimeZone>> {
         self.timezone
             .as_deref()
             .map(|name| {
-                name.parse::<chrono_tz::Tz>().map_err(|_| {
+                TimeZone::get(name).map_err(|_| {
                     anyhow::anyhow!(
                         "The timezone {name:?} is not an IANA zone name such as \"Europe/London\""
                     )
@@ -432,8 +447,11 @@ mod layout_schedule_tests {
         let rules = schedule.rules();
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].layout.as_str(), "departures");
-        assert_eq!(rules[0].days, [Weekday::Mon, Weekday::Tue, Weekday::Wed]);
-        assert_eq!(rules[0].until, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+        assert_eq!(
+            rules[0].days,
+            [Weekday::Monday, Weekday::Tuesday, Weekday::Wednesday]
+        );
+        assert_eq!(rules[0].until, jiff::civil::time(9, 30, 0, 0));
         assert!(rules[1].days.is_empty());
         assert!(rules[1].from > rules[1].until, "an overnight rule");
     }

@@ -1,7 +1,4 @@
 //! Tests of the page and its API.
-
-use chrono::{NaiveTime, TimeZone};
-use chrono_tz::Europe::London;
 use jiff::SignedDuration;
 
 use super::super::testing::{FIRST, publish, publish_layout, start_web, start_with_two_layouts};
@@ -10,6 +7,7 @@ use super::*;
 use crate::adapters::clock::{FixedClock, SystemClock};
 use crate::domain::models::layout::{LayoutRule, LayoutSchedule, Layouts};
 use crate::domain::models::viewer::{ExchangeCode, RefreshToken, ViewerToken};
+use crate::domain::services::clock::local;
 
 fn two_layouts() -> Layouts {
     Layouts::new(vec![
@@ -46,7 +44,7 @@ async fn serve(directory: &std::path::Path, settings: &WebSettings) -> String {
         directory.to_path_buf(),
         two_layouts(),
         settings,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap()
@@ -217,8 +215,8 @@ fn with_a_morning_rule() -> Layouts {
     let morning = LayoutRule::new(
         LayoutName::parse("departures").unwrap(),
         vec![],
-        NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
-        NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+        jiff::civil::time(6, 30, 0, 0),
+        jiff::civil::time(9, 30, 0, 0),
     )
     .unwrap();
     two_layouts()
@@ -226,10 +224,8 @@ fn with_a_morning_rule() -> Layouts {
         .unwrap()
 }
 
-fn at(hour: u32, minute: u32) -> chrono::DateTime<chrono_tz::Tz> {
-    London
-        .with_ymd_and_hms(2026, 10, 12, hour, minute, 0)
-        .unwrap()
+fn at(hour: i8, minute: i8) -> ZonedDateTime {
+    local(&london(), 2026, 10, 12, hour, minute, 0)
 }
 
 #[tokio::test]
@@ -298,7 +294,7 @@ async fn the_state_says_which_render_it_is_and_when_to_look_again_and_records_no
         tmp.path().to_path_buf(),
         two_layouts(),
         &open_all(),
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -325,7 +321,7 @@ async fn the_state_says_which_render_it_is_and_when_to_look_again_and_records_no
     assert!(
         handles
             .devices
-            .snapshot(chrono::Utc::now().with_timezone(&London))
+            .snapshot(Timestamp::now().to_zoned_datetime(london()))
             .is_empty()
     );
 
@@ -1092,7 +1088,7 @@ async fn a_token_stops_at_once_when_revoked_when_given_up_and_when_it_runs_out()
     );
 
     // It runs out on the day.
-    g.clock.set(at(7, 0) + chrono::Duration::days(90));
+    g.clock.set(at(7, 0) + from_days(90));
     assert_eq!(ok(runs_out).await, 401);
     // Giving up needs a form.
     assert_eq!(
@@ -1113,7 +1109,7 @@ async fn the_page_for_a_token_records_nobody_among_the_displays() {
     assert!(
         g.handles
             .devices
-            .snapshot(chrono::Utc::now().with_timezone(&London))
+            .snapshot(Timestamp::now().to_zoned_datetime(london()))
             .is_empty()
     );
 }
@@ -1974,7 +1970,10 @@ async fn a_locked_kiosk_page_keeps_its_layout_and_asks_for_the_screen_in_a_brows
 
 // --- a stream of changes ---------------------------------------------------------------------------------
 
+use crate::domain::services::clock::from_days;
+use crate::domain::services::clock::london;
 use crate::domain::services::render_observer::RenderObserver;
+use jiff::{Timestamp, ZonedDateTime};
 
 /// Settings with a stream that is quick about everything, so a test need not wait a minute.
 fn quick(open: bool) -> WebSettings {
@@ -2021,7 +2020,7 @@ fn state_events(text: &str) -> Vec<serde_json::Value> {
 /// Finishes a render as the render loop would, which is what tells a stream to look.
 fn render_finished(handles: &crate::adapters::image_server::Handles) {
     handles.refresh.render_succeeded(
-        chrono::Utc::now().with_timezone(&London),
+        Timestamp::now().to_zoned_datetime(london()),
         &crate::domain::models::render_report::RenderReport::default(),
     );
 }
@@ -2034,7 +2033,7 @@ async fn a_stream_starts_with_the_state_and_says_what_it_is() {
         tmp.path().to_path_buf(),
         two_layouts(),
         &quick(true),
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2073,7 +2072,7 @@ async fn a_new_picture_is_sent_as_soon_as_the_render_that_made_it_finishes() {
         tmp.path().to_path_buf(),
         two_layouts(),
         &settings,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2106,7 +2105,7 @@ async fn nothing_changing_is_a_keepalive_and_not_an_event() {
         tmp.path().to_path_buf(),
         two_layouts(),
         &quick(true),
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2127,7 +2126,7 @@ async fn a_stream_ends_with_a_bye_after_its_time_so_the_page_opens_another() {
         tmp.path().to_path_buf(),
         two_layouts(),
         &quick(true),
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2206,7 +2205,7 @@ async fn a_stream_that_cannot_be_given_is_refused_in_a_status_as_the_state_is() 
         tmp.path().to_path_buf(),
         two_layouts(),
         &quick(true),
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2331,7 +2330,7 @@ async fn a_page_on_a_wall_is_pushed_new_pictures_and_survives_the_network_going_
         tmp.path().to_path_buf(),
         two_layouts(),
         &open_all(),
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2389,7 +2388,7 @@ async fn a_page_on_a_wall_is_pushed_new_pictures_and_survives_the_network_going_
         handle.block_on(publish_picture(&directory, FIRST, 30));
         let started = std::time::Instant::now();
         notified.refresh.render_succeeded(
-            chrono::Utc::now().with_timezone(&London),
+            Timestamp::now().to_zoned_datetime(london()),
             &crate::domain::models::render_report::RenderReport::default(),
         );
         waits("document.getElementById('picture').naturalWidth == 30 ? 1 : 0", 1.0, 8)?;
@@ -2509,7 +2508,7 @@ async fn a_renewal_that_fails_does_not_sign_a_refreshing_viewer_out_and_is_tried
             false,
         )?;
         // The access token runs out (by the server's clock, which a test moves on), and the page looks again.
-        clock.set(at(7, 0) + chrono::Duration::seconds(5));
+        clock.set(at(7, 0) + SignedDuration::from_secs(5));
         std::thread::sleep(std::time::Duration::from_millis(2500));
         tab.evaluate(
             "document.dispatchEvent(new Event('visibilitychange'))",
@@ -2670,7 +2669,7 @@ async fn a_source_holds_only_its_share_of_streams_and_the_rest_of_the_page_still
         tmp.path().to_path_buf(),
         two_layouts(),
         &settings,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
         None,
         Some("192.168.1.20:5000".parse().unwrap()),
     )
@@ -2788,7 +2787,7 @@ async fn behind_a_trusted_proxy_each_client_has_its_own_share_of_streams() {
         tmp.path().to_path_buf(),
         two_layouts(),
         &settings,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
         None,
         Some("192.168.1.20:5000".parse().unwrap()),
     )
@@ -2829,7 +2828,7 @@ async fn the_total_is_bounded_even_where_no_source_is_known() {
         tmp.path().to_path_buf(),
         two_layouts(),
         &settings,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();
@@ -2857,7 +2856,7 @@ async fn a_stream_refused_for_want_of_a_place_says_so_before_the_picture_is_look
             },
             ..open_all()
         },
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
     )
     .await
     .unwrap();

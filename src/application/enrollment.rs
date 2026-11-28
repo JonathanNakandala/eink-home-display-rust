@@ -809,10 +809,11 @@ impl Enrollment {
 #[cfg(test)]
 mod tests {
     use crate::domain::services::clock::{from_days, utc};
+    use jiff::ZonedDateTime;
     use jiff::{SignedDuration, Timestamp};
     use std::collections::BTreeMap;
 
-    use chrono_tz::Tz;
+    use jiff::tz::TimeZone;
 
     use super::*;
     use crate::domain::models::pairing::{Fingerprint, PublicKey};
@@ -912,8 +913,8 @@ mod tests {
     struct TestClock(Mutex<Timestamp>);
 
     impl Clock for TestClock {
-        fn now(&self) -> chrono::DateTime<Tz> {
-            crate::domain::services::clock::in_zone(*self.0.lock().unwrap(), Tz::UTC)
+        fn now(&self) -> ZonedDateTime {
+            (*self.0.lock().unwrap()).to_zoned_datetime(TimeZone::UTC)
         }
     }
 

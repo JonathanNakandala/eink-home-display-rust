@@ -1,44 +1,43 @@
-use chrono::{DateTime, Utc};
-use chrono_tz::Tz;
-
 use crate::domain::services::clock::Clock;
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, ZonedDateTime};
 
 /// The system clock, reading the time in `zone`. The zone is chosen by whoever builds it (the configuration, or the host's
 /// own when none is set), not taken from the process's environment at every call.
 pub struct SystemClock {
-    zone: Tz,
+    zone: TimeZone,
 }
 
 impl SystemClock {
-    pub fn new(zone: Tz) -> Self {
+    pub fn new(zone: TimeZone) -> Self {
         Self { zone }
     }
 }
 
 impl Clock for SystemClock {
-    fn now(&self) -> DateTime<Tz> {
-        Utc::now().with_timezone(&self.zone)
+    fn now(&self) -> ZonedDateTime {
+        Timestamp::now().to_zoned_datetime(self.zone.clone())
     }
 }
 
 /// A clock that only moves when told to, for tests.
 #[cfg(test)]
-pub struct FixedClock(std::sync::Mutex<DateTime<Tz>>);
+pub struct FixedClock(std::sync::Mutex<ZonedDateTime>);
 
 #[cfg(test)]
 impl FixedClock {
-    pub fn at(now: DateTime<Tz>) -> std::sync::Arc<Self> {
+    pub fn at(now: ZonedDateTime) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self(std::sync::Mutex::new(now)))
     }
 
-    pub fn set(&self, now: DateTime<Tz>) {
+    pub fn set(&self, now: ZonedDateTime) {
         *self.0.lock().unwrap() = now;
     }
 }
 
 #[cfg(test)]
 impl Clock for FixedClock {
-    fn now(&self) -> DateTime<Tz> {
-        *self.0.lock().unwrap()
+    fn now(&self) -> ZonedDateTime {
+        self.0.lock().unwrap().clone()
     }
 }

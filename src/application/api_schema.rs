@@ -169,3 +169,36 @@ mod tests {
         }
     }
 }
+
+/// How a moment on a clock is written in the status JSON: RFC 3339 with the clock's offset from UTC
+/// (`2026-06-15T08:00:00+01:00`), and `Z` when that is none (`2026-06-15T07:00:00Z`). It is for
+/// `#[serde(serialize_with = ...)]` on a `ZonedDateTime` field, which on its own would add the zone's name to the
+/// text, as `[Europe/London]`, which nothing reading this JSON expects.
+pub mod moment {
+    use jiff::ZonedDateTime;
+    use serde::Serializer;
+
+    pub fn serialize<S: Serializer>(at: &ZonedDateTime, serializer: S) -> Result<S::Ok, S::Error> {
+        let offset = at.offset();
+        if offset.seconds() == 0 {
+            serializer.collect_str(&at.timestamp())
+        } else {
+            serializer.collect_str(&at.timestamp().display_with_offset(offset))
+        }
+    }
+
+    /// The same for a moment that may not be there.
+    pub mod option {
+        use super::*;
+
+        pub fn serialize<S: Serializer>(
+            at: &Option<ZonedDateTime>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match at {
+                Some(at) => super::serialize(at, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+    }
+}

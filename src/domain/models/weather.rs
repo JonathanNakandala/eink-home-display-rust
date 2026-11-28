@@ -1,8 +1,9 @@
-use chrono::{Duration, NaiveDateTime};
 use serde::Serialize;
 
 use crate::domain::models::air_quality::AirQuality;
 use crate::domain::models::pollen::Pollen;
+use jiff::SignedDuration;
+use jiff::civil::DateTime;
 
 /// Serialised in lowercase to match the icon partial of the same name in the template.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -94,10 +95,10 @@ pub struct SunTimes {
 }
 
 impl SunTimes {
-    pub fn new(sunrise: NaiveDateTime, sunset: NaiveDateTime) -> Self {
+    pub fn new(sunrise: DateTime, sunset: DateTime) -> Self {
         Self {
-            sunrise: sunrise.format("%H:%M").to_string(),
-            sunset: sunset.format("%H:%M").to_string(),
+            sunrise: sunrise.strftime("%H:%M").to_string(),
+            sunset: sunset.strftime("%H:%M").to_string(),
         }
     }
 }
@@ -160,7 +161,7 @@ impl PrecipitationKind {
 #[derive(Debug, Clone, PartialEq, derive_new::new)]
 pub struct PrecipitationSlot {
     /// Local time the interval starts.
-    pub starts_at: NaiveDateTime,
+    pub starts_at: DateTime,
     /// Water-equivalent precipitation, mm/h. Decides whether the slot is wet.
     pub precipitation: f64,
     /// Snowfall, cm/h. Charted instead of `precipitation` when the kind is snow.
@@ -221,7 +222,7 @@ pub struct PrecipitationOutlook {
 
 impl PrecipitationOutlook {
     /// `None` when no slot is wet. `now` only decides between a start time and "Now".
-    pub fn from_slots(slots: &[PrecipitationSlot], now: NaiveDateTime) -> Option<Self> {
+    pub fn from_slots(slots: &[PrecipitationSlot], now: DateTime) -> Option<Self> {
         let is_wet = |slot: &PrecipitationSlot| slot.precipitation >= WET_MM_PER_HOUR;
         let first = slots.iter().position(is_wet)?;
         let kind = slots[first].kind;
@@ -263,7 +264,7 @@ impl PrecipitationOutlook {
         let start_label = if slots[first].starts_at <= now {
             "Now".to_owned()
         } else {
-            slots[first].starts_at.format("%H:%M").to_string()
+            slots[first].starts_at.strftime("%H:%M").to_string()
         };
 
         let peak_x =
@@ -278,8 +279,8 @@ impl PrecipitationOutlook {
             .map(|i| Tick {
                 x: LEFT + i as f64 * slot_width,
                 labelled: true,
-                label: (first_start + Duration::minutes(SLOT_MINUTES * i as i64))
-                    .format("%H:%M")
+                label: (first_start + SignedDuration::from_mins(SLOT_MINUTES * i as i64))
+                    .strftime("%H:%M")
                     .to_string(),
                 anchor: match i {
                     0 => "start",
@@ -327,15 +328,11 @@ fn format_rate(rate: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
 
     use super::*;
 
-    fn at(hour: u32, minute: u32) -> NaiveDateTime {
-        NaiveDate::from_ymd_opt(2026, 10, 1)
-            .unwrap()
-            .and_hms_opt(hour, minute, 0)
-            .unwrap()
+    fn at(hour: i8, minute: i8) -> DateTime {
+        jiff::civil::date(2026, 10, 1).at(hour, minute, 0, 0)
     }
 
     /// Eight slots from 11:15, with the given mm/h for each.
@@ -345,7 +342,7 @@ mod tests {
             .enumerate()
             .map(|(i, rate)| {
                 PrecipitationSlot::new(
-                    at(11, 15) + Duration::minutes(15 * i as i64),
+                    at(11, 15) + SignedDuration::from_mins(15 * i as i64),
                     *rate,
                     *rate,
                     kind,
@@ -372,12 +369,7 @@ mod tests {
 
     #[test]
     fn sun_times_are_shown_as_hours_and_minutes() {
-        let at = |h, m| {
-            NaiveDate::from_ymd_opt(2026, 10, 1)
-                .unwrap()
-                .and_hms_opt(h, m, 59)
-                .unwrap()
-        };
+        let at = |h, m| jiff::civil::date(2026, 10, 1).at(h, m, 59, 0);
         assert_eq!(
             SunTimes::new(at(6, 51), at(18, 29)),
             SunTimes {

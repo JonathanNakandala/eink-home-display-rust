@@ -11,6 +11,7 @@ use x509_parser::prelude::*;
 use super::*;
 use crate::domain::models::device_id::DeviceId;
 use crate::domain::services::clock::{from_days, utc};
+use jiff::{SignedDuration, Timestamp};
 
 fn now() -> Timestamp {
     utc(2026, 10, 8, 12, 0, 0)

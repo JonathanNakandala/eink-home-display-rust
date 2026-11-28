@@ -1,11 +1,11 @@
 //! The ways the same data can be laid out on a display. Each is rendered on every run, so a display can
 //! be pointed at any of them.
 
-use std::fmt;
-
-use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Weekday};
-use chrono_tz::Tz;
+use crate::domain::services::clock::moments_at;
+use jiff::civil::{Time, Weekday};
+use jiff::{Span, ZonedDateTime};
 use serde::Serialize;
+use std::fmt;
 use thiserror::Error;
 
 /// Why layouts, or the rules for choosing between them, can't be what they were given as.
@@ -80,9 +80,9 @@ pub struct LayoutRule {
     /// The days it applies on; all of them if empty. For a rule that runs past midnight, the day it starts on.
     pub days: Vec<Weekday>,
     /// From this time (inclusive)...
-    pub from: NaiveTime,
+    pub from: Time,
     /// ...until this one (exclusive). Earlier than `from` means the rule runs overnight, into the next day.
-    pub until: NaiveTime,
+    pub until: Time,
 }
 
 impl LayoutRule {
@@ -90,13 +90,13 @@ impl LayoutRule {
     pub fn new(
         layout: LayoutName,
         days: Vec<Weekday>,
-        from: NaiveTime,
-        until: NaiveTime,
+        from: Time,
+        until: Time,
     ) -> Result<Self, LayoutError> {
         if from == until {
             return Err(LayoutError::EmptyRule {
                 layout,
-                at: from.format("%H:%M").to_string(),
+                at: from.strftime("%H:%M").to_string(),
             });
         }
         Ok(Self {
@@ -112,13 +112,14 @@ impl LayoutRule {
     }
 
     /// Whether the rule is in force at `now`.
-    pub fn applies(&self, now: DateTime<Tz>) -> bool {
+    pub fn applies(&self, now: &ZonedDateTime) -> bool {
         let (time, today) = (now.time(), now.weekday());
         if self.from < self.until {
             self.on(today) && time >= self.from && time < self.until
         } else {
             // Overnight: the evening of a listed day, or the small hours after one.
-            (self.on(today) && time >= self.from) || (self.on(today.pred()) && time < self.until)
+            (self.on(today) && time >= self.from)
+                || (self.on(today.previous()) && time < self.until)
         }
     }
 }
@@ -139,15 +140,18 @@ impl LayoutSchedule {
 
     /// The moments in the next `days` days (and the rest of today) at which a rule starts or ends, soonest first: the only times
     /// what is wanted can change, so a page that follows the schedule need only look then.
-    pub fn boundaries(&self, now: DateTime<Tz>, days: u32) -> Vec<DateTime<Tz>> {
-        let zone = now.timezone();
+    pub fn boundaries(&self, now: ZonedDateTime, days: u32) -> Vec<ZonedDateTime> {
+        let zone = now.time_zone().clone();
         let mut moments = Vec::new();
         for offset in 0..=days {
-            let date = now.date_naive() + Duration::days(offset.into());
+            let Ok(date) = now.date().checked_add(Span::new().days(i64::from(offset))) else {
+                break;
+            };
             for rule in &self.0 {
                 for time in [rule.from, rule.until] {
                     // A time that does not exist (the hour clocks go forward) is skipped; one that happens twice is the first.
-                    if let Some(moment) = zone.from_local_datetime(&date.and_time(time)).earliest()
+                    if let Some(moment) =
+                        moments_at(&zone, date.to_datetime(time)).into_iter().next()
                         && moment > now
                     {
                         moments.push(moment);
@@ -161,10 +165,10 @@ impl LayoutSchedule {
     }
 
     /// The layout wanted at `now`, if a rule says.
-    pub fn at(&self, now: DateTime<Tz>) -> Option<&LayoutName> {
+    pub fn at(&self, now: ZonedDateTime) -> Option<&LayoutName> {
         self.0
             .iter()
-            .find(|rule| rule.applies(now))
+            .find(|rule| rule.applies(&now))
             .map(|rule| &rule.layout)
     }
 }
@@ -221,7 +225,7 @@ impl Layouts {
     }
 
     /// The layout a display with none chosen is sent at `now`: the schedule's, or else the default.
-    pub fn current(&self, now: DateTime<Tz>) -> &Layout {
+    pub fn current(&self, now: ZonedDateTime) -> &Layout {
         self.schedule
             .at(now)
             .and_then(|name| self.find(name.as_str()))
@@ -267,7 +271,7 @@ pub struct LayoutSummary {
 
 impl Layouts {
     /// The layouts as the API lists them, with the one a display with none chosen is sent at `now` marked.
-    pub fn summaries(&self, now: DateTime<Tz>) -> Vec<LayoutSummary> {
+    pub fn summaries(&self, now: ZonedDateTime) -> Vec<LayoutSummary> {
         let current = self.current(now).name.clone();
         self.layouts
             .iter()
@@ -285,6 +289,7 @@ impl Layouts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::services::clock::{local, london};
 
     #[test]
     fn names_are_safe_in_a_path_and_a_query() {
@@ -339,20 +344,16 @@ mod tests {
         );
     }
 
-    use chrono_tz::Europe::London;
-
     /// 2026-10-12 is a Monday.
-    fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Tz> {
-        London
-            .with_ymd_and_hms(year, month, day, hour, minute, 0)
-            .unwrap()
+    fn at(year: i16, month: i8, day: i8, hour: i8, minute: i8) -> ZonedDateTime {
+        local(&london(), year, month, day, hour, minute, 0)
     }
 
-    fn time(hour: u32, minute: u32) -> NaiveTime {
-        NaiveTime::from_hms_opt(hour, minute, 0).unwrap()
+    fn time(hour: i8, minute: i8) -> Time {
+        jiff::civil::time(hour, minute, 0, 0)
     }
 
-    fn rule(layout: &str, days: &[Weekday], from: NaiveTime, until: NaiveTime) -> LayoutRule {
+    fn rule(layout: &str, days: &[Weekday], from: Time, until: Time) -> LayoutRule {
         LayoutRule::new(
             LayoutName::parse(layout).unwrap(),
             days.to_vec(),
@@ -371,40 +372,40 @@ mod tests {
     }
 
     const WEEKDAYS: [Weekday; 5] = [
-        Weekday::Mon,
-        Weekday::Tue,
-        Weekday::Wed,
-        Weekday::Thu,
-        Weekday::Fri,
+        Weekday::Monday,
+        Weekday::Tuesday,
+        Weekday::Wednesday,
+        Weekday::Thursday,
+        Weekday::Friday,
     ];
 
     #[test]
     fn a_rule_applies_from_its_start_up_to_but_not_including_its_end_on_its_days() {
         let commute = rule("departures", &WEEKDAYS, time(6, 30), time(9, 30));
 
-        assert!(!commute.applies(at(2026, 10, 12, 6, 29)));
-        assert!(commute.applies(at(2026, 10, 12, 6, 30)));
-        assert!(commute.applies(at(2026, 10, 12, 9, 29)));
-        assert!(!commute.applies(at(2026, 10, 12, 9, 30)));
+        assert!(!commute.applies(&at(2026, 10, 12, 6, 29)));
+        assert!(commute.applies(&at(2026, 10, 12, 6, 30)));
+        assert!(commute.applies(&at(2026, 10, 12, 9, 29)));
+        assert!(!commute.applies(&at(2026, 10, 12, 9, 30)));
         // The weekend (the 17th is a Saturday) isn't one of its days.
-        assert!(!commute.applies(at(2026, 10, 17, 8, 0)));
+        assert!(!commute.applies(&at(2026, 10, 17, 8, 0)));
         // With no days listed, every day is.
         let always = rule("departures", &[], time(6, 30), time(9, 30));
-        assert!(always.applies(at(2026, 10, 17, 8, 0)));
+        assert!(always.applies(&at(2026, 10, 17, 8, 0)));
     }
 
     #[test]
     fn a_rule_that_ends_before_it_starts_runs_overnight_from_the_day_it_starts_on() {
         // Friday evening to Saturday morning, and not Saturday evening.
-        let late = rule("departures", &[Weekday::Fri], time(22, 0), time(6, 0));
+        let late = rule("departures", &[Weekday::Friday], time(22, 0), time(6, 0));
 
-        assert!(late.applies(at(2026, 10, 16, 22, 0)), "Friday 22:00");
-        assert!(late.applies(at(2026, 10, 16, 23, 59)));
-        assert!(late.applies(at(2026, 10, 17, 0, 0)), "Saturday midnight");
-        assert!(late.applies(at(2026, 10, 17, 5, 59)));
-        assert!(!late.applies(at(2026, 10, 17, 6, 0)));
-        assert!(!late.applies(at(2026, 10, 17, 22, 0)), "Saturday evening");
-        assert!(!late.applies(at(2026, 10, 16, 5, 0)), "Friday small hours");
+        assert!(late.applies(&at(2026, 10, 16, 22, 0)), "Friday 22:00");
+        assert!(late.applies(&at(2026, 10, 16, 23, 59)));
+        assert!(late.applies(&at(2026, 10, 17, 0, 0)), "Saturday midnight");
+        assert!(late.applies(&at(2026, 10, 17, 5, 59)));
+        assert!(!late.applies(&at(2026, 10, 17, 6, 0)));
+        assert!(!late.applies(&at(2026, 10, 17, 22, 0)), "Saturday evening");
+        assert!(!late.applies(&at(2026, 10, 16, 5, 0)), "Friday small hours");
     }
 
     #[test]
@@ -482,8 +483,8 @@ mod tests {
     fn the_time_is_the_wall_clock_in_the_servers_zone_across_a_clock_change() {
         // Clocks went back on Sunday 2026-10-25: 06:30 is 06:30 on both sides of it.
         let commute = rule("departures", &[], time(6, 30), time(9, 30));
-        assert!(commute.applies(at(2026, 10, 24, 7, 0)));
-        assert!(commute.applies(at(2026, 10, 26, 7, 0)));
+        assert!(commute.applies(&at(2026, 10, 24, 7, 0)));
+        assert!(commute.applies(&at(2026, 10, 26, 7, 0)));
     }
 
     #[test]
@@ -529,10 +530,11 @@ mod tests {
         assert_eq!(back.len(), 2);
         assert_eq!(
             back[0],
-            London
-                .with_ymd_and_hms(2026, 10, 25, 1, 30, 0)
-                .earliest()
-                .unwrap()
+            crate::domain::services::clock::moments_at(
+                &london(),
+                jiff::civil::date(2026, 10, 25).at(1, 30, 0, 0)
+            )[0]
+            .clone()
         );
         // Clocks go forward on Sunday 2027-03-28 (01:00 GMT to 02:00 BST): 01:30 does not exist, so only the end is a moment.
         let forward = schedule.boundaries(at(2027, 3, 28, 0, 0), 0);

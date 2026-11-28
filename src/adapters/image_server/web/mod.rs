@@ -59,6 +59,7 @@ use crate::application::viewers::{AuthError, ExchangeError, Viewers};
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::{Layout, LayoutName};
 use crate::domain::models::viewer::LayoutScope;
+use jiff::ZonedDateTime;
 
 const PAGE: &str = include_str!("view.html");
 /// The service worker that keeps the page's shell.
@@ -271,11 +272,7 @@ impl WebState {
     }
 
     /// What `automatic` is, or will be, at `at`.
-    fn automatic_at(
-        &self,
-        scope: &LayoutScope,
-        at: chrono::DateTime<chrono_tz::Tz>,
-    ) -> Result<&Layout, Refusal> {
+    fn automatic_at(&self, scope: &LayoutScope, at: ZonedDateTime) -> Result<&Layout, Refusal> {
         let permitted = self.permitted(scope);
         let current = self.published.layouts.current(at);
         permitted
@@ -312,17 +309,17 @@ impl WebState {
     /// How long until `automatic` is another layout than `now`'s, if the schedule has it change within a week.
     fn automatic_changes_in(&self, scope: &LayoutScope) -> Option<u64> {
         let now = self.published.clock.now();
-        let current = self.automatic_at(scope, now).ok()?.name.clone();
+        let current = self.automatic_at(scope, now.clone()).ok()?.name.clone();
         self.published
             .layouts
             .schedule()
-            .boundaries(now, 8)
+            .boundaries(now.clone(), 8)
             .into_iter()
             .find(|moment| {
-                self.automatic_at(scope, *moment)
+                self.automatic_at(scope, moment.clone())
                     .is_ok_and(|layout| layout.name != current)
             })
-            .map(|moment| u64::try_from((moment - now).num_seconds()).unwrap_or(0))
+            .map(|moment| u64::try_from(moment.duration_since(&now).as_secs()).unwrap_or(0))
     }
 
     fn not_found(&self, scope: &LayoutScope) -> Refusal {

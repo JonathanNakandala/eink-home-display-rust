@@ -140,7 +140,7 @@ async fn plan_response(
     };
     let now = published.clock.now();
     match compute(
-        now,
+        now.clone(),
         rendered_at,
         &published.schedule,
         published.timing,
@@ -176,8 +176,10 @@ mod tests {
     use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
     use crate::domain::models::layout::LayoutName;
+    use crate::domain::services::clock::london;
     use crate::domain::services::published_images::PublishedImages;
-    use chrono_tz::Europe::London;
+    use jiff::tz::TimeZone;
+    use jiff::{SignedDuration, Timestamp};
 
     #[tokio::test]
     async fn plan_reports_the_version_and_when_to_come_back() {
@@ -207,9 +209,8 @@ mod tests {
         assert_eq!(plan["changed"], true);
         assert_eq!(plan["stale"], false);
         // The server's zone and its offset now, for a display that has no timezone database.
-        let zone: chrono_tz::Tz = plan["timezone"].as_str().unwrap().parse().unwrap();
-        let offset =
-            chrono::Offset::fix(chrono::Utc::now().with_timezone(&zone).offset()).local_minus_utc();
+        let zone = TimeZone::get(plan["timezone"].as_str().unwrap()).unwrap();
+        let offset = Timestamp::now().to_zoned_datetime(zone).offset().seconds();
         assert_eq!(plan["utc_offset_seconds"], offset);
         // An hour after the render, less the 100 seconds already gone, plus the 30 second delay.
         let next = plan["next_seconds"].as_u64().unwrap();
@@ -264,7 +265,7 @@ mod tests {
         use crate::adapters::clock::FixedClock;
 
         let tmp = tempfile::tempdir().unwrap();
-        let clock = FixedClock::at(chrono::Utc::now().with_timezone(&London));
+        let clock = FixedClock::at(Timestamp::now().to_zoned_datetime(london()));
         let (base, _) =
             start_with_clock(tmp.path().to_path_buf(), ImageFormat::Bmp, clock.clone()).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(plan().await["stale"], false);
 
         // Three hours on, with an hourly schedule and no render since, nothing about the file changed.
-        clock.set(chrono::Utc::now().with_timezone(&London) + chrono::Duration::hours(3));
+        clock.set(Timestamp::now().to_zoned_datetime(london()) + SignedDuration::from_hours(3));
         let late = plan().await;
         assert_eq!(late["stale"], true);
         assert!(late["age_seconds"].as_u64().unwrap() >= 3 * 3600);

@@ -1,6 +1,4 @@
 //! Helpers for the route tests: a server on a free port over a temporary directory.
-
-use chrono_tz::Europe::London;
 use jiff::{SignedDuration, Timestamp};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +24,7 @@ use crate::domain::models::pairing::{Pairing, PairingState, PublicKey};
 use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
 use crate::domain::services::clock::from_days;
+use crate::domain::services::clock::london;
 use crate::domain::services::layout_choices::LayoutChoices;
 use crate::domain::services::pairing_store::PairingStore;
 use crate::domain::services::published_images::PublishedImages;
@@ -68,7 +67,7 @@ pub(super) async fn start_with_two_layouts(directory: PathBuf, format: ImageForm
     start_layouts(
         Arc::new(DirectoryImages::new(directory)),
         format,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
         None,
         None,
         layouts,
@@ -86,7 +85,7 @@ pub(super) async fn start_with_status(
     directory: PathBuf,
     format: ImageFormat,
 ) -> (String, Arc<StatusBoard>) {
-    start_with_clock(directory, format, Arc::new(SystemClock::new(London))).await
+    start_with_clock(directory, format, Arc::new(SystemClock::new(london()))).await
 }
 
 /// Like `start_with_status`, with the server reading the time from `clock`.
@@ -133,7 +132,7 @@ pub(super) async fn start_layouts(
         stale_grace: Duration::from_secs(300),
     };
     let schedule = Schedule::parse_every("1h").unwrap();
-    let status = StatusBoard::new(chrono::Utc::now().with_timezone(&London));
+    let status = StatusBoard::new(Timestamp::now().to_zoned_datetime(london()));
     let handles = Handles {
         layouts,
         layout_choices,
@@ -180,7 +179,7 @@ pub(super) async fn start_web_for(
         layout_choices: None,
         viewers,
         refresh: RefreshControl::new(Duration::from_secs(30)),
-        status: StatusBoard::new(chrono::Utc::now().with_timezone(&London)),
+        status: StatusBoard::new(Timestamp::now().to_zoned_datetime(london())),
         devices: DeviceBoard::new(Duration::from_secs(900)),
         members: None,
         handshakes: None,
@@ -286,7 +285,7 @@ pub(super) async fn members(displays: &[(&str, PairingState)]) -> Members {
     let enrollment = Arc::new(Enrollment::new(
         authority,
         store,
-        Arc::new(SystemClock::new(London)),
+        Arc::new(SystemClock::new(london())),
         EnrollmentPolicy {
             certificate_lifetime: from_days(90),
             retry_after: SignedDuration::from_mins(5),

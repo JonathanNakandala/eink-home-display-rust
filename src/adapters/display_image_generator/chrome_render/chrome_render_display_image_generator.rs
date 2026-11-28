@@ -618,7 +618,8 @@ mod tests {
     use crate::domain::models::DateInfo;
     use crate::domain::models::display::Palette;
     use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::london;
+    use jiff::Timestamp;
 
     use super::*;
 
@@ -632,7 +633,7 @@ mod tests {
     #[test]
     fn a_fresh_dashboard_carries_no_staleness_markers() {
         let html = html_for(&GlanceData::sample(
-            chrono::Utc::now().with_timezone(&London),
+            Timestamp::now().to_zoned_datetime(london()),
         ));
         assert!(!html.contains(" ago<"), "no age label expected");
         assert!(!html.contains("Unavailable"));
@@ -643,7 +644,7 @@ mod tests {
     #[test]
     fn degraded_data_shows_ages_and_unavailable_parts() {
         let html = html_for(&GlanceData::sample_degraded(
-            chrono::Utc::now().with_timezone(&London),
+            Timestamp::now().to_zoned_datetime(london()),
         ));
         assert!(html.contains("8 min ago</span>"));
         assert!(html.contains("Updated 40 min ago"));
@@ -655,7 +656,7 @@ mod tests {
         let data = GlanceData::new(
             None,
             vec![],
-            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+            DateInfo::new(Timestamp::now().to_zoned_datetime(london())),
         )
         .with_weather_unavailable("timed out");
         let html = html_for(&data);
@@ -666,7 +667,7 @@ mod tests {
         let off = html_for(&GlanceData::new(
             None,
             vec![],
-            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+            DateInfo::new(Timestamp::now().to_zoned_datetime(london())),
         ));
         assert!(!off.contains("Weather unavailable"));
         assert!(!off.contains("container has-weather"));
@@ -682,7 +683,7 @@ mod tests {
     fn the_dashboard_is_the_default_layout_and_every_layout_renders_its_own_page() {
         let layouts = Templates::built_in().layouts();
         assert_eq!(layouts.default_layout().name.as_str(), DASHBOARD);
-        let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
+        let data = GlanceData::sample(Timestamp::now().to_zoned_datetime(london()));
 
         for layout in layouts.all() {
             let html = page_of(layout.name.as_str(), &data);
@@ -696,7 +697,7 @@ mod tests {
 
     #[test]
     fn the_departures_layout_leaves_the_weather_out() {
-        let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
+        let data = GlanceData::sample(Timestamp::now().to_zoned_datetime(london()));
 
         let dashboard = page_of(DASHBOARD, &data);
         let departures = page_of("departures", &data);
@@ -712,7 +713,7 @@ mod tests {
     #[test]
     fn a_layout_that_does_not_exist_is_an_error() {
         let generator = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT);
-        let data = GlanceData::sample(chrono::Utc::now().with_timezone(&London));
+        let data = GlanceData::sample(Timestamp::now().to_zoned_datetime(london()));
 
         let error = generator
             .render_html(&LayoutName::parse("nonesuch").unwrap(), &data)
@@ -936,7 +937,7 @@ mod tests {
         let data = GlanceData::new(
             Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
             vec![],
-            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+            DateInfo::new(Timestamp::now().to_zoned_datetime(london())),
         );
 
         let image = ChromeRenderDisplayImageGenerator::new(DEFAULT_IDLE_TIMEOUT)
@@ -956,7 +957,7 @@ mod tests {
         GlanceData::new(
             Some(WeatherInformation::new(12, 8, 15, WeatherCondition::Clouds)),
             vec![],
-            DateInfo::new(chrono::Utc::now().with_timezone(&London)),
+            DateInfo::new(Timestamp::now().to_zoned_datetime(london())),
         )
     }
 
@@ -992,7 +993,7 @@ mod tests {
                 .generate(
                     // For looking at, the whole sample (boards and weather), and otherwise a little.
                     if std::env::var("RENDER_SHOTS").is_ok() {
-                        GlanceData::sample(chrono::Utc::now().with_timezone(&London))
+                        GlanceData::sample(Timestamp::now().to_zoned_datetime(london()))
                     } else {
                         sample_data()
                     },

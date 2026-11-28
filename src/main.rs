@@ -102,7 +102,7 @@ async fn run() -> Result<()> {
         .map(|_| ());
     };
     let now = clock.now();
-    log_schedule(&schedule, now);
+    log_schedule(&schedule, now.clone());
     let images = Arc::new(DirectoryImages::new(config.server.directory.clone()));
     let marker = cache.render_attempt();
     let image_is_current = config.display.kind.fetches_image()
@@ -111,7 +111,7 @@ async fn run() -> Result<()> {
             &served_layouts,
             config.display.image_format.into(),
             &schedule,
-            now,
+            now.clone(),
         )
         .await
         // The page's own pictures too, if it has them: one missing or due is a reason to render.
@@ -122,22 +122,22 @@ async fn run() -> Result<()> {
                     &served_layouts,
                     home_display_server::domain::models::display::ImageFormat::Png,
                     &schedule,
-                    now,
+                    now.clone(),
                 )
                 .await
             }
             None => true,
         };
     let first = launch::first_render_at(
-        now,
+        now.clone(),
         args.no_initial_run,
         image_is_current,
         launch::last_attempt(&marker),
         args.restart_cooldown,
     );
-    match first {
-        Some(at) if at > now => tracing::info!(
-            until = %at.format("%H:%M:%S"),
+    match &first {
+        Some(at) if *at > now => tracing::info!(
+            until = %at.strftime("%H:%M:%S"),
             "Holding the first render (restart cooldown)"
         ),
         Some(_) => tracing::info!("Rendering now"),

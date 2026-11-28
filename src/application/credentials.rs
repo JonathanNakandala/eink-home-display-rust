@@ -237,21 +237,20 @@ impl CredentialSource for Credentials {
 
 #[cfg(test)]
 mod tests {
+    use jiff::ZonedDateTime;
     use std::sync::Mutex;
 
-    use chrono_tz::Tz;
+    use jiff::tz::TimeZone;
     use secrecy::ExposeSecret;
 
     use super::*;
+    use crate::domain::services::clock::local;
 
     struct FixedClock;
 
     impl Clock for FixedClock {
-        fn now(&self) -> chrono::DateTime<Tz> {
-            use chrono::TimeZone;
-            chrono_tz::UTC
-                .with_ymd_and_hms(2026, 10, 17, 12, 0, 0)
-                .unwrap()
+        fn now(&self) -> ZonedDateTime {
+            local(&TimeZone::UTC, 2026, 10, 17, 12, 0, 0)
         }
     }
 

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::Arc;
 
-use chrono_tz::Tz;
 use home_display_server::adapters::admin;
 use home_display_server::adapters::certificate_authority::{self, Create};
 use home_display_server::adapters::clock::SystemClock;
@@ -19,6 +18,7 @@ use home_display_server::domain::models::pairing::{PairingCode, PublicKey};
 use home_display_server::domain::services::certificate_authority::CertificateAuthority;
 use home_display_server::domain::services::clock::from_days;
 use home_display_server::domain::services::layout_choices::LayoutChoices;
+use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use rcgen::PublicKeyData;
 use std::os::unix::fs::PermissionsExt;
@@ -51,7 +51,7 @@ async fn start() -> Server {
     let enrollment = Arc::new(Enrollment::new(
         authority.clone(),
         Arc::new(store),
-        Arc::new(SystemClock::new(Tz::UTC)),
+        Arc::new(SystemClock::new(TimeZone::UTC)),
         EnrollmentPolicy {
             certificate_lifetime: from_days(90),
             retry_after: SignedDuration::from_mins(5),
@@ -70,7 +70,7 @@ async fn start() -> Server {
         )
         .layouts();
     let clock: Arc<dyn home_display_server::domain::services::clock::Clock> =
-        Arc::new(SystemClock::new(Tz::UTC));
+        Arc::new(SystemClock::new(TimeZone::UTC));
     let viewers = Arc::new(home_display_server::application::viewers::Viewers::new(
         Arc::new(
             home_display_server::adapters::viewer_registry::FileViewerRegistry::open(

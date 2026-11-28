@@ -1,13 +1,11 @@
 use std::future::Future;
 use std::time::Duration;
-
-use chrono::DateTime;
-use chrono_tz::Tz;
 use tokio::sync::Notify;
 
 use crate::domain::models::freshness::format_age;
 pub use crate::domain::models::schedule::Schedule;
 use crate::domain::services::clock::Clock;
+use jiff::{SignedDuration, ZonedDateTime};
 
 /// How long an idle Chrome stays connected between periodic renders. Cron gaps can be
 /// long (overnight, say), so this is generous; a Chrome that went away anyway is relaunched.
@@ -15,7 +13,7 @@ pub const PERIODIC_IDLE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// What the schedule means, for a person to check against what they meant: each expression in words,
 /// how many refreshes each of the next days gets (the number that decides battery life), and the next few.
-pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
+pub fn schedule_summary(schedule: &Schedule, now: ZonedDateTime) -> Vec<String> {
     let mut lines = vec!["Schedule:".to_owned()];
     lines.extend(
         schedule
@@ -24,10 +22,10 @@ pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
             .map(|line| format!("  {line}")),
     );
     let days: Vec<String> = (0..7)
-        .filter_map(|offset| now.date_naive().checked_add_days(chrono::Days::new(offset)))
-        .map(|day| match schedule.runs_on(day, now.timezone()) {
-            Ok(runs) => format!("{} {runs}", day.format("%a")),
-            Err(e) => format!("{} ({e:#})", day.format("%a")),
+        .filter_map(|offset| now.date().checked_add(jiff::Span::new().days(offset)).ok())
+        .map(|day| match schedule.runs_on(day, now.time_zone()) {
+            Ok(runs) => format!("{} {runs}", day.strftime("%a")),
+            Err(e) => format!("{} ({e:#})", day.strftime("%a")),
         })
         .collect();
     lines.push(format!("Refreshes per day: {}", days.join(", ")));
@@ -35,7 +33,7 @@ pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
         Ok(runs) => {
             let times: Vec<String> = runs
                 .iter()
-                .map(|at| at.format("%a %H:%M:%S").to_string())
+                .map(|at| at.strftime("%a %H:%M:%S").to_string())
                 .collect();
             lines.push(format!("Next refreshes: {}", times.join(", ")));
         }
@@ -44,7 +42,7 @@ pub fn schedule_summary(schedule: &Schedule, now: DateTime<Tz>) -> Vec<String> {
     lines
 }
 
-pub fn log_schedule(schedule: &Schedule, now: DateTime<Tz>) {
+pub fn log_schedule(schedule: &Schedule, now: ZonedDateTime) {
     for line in schedule_summary(schedule, now) {
         tracing::info!(schedule = %line, "Schedule");
     }
@@ -92,7 +90,7 @@ where
 /// Set back, the next run is planned again from the new time: kept, it would be hours or days away.
 pub async fn run_periodically_from<F, Fut>(
     schedule: &Schedule,
-    first: Option<DateTime<Tz>>,
+    first: Option<ZonedDateTime>,
     wake: &Notify,
     clock: &dyn Clock,
     shutdown: impl Future<Output = ()>,
@@ -109,20 +107,20 @@ where
     };
 
     loop {
-        tracing::info!(next_run = %due.format("%Y-%m-%d %H:%M:%S"), "Next run planned");
+        tracing::info!(next_run = %due.strftime("%Y-%m-%d %H:%M:%S"), "Next run planned");
         let mut last_look = clock.now();
         loop {
             let now = clock.now();
-            if last_look - now > chrono::Duration::from_std(STEP_BACK)? {
-                due = schedule.next_after(now)?;
+            if last_look.duration_since(&now) > SignedDuration::try_from(STEP_BACK)? {
+                due = schedule.next_after(now.clone())?;
                 tracing::warn!(
-                    set_back = %format_age(last_look - now),
-                    next_run = %due.format("%Y-%m-%d %H:%M:%S"),
+                    set_back = %format_age(last_look.duration_since(&now)),
+                    next_run = %due.strftime("%Y-%m-%d %H:%M:%S"),
                     "The clock was set back: planning the next run again"
                 );
             }
+            let remaining = Duration::try_from(due.duration_since(&now)).unwrap_or_default();
             last_look = now;
-            let remaining = (due - now).to_std().unwrap_or_default();
             if remaining.is_zero() {
                 break;
             }
@@ -155,7 +153,7 @@ where
 
         let finished = clock.now();
         // From whichever was earlier, so a clock set back during the run doesn't leave the next one far off.
-        due = schedule.next_after(started.min(finished))?;
+        due = schedule.next_after(started.min(finished.clone()))?;
         if due <= finished {
             due = schedule.next_after(finished)?;
         }
@@ -183,18 +181,15 @@ pub async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
+    use jiff::SignedDuration;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn the_summary_says_what_the_schedule_does() {
-        use chrono::TimeZone;
         let schedule = Schedule::parse_crons(["* 7-8 * * 1-5", "0 8-21 * * 6,0"]).unwrap();
         // Monday 2026-06-15, 06:30.
-        let lines = schedule_summary(
-            &schedule,
-            London.with_ymd_and_hms(2026, 6, 15, 6, 30, 0).unwrap(),
-        );
+        let lines = schedule_summary(&schedule, local(&london(), 2026, 6, 15, 6, 30, 0));
         assert_eq!(
             lines,
             [
@@ -212,7 +207,6 @@ mod tests {
     use std::sync::Mutex;
 
     use anyhow::anyhow;
-    use chrono::TimeZone;
 
     use super::*;
     use crate::adapters::clock::SystemClock;
@@ -226,7 +220,7 @@ mod tests {
         run_periodically(
             &schedule,
             true,
-            &SystemClock::new(London),
+            &SystemClock::new(london()),
             tokio::time::sleep(Duration::from_millis(250)),
             move || {
                 let n = counter.fetch_add(1, Ordering::SeqCst);
@@ -262,7 +256,7 @@ mod tests {
             &schedule,
             None,
             &wake,
-            &SystemClock::new(London),
+            &SystemClock::new(london()),
             tokio::time::sleep(Duration::from_millis(300)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -284,7 +278,7 @@ mod tests {
         run_periodically(
             &schedule,
             false,
-            &SystemClock::new(London),
+            &SystemClock::new(london()),
             tokio::time::sleep(Duration::from_millis(50)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -307,7 +301,7 @@ mod tests {
         run_periodically(
             &schedule,
             true,
-            &SystemClock::new(London),
+            &SystemClock::new(london()),
             tokio::time::sleep(Duration::from_millis(100)),
             move || {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -324,42 +318,42 @@ mod tests {
         assert!(begun.elapsed() < Duration::from_secs(5));
     }
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: i8, m: i8, s: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, h, m, s)
     }
 
     /// A clock that follows tokio's (pausable) time and can be set forward or back, as NTP would.
     struct SteppedClock {
-        start: DateTime<Tz>,
+        start: ZonedDateTime,
         origin: tokio::time::Instant,
-        offset: Mutex<chrono::Duration>,
+        offset: Mutex<SignedDuration>,
     }
 
     impl SteppedClock {
-        fn new(start: DateTime<Tz>) -> Self {
+        fn new(start: ZonedDateTime) -> Self {
             Self {
                 start,
                 origin: tokio::time::Instant::now(),
-                offset: Mutex::new(chrono::Duration::zero()),
+                offset: Mutex::new(SignedDuration::ZERO),
             }
         }
 
-        fn step(&self, by: chrono::Duration) {
+        fn step(&self, by: SignedDuration) {
             *self.offset.lock().unwrap() += by;
         }
     }
 
     impl Clock for SteppedClock {
-        fn now(&self) -> DateTime<Tz> {
-            self.start
-                + chrono::Duration::from_std(self.origin.elapsed()).unwrap()
+        fn now(&self) -> ZonedDateTime {
+            self.start.clone()
+                + SignedDuration::try_from(self.origin.elapsed()).unwrap()
                 + *self.offset.lock().unwrap()
         }
     }
 
     /// Runs hourly from 08:00 for three and a half hours of (virtual) time, with the clock stepped by `by` ten minutes
     /// in. Returns how many minutes after the start each run happened.
-    async fn runs_with_a_step(by: chrono::Duration) -> Vec<u64> {
+    async fn runs_with_a_step(by: SignedDuration) -> Vec<u64> {
         let clock = SteppedClock::new(at(8, 0, 0));
         let started = tokio::time::Instant::now();
         let runs = Mutex::new(Vec::new());
@@ -388,16 +382,13 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn without_a_step_runs_come_hourly() {
-        assert_eq!(
-            runs_with_a_step(chrono::Duration::zero()).await,
-            [60, 120, 180]
-        );
+        assert_eq!(runs_with_a_step(SignedDuration::ZERO).await, [60, 120, 180]);
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_clock_set_back_plans_the_next_run_again_instead_of_waiting_for_the_old_time() {
         // Five hours back: kept, the 09:00 run would now be nearly six hours away and nothing would happen.
-        let runs = runs_with_a_step(chrono::Duration::hours(-5)).await;
+        let runs = runs_with_a_step(SignedDuration::from_hours(-5)).await;
         // Planned from 03:10 on the new clock: an hour on, give or take the look interval.
         assert_eq!(runs.len(), 3, "{runs:?}");
         assert!((70..=71).contains(&runs[0]), "{runs:?}");
@@ -405,7 +396,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_clock_set_forward_runs_the_overdue_run_at_the_next_look() {
-        let runs = runs_with_a_step(chrono::Duration::hours(5)).await;
+        let runs = runs_with_a_step(SignedDuration::from_hours(5)).await;
         // Not at 60 minutes: ten minutes in the clock jumped past 09:00, so it runs within a look.
         assert!((10..=11).contains(&runs[0]), "{runs:?}");
     }
