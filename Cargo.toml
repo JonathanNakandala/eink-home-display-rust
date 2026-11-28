@@ -20,10 +20,9 @@ codegen-units = 1
 [dependencies]
 anyhow = "1.0.86"
 axum = { version = "0.8", features = ["http1", "tokio", "macros"] }
-utoipa = { version = "6", features = ["chrono", "axum_extras", "preserve_order"] }
+utoipa = { version = "6", features = ["axum_extras", "preserve_order"] }
 utoipa-axum = "0.3"
 async-trait = "0.1.81"
-chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 config = { version = "0.15", features = ["toml"] }
 derive-new = "0.7"
@@ -55,8 +54,6 @@ if-addrs = "0.15"
 socket2 = { version = "0.6", features = ["all"] }
 httpdate = "1.0.3"
 secrecy = { version = "0.10.3", features = ["serde"] }
-chrono-tz = "0.10.4"
-iana-time-zone = "0.1.65"
 sha2 = "0.11"
 subtle = "2"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "aws_lc_rs", "x509-parser", "zeroize"] }
