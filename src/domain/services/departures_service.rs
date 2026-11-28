@@ -1,8 +1,6 @@
-use chrono::DateTime;
-use chrono_tz::Tz;
-
 use crate::domain::models::departures::Departures;
 use crate::domain::models::source_error::SourceError;
+use jiff::ZonedDateTime;
 
 /// A source of departures for one already-configured route or stop.
 #[allow(async_fn_in_trait)]
@@ -12,6 +10,6 @@ pub trait DeparturesService {
     async fn get_departures(
         &self,
         num_rows: u8,
-        now: DateTime<Tz>,
+        now: ZonedDateTime,
     ) -> Result<Departures, SourceError>;
 }

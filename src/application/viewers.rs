@@ -494,10 +494,10 @@ impl Viewers {
 #[cfg(test)]
 mod tests {
     use crate::domain::services::clock::from_days;
+    use crate::domain::services::clock::{local, london};
     use jiff::SignedDuration;
+    use jiff::ZonedDateTime;
     use std::sync::atomic::{AtomicU8, Ordering};
-
-    use chrono_tz::Europe::London;
 
     use super::*;
     use crate::adapters::clock::FixedClock;
@@ -521,9 +521,8 @@ mod tests {
         _directory: tempfile::TempDir,
     }
 
-    fn at(minutes: i64) -> chrono::DateTime<chrono_tz::Tz> {
-        chrono::TimeZone::with_ymd_and_hms(&London, 2026, 10, 12, 9, 0, 0).unwrap()
-            + chrono::Duration::minutes(minutes)
+    fn at(minutes: i64) -> ZonedDateTime {
+        local(&london(), 2026, 10, 12, 9, 0, 0) + SignedDuration::from_mins(minutes)
     }
 
     async fn rig() -> Rig {
@@ -765,9 +764,9 @@ mod tests {
 
         // Still good the day before, gone on the day.
         rig.clock
-            .set(at(0) + chrono::Duration::days(90) - chrono::Duration::minutes(1));
+            .set(at(0) + from_days(90) - SignedDuration::from_mins(1));
         assert!(rig.viewers.authenticate(token.expose()).await.is_ok());
-        rig.clock.set(at(0) + chrono::Duration::days(90));
+        rig.clock.set(at(0) + from_days(90));
         assert!(matches!(
             rig.viewers.authenticate(token.expose()).await,
             Err(AuthError::InvalidToken)
@@ -1072,7 +1071,7 @@ mod tests {
         let second = rig.viewers.refresh(&old).await.unwrap();
 
         // The answer was lost and the same request is sent again, a few seconds on: answered afresh, and the session lives.
-        rig.clock.set(at(0) + chrono::Duration::seconds(10));
+        rig.clock.set(at(0) + SignedDuration::from_secs(10));
         let retry = rig.viewers.refresh(&old).await.unwrap();
         assert!(rig.viewers.authenticate(retry.token.expose()).await.is_ok());
         // (What the retry replaced is the answer that was lost.)
@@ -1084,7 +1083,7 @@ mod tests {
         );
 
         // The same request again (it may have been lost again), still within the leeway of the first: answered too.
-        rig.clock.set(at(0) + chrono::Duration::seconds(20));
+        rig.clock.set(at(0) + SignedDuration::from_secs(20));
         assert!(rig.viewers.refresh(&old).await.is_ok());
         let current = refresh_of(&rig.viewers.refresh(&old).await.unwrap());
 
@@ -1117,7 +1116,7 @@ mod tests {
         rig.viewers.refresh(&old).await.unwrap();
 
         rig.clock
-            .set(at(0) + chrono::Duration::seconds(REFRESH_LEEWAY.as_secs() + 1));
+            .set(at(0) + SignedDuration::from_secs(REFRESH_LEEWAY.as_secs() + 1));
 
         assert!(matches!(
             rig.viewers.refresh(&old).await,
@@ -1193,11 +1192,11 @@ mod tests {
 
         // Late in a one-day session, an access token is cut to what is left.
         rig.clock
-            .set(at(0) + chrono::Duration::minutes(23 * 60 + 30));
+            .set(at(0) + SignedDuration::from_mins(23 * 60 + 30));
         let late = rig.viewers.refresh(&refresh_of(&first)).await.unwrap();
         assert_eq!(late.expires_in, SignedDuration::from_mins(30));
 
-        rig.clock.set(at(0) + chrono::Duration::days(1));
+        rig.clock.set(at(0) + from_days(1));
         assert!(matches!(
             rig.viewers.refresh(&refresh_of(&late)).await,
             Err(ExchangeError::InvalidGrant)

@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono_tz::Tz;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, HOST};
@@ -49,8 +48,8 @@ impl TestClock {
 }
 
 impl crate::domain::services::clock::Clock for TestClock {
-    fn now(&self) -> chrono::DateTime<Tz> {
-        crate::domain::services::clock::in_zone(*self.0.lock().unwrap(), Tz::UTC)
+    fn now(&self) -> ZonedDateTime {
+        (*self.0.lock().unwrap()).to_zoned_datetime(TimeZone::UTC)
     }
 }
 
@@ -2114,6 +2113,8 @@ fn what_was_done_is_said_in_a_sentence_that_depends_on_what_it_was() {
 
 use super::present::{QUIET_ZONE, qr_modules};
 use crate::domain::services::clock::from_days;
+use jiff::ZonedDateTime;
+use jiff::tz::TimeZone;
 
 /// What a camera would read out of `modules` (dark ones true): drawn as a picture a few pixels to a module, as it would be
 /// on a screen, and decoded.

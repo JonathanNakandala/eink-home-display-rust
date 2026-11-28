@@ -17,8 +17,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration as StdDuration;
 
 use anyhow::anyhow;
-use chrono::{DateTime, Duration};
-use chrono_tz::Tz;
 use futures_util::FutureExt;
 use tracing::Instrument;
 
@@ -42,20 +40,21 @@ use crate::domain::services::display_image_generator::DisplayImageGenerator;
 use crate::domain::services::image_repository::ImageRepository;
 use crate::domain::services::render_observer::RenderObserver;
 use crate::domain::services::weather_service::WeatherService;
+use jiff::{SignedDuration, ZonedDateTime};
 
 /// How old data from an earlier fetch may be when its source fails, before it is dropped
 /// from the display as unavailable.
 #[derive(Debug, Clone, Copy)]
 pub struct MaxAge {
-    pub departures: Duration,
-    pub weather: Duration,
+    pub departures: SignedDuration,
+    pub weather: SignedDuration,
 }
 
 impl Default for MaxAge {
     fn default() -> Self {
         Self {
-            departures: Duration::minutes(15),
-            weather: Duration::minutes(180),
+            departures: SignedDuration::from_mins(15),
+            weather: SignedDuration::from_mins(180),
         }
     }
 }
@@ -112,8 +111,8 @@ fn panic_message(panic: &(dyn Any + Send)) -> String {
         .unwrap_or_else(|| "no message".to_owned())
 }
 
-fn age_seconds(age: Duration) -> u64 {
-    age.num_seconds().max(0).unsigned_abs()
+fn age_seconds(age: SignedDuration) -> u64 {
+    age.as_secs().max(0).unsigned_abs()
 }
 
 /// A titled list of departures from one configured source.
@@ -129,7 +128,7 @@ pub struct DepartureBoard<DS: DeparturesService> {
 
 impl<DS: DeparturesService> DepartureBoard<DS> {
     /// The source's answer as it is, or its error.
-    pub async fn fetch(&self, rows: u8, now: DateTime<Tz>) -> Result<Departures, SourceError> {
+    pub async fn fetch(&self, rows: u8, now: ZonedDateTime) -> Result<Departures, SourceError> {
         self.service.get_departures(rows, now).await
     }
 
@@ -137,13 +136,16 @@ impl<DS: DeparturesService> DepartureBoard<DS> {
     /// said (brought up to date, and labelled with its age) if that is recent enough.
     async fn for_display(
         &self,
-        now: DateTime<Tz>,
-        max_age: Duration,
+        now: ZonedDateTime,
+        max_age: SignedDuration,
         timeout: StdDuration,
     ) -> (DepartureBoardData, SourceReport) {
         let source = format!("Departures for {}", self.name);
-        let result = within(timeout, self.fetch(self.rows, now)).await;
-        let (board, state) = match self.last_good.resolve(result, now, max_age, &source) {
+        let result = within(timeout, self.fetch(self.rows, now.clone())).await;
+        let (board, state) = match self
+            .last_good
+            .resolve(result, now.clone(), max_age, &source)
+        {
             Fetched::Fresh(departures) => (
                 DepartureBoardData::new(self.name.clone(), departures.station, departures.services),
                 SourceState::Fresh,
@@ -281,8 +283,8 @@ where
         }
         for observer in &self.observers {
             match &result {
-                Ok(report) => observer.render_succeeded(finished, report),
-                Err(error) => observer.render_failed(finished, error),
+                Ok(report) => observer.render_succeeded(finished.clone(), report),
+                Err(error) => observer.render_failed(finished.clone(), error),
             }
         }
         result
@@ -298,7 +300,7 @@ where
         let layouts = if self.image_viewing_service.wants_every_layout() {
             self.layouts.all()
         } else {
-            std::slice::from_ref(self.layouts.current(now))
+            std::slice::from_ref(self.layouts.current(now.clone()))
         };
         let (first, others) = layouts
             .split_first()
@@ -306,7 +308,7 @@ where
 
         let deadline = self.policy.limits.deadline;
         let essentials = async {
-            let (glance_data, sources) = self.gather(location, now).await;
+            let (glance_data, sources) = self.gather(location, now.clone()).await;
             // Without the default there is no picture worth the name, and whatever went wrong would likely go
             // wrong again for the rest, so this failing fails the run.
             self.show(
@@ -349,7 +351,10 @@ where
             observer.display_updated();
         }
         for output in &self.extra_outputs {
-            let (profile, layouts) = (output.profile(), self.layouts_for(output.as_ref(), now));
+            let (profile, layouts) = (
+                output.profile(),
+                self.layouts_for(output.as_ref(), now.clone()),
+            );
             for layout in layouts {
                 drawn.push(LayoutReport {
                     output: output.name().to_owned(),
@@ -367,7 +372,7 @@ where
     }
 
     /// The layouts `output` is given: all of them if it serves them to be chosen from, else the one for this time of day.
-    fn layouts_for(&self, output: &dyn ImageDisplayService, now: DateTime<Tz>) -> &[Layout] {
+    fn layouts_for(&self, output: &dyn ImageDisplayService, now: ZonedDateTime) -> &[Layout] {
         if output.wants_every_layout() {
             self.layouts.all()
         } else {
@@ -421,7 +426,7 @@ where
     async fn gather(
         &self,
         location: Location,
-        now: DateTime<Tz>,
+        now: ZonedDateTime,
     ) -> (GlanceData, Vec<SourceReport>) {
         let (weather, boards) = tokio::join!(
             async {
@@ -430,12 +435,16 @@ where
                     self.weather_service.get_weather_for_location(location),
                 )
                 .await;
-                self.last_weather
-                    .resolve(result, now, self.policy.max_age.weather, "Weather")
+                self.last_weather.resolve(
+                    result,
+                    now.clone(),
+                    self.policy.max_age.weather,
+                    "Weather",
+                )
             },
             futures_util::future::join_all(self.departure_boards.iter().map(|board| {
                 board.for_display(
-                    now,
+                    now.clone(),
                     self.policy.max_age.departures,
                     self.policy.limits.source_timeout,
                 )
@@ -498,7 +507,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -537,7 +546,7 @@ mod tests {
         async fn get_departures(
             &self,
             _: u8,
-            now: DateTime<Tz>,
+            now: ZonedDateTime,
         ) -> Result<Departures, SourceError> {
             if self.1.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
@@ -546,8 +555,8 @@ mod tests {
                 return Err(SourceError::Upstream { status: 503 });
             }
             let at = |minutes: i64| {
-                (now + Duration::minutes(minutes))
-                    .format("%H:%M")
+                (&now + SignedDuration::from_mins(minutes))
+                    .strftime("%H:%M")
                     .to_string()
             };
             let service = |minutes: i64| {
@@ -640,7 +649,7 @@ mod tests {
                 },
                 ..RenderPolicy::default()
             },
-            Arc::new(SystemClock::new(London)),
+            Arc::new(SystemClock::new(london())),
         );
         Rig {
             weather_down,
@@ -767,8 +776,8 @@ mod tests {
         let rig = {
             let mut rig = rig();
             rig.app.policy.max_age = MaxAge {
-                departures: Duration::seconds(-1),
-                weather: Duration::seconds(-1),
+                departures: SignedDuration::from_secs(-1),
+                weather: SignedDuration::from_secs(-1),
             };
             rig
         };
@@ -838,10 +847,10 @@ mod tests {
         fn render_started(&self) {
             self.0.lock().unwrap().push("started");
         }
-        fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {
+        fn render_succeeded(&self, _at: ZonedDateTime, _report: &RenderReport) {
             self.0.lock().unwrap().push("succeeded");
         }
-        fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {
+        fn render_failed(&self, _at: ZonedDateTime, _error: &anyhow::Error) {
             self.0.lock().unwrap().push("failed");
         }
     }
@@ -866,22 +875,20 @@ mod tests {
 
     #[tokio::test]
     async fn the_frame_and_the_outcome_are_stamped_from_the_clock() {
-        use chrono::TimeZone;
-
         use crate::adapters::clock::FixedClock;
 
         #[derive(Default)]
-        struct Stamps(Mutex<Vec<DateTime<Tz>>>);
+        struct Stamps(Mutex<Vec<ZonedDateTime>>);
         impl RenderObserver for Stamps {
             fn render_started(&self) {}
-            fn render_succeeded(&self, at: DateTime<Tz>, _report: &RenderReport) {
+            fn render_succeeded(&self, at: ZonedDateTime, _report: &RenderReport) {
                 self.0.lock().unwrap().push(at);
             }
-            fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {}
+            fn render_failed(&self, _at: ZonedDateTime, _error: &anyhow::Error) {}
         }
 
         let rig = rig();
-        let at = London.with_ymd_and_hms(2026, 6, 15, 9, 41, 0).unwrap();
+        let at = local(&london(), 2026, 6, 15, 9, 41, 0);
         let stamps = Arc::new(Stamps::default());
         let app = Application::new(
             Weather(rig.weather_down.clone()),
@@ -901,7 +908,7 @@ mod tests {
                 },
                 ..RenderPolicy::default()
             },
-            FixedClock::at(at),
+            FixedClock::at(at.clone()),
         )
         .with_observer(stamps.clone());
 
@@ -950,7 +957,7 @@ mod tests {
                 },
                 ..RenderPolicy::default()
             },
-            Arc::new(SystemClock::new(London)),
+            Arc::new(SystemClock::new(london())),
         )
         .with_observer(events.clone());
 
@@ -1042,7 +1049,7 @@ mod tests {
     fn recording_app(
         journal: &Arc<Journal>,
     ) -> Application<Weather, Recording, Recording, Recording, Trains> {
-        recording_app_with(journal, Arc::new(SystemClock::new(London)))
+        recording_app_with(journal, Arc::new(SystemClock::new(london())))
     }
 
     fn recording_app_with(
@@ -1212,7 +1219,7 @@ mod tests {
                 },
                 ..RenderPolicy::default()
             },
-            Arc::new(SystemClock::new(London)),
+            Arc::new(SystemClock::new(london())),
         )
         .with_layouts(layouts);
 
@@ -1243,25 +1250,22 @@ mod tests {
     #[tokio::test]
     async fn a_panel_driven_directly_is_given_the_layout_for_the_time_of_day() {
         use crate::domain::models::layout::{LayoutRule, LayoutSchedule};
-        use chrono::{NaiveTime, TimeZone};
 
         let journal = Arc::new(Journal::default());
         let morning = LayoutRule::new(
             LayoutName::parse("second").unwrap(),
             vec![],
-            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
-            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            jiff::civil::time(6, 0, 0, 0),
+            jiff::civil::time(9, 0, 0, 0),
         )
         .unwrap();
         let layouts = two_layouts()
             .with_schedule(LayoutSchedule::new(vec![morning]))
             .unwrap();
-        let app_at = |hour: u32| {
+        let app_at = |hour: i8| {
             recording_app_with(
                 &journal,
-                crate::adapters::clock::FixedClock::at(
-                    London.with_ymd_and_hms(2026, 10, 12, hour, 0, 0).unwrap(),
-                ),
+                crate::adapters::clock::FixedClock::at(local(&london(), 2026, 10, 12, hour, 0, 0)),
             )
             .with_layouts(layouts.clone())
         };
@@ -1391,7 +1395,6 @@ mod tests {
     async fn an_output_that_serves_one_layout_gets_the_one_for_the_time_of_day_and_a_slow_one_is_given_up_on()
      {
         use crate::domain::models::layout::{LayoutRule, LayoutSchedule};
-        use chrono::{NaiveTime, TimeZone};
 
         let journal = Arc::new(Journal {
             every_layout: true,
@@ -1400,16 +1403,14 @@ mod tests {
         let morning = LayoutRule::new(
             LayoutName::parse("second").unwrap(),
             vec![],
-            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
-            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            jiff::civil::time(6, 0, 0, 0),
+            jiff::civil::time(9, 0, 0, 0),
         )
         .unwrap();
         let single = screen(&journal, false, false);
         recording_app_with(
             &journal,
-            crate::adapters::clock::FixedClock::at(
-                London.with_ymd_and_hms(2026, 10, 12, 7, 0, 0).unwrap(),
-            ),
+            crate::adapters::clock::FixedClock::at(local(&london(), 2026, 10, 12, 7, 0, 0)),
         )
         .with_layouts(
             two_layouts()
@@ -1454,10 +1455,10 @@ mod tests {
         fn display_updated(&self) {
             self.note("display updated");
         }
-        fn render_succeeded(&self, _: DateTime<Tz>, _: &RenderReport) {
+        fn render_succeeded(&self, _: ZonedDateTime, _: &RenderReport) {
             self.note("succeeded");
         }
-        fn render_failed(&self, _: DateTime<Tz>, _: &anyhow::Error) {
+        fn render_failed(&self, _: ZonedDateTime, _: &anyhow::Error) {
             self.note("failed");
         }
     }

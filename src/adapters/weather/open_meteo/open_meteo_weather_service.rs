@@ -1,4 +1,3 @@
-use chrono::{Duration, NaiveDateTime, Utc};
 use reqwest::Client;
 
 use crate::adapters::http;
@@ -15,6 +14,9 @@ use crate::domain::models::weather::{
     WeatherCondition, WeatherInformation,
 };
 use crate::domain::services::weather_service::WeatherService;
+use jiff::civil::DateTime;
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp};
 
 /// Two hours of 15-minute slots.
 const FORECAST_SLOTS: usize = 8;
@@ -140,7 +142,10 @@ impl OpenMeteoWeatherServiceAdapter {
             .first()
             .ok_or_else(|| SourceError::bad_response("the forecast has no daily minimum"))?;
         // Slot times are local to the location, so compare against its local time.
-        let now = local_now(Utc::now().naive_utc(), body.utc_offset_seconds)?;
+        let now = local_now(
+            Timestamp::now().to_zoned_datetime(TimeZone::UTC).datetime(),
+            body.utc_offset_seconds,
+        )?;
         let precipitation =
             PrecipitationOutlook::from_slots(&precipitation_slots(&body.minutely_15), now);
         Ok(Some(
@@ -166,16 +171,16 @@ impl OpenMeteoWeatherServiceAdapter {
 }
 
 /// The location's local time, from UTC and the offset the API gave. A nonsense offset is a bad answer, not a panic.
-fn local_now(utc: NaiveDateTime, utc_offset_seconds: i64) -> Result<NaiveDateTime, SourceError> {
-    Duration::try_seconds(utc_offset_seconds)
-        .and_then(|offset| utc.checked_add_signed(offset))
+fn local_now(utc: DateTime, utc_offset_seconds: i64) -> Result<DateTime, SourceError> {
+    utc.checked_add(SignedDuration::from_secs(utc_offset_seconds))
+        .ok()
         .ok_or_else(|| SourceError::bad_response("the forecast has an impossible UTC offset"))
 }
 
 /// `None` unless both times are present and readable, since half a pair isn't worth showing.
 fn sun_times(daily: &OpenMeteoDailyResponse) -> Option<SunTimes> {
     let parse = |times: &[Option<String>]| {
-        NaiveDateTime::parse_from_str(times.first()?.as_deref()?, "%Y-%m-%dT%H:%M").ok()
+        DateTime::strptime("%Y-%m-%dT%H:%M", times.first()?.as_deref()?).ok()
     };
     Some(SunTimes::new(parse(&daily.sunrise)?, parse(&daily.sunset)?))
 }
@@ -187,7 +192,7 @@ fn precipitation_slots(minutely: &OpenMeteoMinutelyResponse) -> Vec<Precipitatio
         .iter()
         .enumerate()
         .filter_map(|(i, time)| {
-            let starts_at = NaiveDateTime::parse_from_str(time, "%Y-%m-%dT%H:%M").ok()?;
+            let starts_at = DateTime::strptime("%Y-%m-%dT%H:%M", time).ok()?;
             // The API reports what fell in the slot; the chart shows a rate.
             let rate = |values: &[Option<f64>]| {
                 values.get(i).copied().flatten().unwrap_or(0.0) * SLOTS_PER_HOUR
@@ -245,26 +250,19 @@ fn condition_from_wmo_code(code: u8) -> WeatherCondition {
 
 #[cfg(test)]
 mod local_time_tests {
-    use chrono::NaiveDate;
 
     use super::*;
 
     #[test]
     fn the_offset_is_added_to_utc() {
-        let utc = NaiveDate::from_ymd_opt(2026, 6, 15)
-            .unwrap()
-            .and_hms_opt(23, 30, 0)
-            .unwrap();
+        let utc = jiff::civil::date(2026, 6, 15).at(23, 30, 0, 0);
         let local = local_now(utc, 3600).unwrap();
-        assert_eq!(local.to_string(), "2026-06-16 00:30:00");
+        assert_eq!(local, jiff::civil::date(2026, 6, 16).at(0, 30, 0, 0));
     }
 
     #[test]
     fn an_impossible_offset_is_a_bad_response_not_a_panic() {
-        let utc = NaiveDate::from_ymd_opt(2026, 6, 15)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap();
+        let utc = jiff::civil::date(2026, 6, 15).at(12, 0, 0, 0);
         for offset in [i64::MAX, i64::MIN, i64::MAX / 1000] {
             assert!(local_now(utc, offset).is_err(), "{offset}");
         }

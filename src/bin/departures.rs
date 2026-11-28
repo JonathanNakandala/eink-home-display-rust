@@ -8,6 +8,7 @@ use home_display_server::bootstrap::{self, setup_departure_boards};
 use home_display_server::cli::DeparturesArgs;
 use home_display_server::domain::models::departures::{DepartureStatus, Departures};
 use home_display_server::domain::services::credential_source::CredentialSource;
+use jiff::Timestamp;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,7 +33,7 @@ async fn main() -> Result<()> {
     }
 
     let credentials: Arc<dyn CredentialSource> =
-        bootstrap::setup_credentials(&config, Arc::new(SystemClock::new(zone)));
+        bootstrap::setup_credentials(&config, Arc::new(SystemClock::new(zone.clone())));
     for board_config in configs {
         let mut boards = setup_departure_boards(
             std::slice::from_ref(board_config),
@@ -45,7 +46,7 @@ async fn main() -> Result<()> {
         };
         let rows = args.rows.unwrap_or(board_config.rows);
         match board
-            .fetch(rows, chrono::Utc::now().with_timezone(&zone))
+            .fetch(rows, Timestamp::now().to_zoned_datetime(zone.clone()))
             .await
         {
             Ok(departures) => print_board(&board_config.name, &departures),

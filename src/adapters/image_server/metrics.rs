@@ -187,12 +187,12 @@ pub fn render(status: &Status) -> String {
             "When the latest certificate a member was given ends. Alert on this being soon: a display renews with a third of its life left, so one that is close to the end has stopped renewing. Once past, it gets a new one by itself when switched on.",
         );
         for member in &status.members {
-            if let Some(at) = member.certificate_not_after {
+            if let Some(at) = &member.certificate_not_after {
                 let _ = writeln!(
                     out,
                     "home_display_member_certificate_expiry_timestamp_seconds{{device=\"{}\"}} {}",
                     escape(&member.name),
-                    at.timestamp()
+                    at.timestamp().as_second()
                 );
             }
         }
@@ -481,8 +481,8 @@ fn escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
+    use jiff::ZonedDateTime;
 
     use super::*;
     use crate::application::devices::DeviceStatus;
@@ -504,8 +504,8 @@ mod tests {
         );
     }
 
-    fn at() -> chrono::DateTime<chrono_tz::Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap()
+    fn at() -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, 12, 0, 0)
     }
 
     fn status() -> Status {
@@ -567,11 +567,7 @@ mod tests {
                 MemberStatus {
                     name: "kitchen".to_owned(),
                     state: "member",
-                    certificate_not_after: Some(
-                        chrono_tz::Europe::London
-                            .with_ymd_and_hms(2026, 12, 25, 12, 0, 0)
-                            .unwrap(),
-                    ),
+                    certificate_not_after: Some(local(&london(), 2026, 12, 25, 12, 0, 0)),
                     certificate_expires_in_seconds: Some(172_800),
                     certificate_expired: false,
                     renewal_overdue: true,

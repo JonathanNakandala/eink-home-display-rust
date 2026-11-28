@@ -12,12 +12,9 @@
 //! valid `DeviceId`s, and readings in a plausible range. A bad value is dropped, never
 //! an error, because the display must still get its plan.
 
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
-
-use chrono::{DateTime, Duration};
-use chrono_tz::Tz;
-use serde::Serialize;
 use utoipa::{IntoParams, ToSchema};
 
 use super::api_schema::ImageFormatSchema;
@@ -26,6 +23,8 @@ use crate::domain::models::device_id::DeviceId;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::LayoutName;
 use crate::domain::models::profile::firmware_version;
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, ZonedDateTime};
 
 /// More than a household has; stops a stray client filling memory with made-up names.
 const MAX_DEVICES: usize = 16;
@@ -235,10 +234,14 @@ pub struct DeviceStatus {
     /// The name the display gives itself.
     #[schema(value_type = String, examples("reterminal-e1003-a1b2c3"), max_length = 32, pattern = "^[A-Za-z0-9._-]+$")]
     pub name: DeviceId,
-    pub last_seen: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub last_seen: ZonedDateTime,
     pub age_seconds: u64,
     /// When the display was told to come back.
-    pub expected_by: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub expected_by: ZonedDateTime,
     /// Later than it was told to be, plus the grace period.
     pub overdue: bool,
     pub battery_millivolts: Option<u32>,
@@ -274,18 +277,23 @@ pub struct ConnectionStatus {
     pub last_resumed: bool,
     /// From accepting the latest connection to the end of its handshake.
     pub last_handshake_milliseconds: u32,
-    pub last_at: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub last_at: ZonedDateTime,
 }
 
 impl ConnectionStatus {
-    pub fn of(handshakes: &crate::application::handshakes::DeviceHandshakes, zone: Tz) -> Self {
+    pub fn of(
+        handshakes: &crate::application::handshakes::DeviceHandshakes,
+        zone: TimeZone,
+    ) -> Self {
         Self {
             full_handshakes: handshakes.full,
             resumed_handshakes: handshakes.resumed,
             last_resumed: handshakes.last_resumed,
             last_handshake_milliseconds: u32::try_from(handshakes.last_handshake.as_millis())
                 .unwrap_or(u32::MAX),
-            last_at: crate::domain::services::clock::in_zone(handshakes.last_at, zone),
+            last_at: handshakes.last_at.to_zoned_datetime(zone),
         }
     }
 }
@@ -299,7 +307,9 @@ pub struct DeliveryStatus {
     #[schema(value_type = ImageFormatSchema)]
     pub format: ImageFormat,
     pub bytes: u64,
-    pub at: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub at: ZonedDateTime,
     pub age_seconds: u64,
 }
 
@@ -308,28 +318,35 @@ struct Delivery {
     layout: LayoutName,
     format: ImageFormat,
     bytes: u64,
-    at: DateTime<Tz>,
+    at: ZonedDateTime,
 }
 
 struct Record {
-    last_seen: DateTime<Tz>,
-    expected_by: DateTime<Tz>,
+    last_seen: ZonedDateTime,
+    expected_by: ZonedDateTime,
     telemetry: Telemetry,
     /// What the display was last sent. Kept when it checks in again, which replaces the rest.
     delivery: Option<Delivery>,
 }
 
 pub struct DeviceBoard {
-    overdue_grace: Duration,
+    overdue_grace: SignedDuration,
     devices: Mutex<BTreeMap<DeviceId, Record>>,
 }
 
 impl DeviceBoard {
     pub fn new(overdue_grace: std::time::Duration) -> Arc<Self> {
         Arc::new(Self {
-            overdue_grace: Duration::from_std(overdue_grace).unwrap_or(Duration::MAX),
+            overdue_grace: SignedDuration::try_from(overdue_grace).unwrap_or(SignedDuration::MAX),
             devices: Mutex::default(),
         })
+    }
+
+    /// Whether a display told to be back by `expected_by` is later than that and the grace period at `now`.
+    fn is_overdue(&self, now: &ZonedDateTime, expected_by: &ZonedDateTime) -> bool {
+        expected_by
+            .checked_add(self.overdue_grace)
+            .is_ok_and(|limit| *now > limit)
     }
 
     fn devices(&self) -> std::sync::MutexGuard<'_, BTreeMap<DeviceId, Record>> {
@@ -339,10 +356,12 @@ impl DeviceBoard {
     /// Notes a check-in at `now`, from a display just told to come back in `next_seconds`.
     /// Logs what an operator would want to hear about: a battery getting worse, or a display
     /// that returns after going quiet.
-    pub fn record(&self, now: DateTime<Tz>, telemetry: Telemetry, next_seconds: u64) {
-        let expected_by = Duration::try_seconds(next_seconds.try_into().unwrap_or(i64::MAX))
-            .and_then(|wait| now.checked_add_signed(wait))
-            .unwrap_or(now);
+    pub fn record(&self, now: ZonedDateTime, telemetry: Telemetry, next_seconds: u64) {
+        let expected_by = i64::try_from(next_seconds)
+            .ok()
+            .map(SignedDuration::from_secs)
+            .and_then(|wait| now.checked_add(wait).ok())
+            .unwrap_or_else(|| now.clone());
         let mut devices = self.devices();
         if devices.len() >= MAX_DEVICES && !devices.contains_key(&telemetry.device) {
             tracing::warn!(
@@ -412,10 +431,10 @@ impl DeviceBoard {
                         ),
                     }
                 }
-                if now > before.expected_by + self.overdue_grace {
+                if self.is_overdue(&now, &before.expected_by) {
                     tracing::info!(
                         device = ?telemetry.device,
-                        silent_minutes = (now - before.expected_by).num_minutes(),
+                        silent_minutes = now.duration_since(&before.expected_by).as_mins(),
                         "Display is back after being overdue"
                     );
                 }
@@ -444,7 +463,7 @@ impl DeviceBoard {
         layout: &LayoutName,
         format: ImageFormat,
         bytes: u64,
-        now: DateTime<Tz>,
+        now: ZonedDateTime,
     ) {
         match self.devices().get_mut(device) {
             Some(record) => {
@@ -468,15 +487,19 @@ impl DeviceBoard {
             .map(|delivery| delivery.layout.clone())
     }
 
-    pub fn snapshot(&self, now: DateTime<Tz>) -> Vec<DeviceStatus> {
+    pub fn snapshot(&self, now: ZonedDateTime) -> Vec<DeviceStatus> {
         self.devices()
             .iter()
             .map(|(name, record)| DeviceStatus {
                 name: name.clone(),
-                last_seen: record.last_seen,
-                age_seconds: (now - record.last_seen).num_seconds().max(0).unsigned_abs(),
-                expected_by: record.expected_by,
-                overdue: now > record.expected_by + self.overdue_grace,
+                last_seen: record.last_seen.clone(),
+                age_seconds: now
+                    .duration_since(&record.last_seen)
+                    .as_secs()
+                    .max(0)
+                    .unsigned_abs(),
+                expected_by: record.expected_by.clone(),
+                overdue: self.is_overdue(&now, &record.expected_by),
                 battery_millivolts: record.telemetry.battery_millivolts,
                 battery_percent: record.telemetry.battery_percent,
                 battery_state: record.telemetry.battery_state,
@@ -492,8 +515,12 @@ impl DeviceBoard {
                     layout: delivery.layout.to_string(),
                     format: delivery.format,
                     bytes: delivery.bytes,
-                    at: delivery.at,
-                    age_seconds: (now - delivery.at).num_seconds().max(0).unsigned_abs(),
+                    at: delivery.at.clone(),
+                    age_seconds: now
+                        .duration_since(&delivery.at)
+                        .as_secs()
+                        .max(0)
+                        .unsigned_abs(),
                 }),
             })
             .collect()
@@ -523,13 +550,12 @@ fn describe_battery(telemetry: &Telemetry) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
 
     use super::*;
 
-    fn at(h: u32, m: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap()
+    fn at(h: i8, m: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, h, m, 0)
     }
 
     fn raw(pairs: &[(&str, &str)]) -> RawTelemetry {

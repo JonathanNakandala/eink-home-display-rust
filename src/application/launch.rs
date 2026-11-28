@@ -10,26 +10,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
-use chrono_tz::Tz;
-
 use crate::application::plan::render_due;
 use crate::domain::models::display::ImageFormat;
 use crate::domain::models::layout::{LayoutName, Layouts};
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::models::schedule::Schedule;
-use crate::domain::services::clock::{Clock, in_zone};
+use crate::domain::services::clock::Clock;
 use crate::domain::services::published_images::PublishedImages;
 use crate::domain::services::render_observer::RenderObserver;
+use jiff::{SignedDuration, Timestamp, ZonedDateTime};
 
 /// When to make the first render, or None to wait for the first scheduled slot.
 pub fn first_render_at(
-    now: DateTime<Tz>,
+    now: ZonedDateTime,
     skip: bool,
     image_is_current: bool,
-    last_attempt: Option<DateTime<Utc>>,
+    last_attempt: Option<Timestamp>,
     cooldown: Duration,
-) -> Option<DateTime<Tz>> {
+) -> Option<ZonedDateTime> {
     if skip || image_is_current {
         return None;
     }
@@ -37,13 +35,14 @@ pub fn first_render_at(
     // corrected since). Counted from there, the cooldown would hold off every render until then, so it
     // is counted from now instead.
     let earliest = last_attempt.and_then(|at| {
-        chrono::Duration::from_std(cooldown).ok().and_then(|c| {
-            at.with_timezone(&now.timezone())
-                .min(now)
-                .checked_add_signed(c)
-        })
+        let cooldown = SignedDuration::try_from(cooldown).ok()?;
+        at.min(now.timestamp()).checked_add(cooldown).ok()
     });
-    Some(earliest.map_or(now, |earliest| earliest.max(now)))
+    let earliest = earliest.map(|at| at.to_zoned_datetime(now.time_zone().clone()));
+    Some(match earliest {
+        Some(earliest) => earliest.max(now),
+        None => now,
+    })
 }
 
 /// Whether the image of `layout` being served has no render due yet, so it needn't be redone at start-up.
@@ -52,14 +51,21 @@ pub async fn served_image_is_current(
     layout: &LayoutName,
     format: ImageFormat,
     schedule: &Schedule,
-    now: DateTime<Tz>,
+    now: ZonedDateTime,
 ) -> bool {
     images
         .published_at(layout, format)
         .await
         .ok()
         .flatten()
-        .and_then(|rendered| render_due(now, in_zone(rendered, now.timezone()), schedule).ok())
+        .and_then(|rendered| {
+            render_due(
+                now.clone(),
+                rendered.to_zoned_datetime(now.time_zone().clone()),
+                schedule,
+            )
+            .ok()
+        })
         .is_some_and(|due| !due)
 }
 
@@ -71,10 +77,10 @@ pub async fn served_images_are_current(
     layouts: &Layouts,
     format: ImageFormat,
     schedule: &Schedule,
-    now: DateTime<Tz>,
+    now: ZonedDateTime,
 ) -> bool {
     for layout in layouts.all() {
-        if !served_image_is_current(images, &layout.name, format, schedule, now).await {
+        if !served_image_is_current(images, &layout.name, format, schedule, now.clone()).await {
             return false;
         }
     }
@@ -96,7 +102,7 @@ impl AttemptMarker {
 
 impl RenderObserver for AttemptMarker {
     fn render_started(&self) {
-        if let Err(e) = std::fs::write(&self.path, self.clock.now().to_rfc3339()) {
+        if let Err(e) = std::fs::write(&self.path, self.clock.instant().to_string()) {
             tracing::warn!(
                 "Could not record the render attempt in {}: {e}",
                 self.path.display()
@@ -104,36 +110,35 @@ impl RenderObserver for AttemptMarker {
         }
     }
 
-    fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {}
+    fn render_succeeded(&self, _at: ZonedDateTime, _report: &RenderReport) {}
 
-    fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {}
+    fn render_failed(&self, _at: ZonedDateTime, _error: &anyhow::Error) {}
 }
 
 /// When the last render was started, from the marker; None if there is none or it can't be read.
-pub fn last_attempt(marker: &Path) -> Option<DateTime<Utc>> {
+pub fn last_attempt(marker: &Path) -> Option<Timestamp> {
     let text = std::fs::read_to_string(marker).ok()?;
-    DateTime::parse_from_rfc3339(text.trim())
-        .ok()
-        .map(|at| at.with_timezone(&Utc))
+    text.trim().parse().ok()
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::from_days;
+    use crate::domain::services::clock::{local, london};
+    use jiff::SignedDuration;
 
     use super::*;
     use crate::adapters::published_images::DirectoryImages;
 
     const COOLDOWN: Duration = Duration::from_secs(120);
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: i8, m: i8, s: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, h, m, s)
     }
 
     /// The same moment as an instant, which is how the marker and the published image are read.
-    fn utc(h: u32, m: u32, s: u32) -> DateTime<Utc> {
-        at(h, m, s).with_timezone(&Utc)
+    fn utc(h: i8, m: i8, s: i8) -> Timestamp {
+        at(h, m, s).timestamp()
     }
 
     #[test]
@@ -156,7 +161,7 @@ mod tests {
     #[test]
     fn an_attempt_in_the_future_counts_from_now_not_from_then() {
         // Written while the clock was a day ahead: the render must not wait a day for it.
-        let future = Some(utc(12, 0, 0) + chrono::Duration::days(1));
+        let future = Some(utc(12, 0, 0) + from_days(1));
         assert_eq!(
             first_render_at(at(12, 0, 0), false, false, future, COOLDOWN),
             Some(at(12, 2, 0))
@@ -225,9 +230,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let images = DirectoryImages::new(tmp.path());
         let schedule = Schedule::parse_every("1h").unwrap();
-        let now = chrono::Utc::now().with_timezone(&London);
+        let now = Timestamp::now().to_zoned_datetime(london());
         assert!(
-            !served_image_is_current(&images, &dashboard(), ImageFormat::Bmp, &schedule, now).await
+            !served_image_is_current(
+                &images,
+                &dashboard(),
+                ImageFormat::Bmp,
+                &schedule,
+                now.clone()
+            )
+            .await
         );
 
         images
@@ -235,7 +247,14 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            served_image_is_current(&images, &dashboard(), ImageFormat::Bmp, &schedule, now).await
+            served_image_is_current(
+                &images,
+                &dashboard(),
+                ImageFormat::Bmp,
+                &schedule,
+                now.clone()
+            )
+            .await
         );
         assert!(
             !served_image_is_current(
@@ -243,7 +262,7 @@ mod tests {
                 &dashboard(),
                 ImageFormat::Bmp,
                 &schedule,
-                now + chrono::Duration::hours(2)
+                now.clone() + SignedDuration::from_hours(2)
             )
             .await
         );
@@ -254,7 +273,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let images = DirectoryImages::new(tmp.path());
         let schedule = Schedule::parse_every("1h").unwrap();
-        let now = chrono::Utc::now().with_timezone(&London);
+        let now = Timestamp::now().to_zoned_datetime(london());
         let layouts = Layouts::new(vec![
             crate::domain::models::layout::Layout::new("dashboard", "First"),
             crate::domain::models::layout::Layout::new("added", "Added since the last run"),
@@ -268,10 +287,18 @@ mod tests {
 
         // The first layout is current, but the one added since has never been drawn.
         assert!(
-            served_image_is_current(&images, &dashboard, ImageFormat::Bmp, &schedule, now).await
+            served_image_is_current(
+                &images,
+                &dashboard,
+                ImageFormat::Bmp,
+                &schedule,
+                now.clone()
+            )
+            .await
         );
         assert!(
-            !served_images_are_current(&images, &layouts, ImageFormat::Bmp, &schedule, now).await
+            !served_images_are_current(&images, &layouts, ImageFormat::Bmp, &schedule, now.clone())
+                .await
         );
 
         images
@@ -279,7 +306,8 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            served_images_are_current(&images, &layouts, ImageFormat::Bmp, &schedule, now).await
+            served_images_are_current(&images, &layouts, ImageFormat::Bmp, &schedule, now.clone())
+                .await
         );
         // And one out of date is enough to render again.
         assert!(
@@ -288,7 +316,7 @@ mod tests {
                 &layouts,
                 ImageFormat::Bmp,
                 &schedule,
-                now + chrono::Duration::hours(2)
+                now.clone() + SignedDuration::from_hours(2)
             )
             .await
         );

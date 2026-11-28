@@ -63,13 +63,9 @@ async fn main() -> anyhow::Result<()> {
 
     let start = match &args.start {
         Some(s) => Date::strptime("%Y-%m-%d", s).context("Invalid --start date")?,
-        None => {
-            use chrono::Datelike;
-            let today = chrono::Utc::now()
-                .with_timezone(&home_display_server::adapters::zone::host())
-                .date_naive();
-            jiff::civil::date(today.year() as i16, today.month() as i8, today.day() as i8)
-        }
+        None => jiff::Timestamp::now()
+            .to_zoned_datetime(home_display_server::adapters::zone::host())
+            .date(),
     };
 
     let app = QuietTimesApplication::new(

@@ -1,29 +1,15 @@
-use chrono::DateTime;
-use chrono_tz::Tz;
-use jiff::{SignedDuration, Timestamp};
+use jiff::tz::{AmbiguousOffset, TimeZone};
+use jiff::{SignedDuration, Timestamp, ZonedDateTime};
 
 /// What time it is. Asked for instead of read from the system, so what depends on the time
 /// (a frame's clock and countdowns, whether an image is stale) can be tested at a chosen moment.
 pub trait Clock: Send + Sync {
-    fn now(&self) -> DateTime<Tz>;
+    fn now(&self) -> ZonedDateTime;
 
     /// The same moment as `now`, without a zone: for what is stored, compared and sent as a point in time.
     fn instant(&self) -> Timestamp {
-        instant_of(self.now())
+        self.now().timestamp()
     }
-}
-
-/// The moment `at` is, without its zone. (Until the clock itself is jiff's, this is how the two meet.)
-pub fn instant_of(at: DateTime<Tz>) -> Timestamp {
-    Timestamp::from_second(at.timestamp()).expect("a clock reads a date jiff can hold")
-}
-
-/// `at` as the time on the wall in `zone`. (Until the clock itself is jiff's, this is how the two meet.)
-pub fn in_zone(at: Timestamp, zone: Tz) -> DateTime<Tz> {
-    use chrono::TimeZone;
-    zone.timestamp_opt(at.as_second(), at.subsec_nanosecond() as u32)
-        .single()
-        .expect("every moment has a time in a zone")
 }
 
 /// A whole number of days as a length of time, counting every day as 24 hours (which is what a certificate's or
@@ -47,6 +33,22 @@ pub fn implausible(now: Timestamp) -> String {
     )
 }
 
+/// The moments a time on the wall clock of `zone` means: one, or two for a time the clocks show twice when they go
+/// back (the earlier first), or none for one they skip when they go forward.
+pub fn moments_at(zone: &TimeZone, at: jiff::civil::DateTime) -> Vec<ZonedDateTime> {
+    let ambiguous = zone.to_ambiguous_zoned_datetime(at);
+    match ambiguous.offset() {
+        AmbiguousOffset::Unambiguous { .. } => ambiguous.unambiguous().into_iter().collect(),
+        AmbiguousOffset::Fold { .. } => ambiguous
+            .clone()
+            .earlier()
+            .into_iter()
+            .chain(ambiguous.later())
+            .collect(),
+        AmbiguousOffset::Gap { .. } => Vec::new(),
+    }
+}
+
 /// A moment in UTC, for tests: `utc(2026, 10, 8, 12, 0, 0)`.
 #[cfg(test)]
 pub fn utc(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> Timestamp {
@@ -55,6 +57,36 @@ pub fn utc(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> T
         .to_zoned_datetime(jiff::tz::TimeZone::UTC)
         .expect("a valid moment")
         .timestamp()
+}
+
+/// London, the zone the tests keep their clocks in: it has summer time, so a test that crosses a clock change can
+/// say so.
+#[cfg(test)]
+pub fn london() -> jiff::tz::TimeZone {
+    jiff::tz::TimeZone::get("Europe/London").expect("the timezone database has Europe/London")
+}
+
+/// A zone by its IANA name, for tests: `zone("Australia/Sydney")`.
+#[cfg(test)]
+pub fn zone(name: &str) -> jiff::tz::TimeZone {
+    jiff::tz::TimeZone::get(name).expect("a zone in the timezone database")
+}
+
+/// A moment on the wall clock of `zone`, for tests: `local(&london(), 2026, 6, 15, 8, 0, 0)`.
+#[cfg(test)]
+pub fn local(
+    zone: &jiff::tz::TimeZone,
+    year: i16,
+    month: i8,
+    day: i8,
+    hour: i8,
+    minute: i8,
+    second: i8,
+) -> ZonedDateTime {
+    jiff::civil::date(year, month, day)
+        .at(hour, minute, second, 0)
+        .to_zoned_datetime(zone.clone())
+        .expect("a valid moment")
 }
 
 #[cfg(test)]

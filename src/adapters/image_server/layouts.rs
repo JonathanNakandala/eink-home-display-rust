@@ -144,6 +144,8 @@ pub(super) async fn layouts(State(published): State<Arc<Published>>) -> Response
 mod tests {
     use super::super::testing::{FIRST, publish, publish_layout, start, start_with_two_layouts};
     use crate::domain::models::display::ImageFormat;
+    use crate::domain::services::clock::london;
+    use jiff::ZonedDateTime;
 
     async fn body(url: String) -> (u16, String) {
         let response = reqwest::get(url).await.unwrap();
@@ -279,7 +281,6 @@ mod tests {
     use crate::domain::models::device_id::DeviceId;
     use crate::domain::models::layout::{Layout, LayoutName, Layouts};
     use crate::domain::services::layout_choices::LayoutChoices;
-    use chrono_tz::Europe::London;
 
     /// A server with two layouts, in which `kitchen` is a member, and what is needed to choose layouts for it.
     async fn with_a_member(directory: &std::path::Path) -> (String, Members) {
@@ -288,7 +289,7 @@ mod tests {
             Layout::new("departures", "Just the trains"),
         ])
         .unwrap();
-        with_a_member_at(directory, layouts, Arc::new(SystemClock::new(London))).await
+        with_a_member_at(directory, layouts, Arc::new(SystemClock::new(london()))).await
     }
 
     /// The same, with these layouts (and so their schedule) and this clock.
@@ -431,15 +432,15 @@ mod tests {
 
     use crate::adapters::clock::FixedClock;
     use crate::domain::models::layout::{LayoutRule, LayoutSchedule};
-    use chrono::{NaiveTime, TimeZone};
+    use crate::domain::services::clock::local;
 
     /// Two layouts, with `departures` wanted from 06:30 to 09:30 on any day.
     fn with_a_morning_rule() -> Layouts {
         let morning = LayoutRule::new(
             LayoutName::parse("departures").unwrap(),
             vec![],
-            NaiveTime::from_hms_opt(6, 30, 0).unwrap(),
-            NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+            jiff::civil::time(6, 30, 0, 0),
+            jiff::civil::time(9, 30, 0, 0),
         )
         .unwrap();
         Layouts::new(vec![
@@ -451,10 +452,8 @@ mod tests {
         .unwrap()
     }
 
-    fn at(hour: u32, minute: u32) -> chrono::DateTime<chrono_tz::Tz> {
-        London
-            .with_ymd_and_hms(2026, 10, 12, hour, minute, 0)
-            .unwrap()
+    fn at(hour: i8, minute: i8) -> ZonedDateTime {
+        local(&london(), 2026, 10, 12, hour, minute, 0)
     }
 
     #[tokio::test]

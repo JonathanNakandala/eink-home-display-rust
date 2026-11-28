@@ -6,12 +6,9 @@
 //! overdue (the same rule `/plan` uses, so the two can't disagree). A source being down is
 //! shown, but the dashboard is still updating, so it is not a failed health check.
 
-use std::sync::{Arc, Mutex, PoisonError};
-
-use chrono::DateTime;
-use chrono_tz::Tz;
 use jiff::SignedDuration;
 use serde::Serialize;
+use std::sync::{Arc, Mutex, PoisonError};
 use utoipa::ToSchema;
 
 use super::api_schema::{LayoutReportSchema, SourceReportSchema};
@@ -23,8 +20,8 @@ use crate::domain::models::pairing::{Pairing, PairingState, renewal_overdue};
 use crate::domain::models::profile::DeviceProfile;
 use crate::domain::models::render_report::{LayoutReport, RenderReport, SourceReport};
 use crate::domain::models::schedule::Schedule;
-use crate::domain::services::clock::{in_zone, instant_of};
 use crate::domain::services::render_observer::RenderObserver;
+use jiff::ZonedDateTime;
 
 /// Long enough for a render error to be recognisable, short enough for a one-line log or a page.
 const MAX_ERROR_CHARS: usize = 300;
@@ -64,7 +61,9 @@ pub struct Status {
     pub devices: Vec<DeviceStatus>,
     /// Where each display stands in the certificate authority. Empty over plain HTTP.
     pub members: Vec<MemberStatus>,
-    pub next_render: Option<DateTime<Tz>>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::option::serialize")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub next_render: Option<ZonedDateTime>,
     /// The refresh schedule in words, one line per cron expression.
     pub schedule: Vec<String>,
     pub uptime_seconds: u64,
@@ -73,7 +72,9 @@ pub struct Status {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ImageStatus {
-    pub rendered_at: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub rendered_at: ZonedDateTime,
     pub age_seconds: u64,
     /// The same number `/plan` reports.
     pub version: u32,
@@ -130,7 +131,9 @@ pub struct MemberStatus {
     #[schema(examples("member"))]
     pub state: &'static str,
     /// For a member, when the latest certificate it was given ends.
-    pub certificate_not_after: Option<DateTime<Tz>>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::option::serialize")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub certificate_not_after: Option<ZonedDateTime>,
     /// Seconds until then; negative once it has passed.
     pub certificate_expires_in_seconds: Option<i64>,
     /// A member whose certificate has run out. Nothing to fix: it gets a new one by itself, with no one
@@ -162,16 +165,16 @@ impl MemberStatus {
     }
 
     /// `lifetime` is how long the certificates this server issues last.
-    pub fn of(pairing: &Pairing, now: DateTime<Tz>, lifetime: SignedDuration) -> Self {
+    pub fn of(pairing: &Pairing, now: ZonedDateTime, lifetime: SignedDuration) -> Self {
         let (state, ends) = match &pairing.state {
             PairingState::Enrolled { not_after, .. } => ("member", Some(*not_after)),
             other => (other.name(), None),
         };
-        let seconds = ends.map(|end| end.duration_since(instant_of(now)).as_secs());
+        let seconds = ends.map(|end| end.duration_since(now.timestamp()).as_secs());
         Self {
             name: pairing.device.to_string(),
             state,
-            certificate_not_after: ends.map(|end| in_zone(end, now.timezone())),
+            certificate_not_after: ends.map(|end| end.to_zoned_datetime(now.time_zone().clone())),
             certificate_expires_in_seconds: seconds,
             certificate_expired: seconds.is_some_and(|s| s <= 0),
             renewal_overdue: seconds
@@ -191,13 +194,17 @@ impl MemberStatus {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Moment {
-    pub at: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub at: ZonedDateTime,
     pub age_seconds: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct FailureStatus {
-    pub at: DateTime<Tz>,
+    #[serde(serialize_with = "crate::application::api_schema::moment::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub at: ZonedDateTime,
     pub age_seconds: u64,
     pub error: String,
 }
@@ -214,10 +221,9 @@ impl Status {
             (Health::Stale, None) => "stale: no image has been rendered".to_owned(),
             (Health::Stale, Some(image)) => format!(
                 "stale: the image is {} old",
-                format_age(
-                    chrono::Duration::try_seconds(image.age_seconds.try_into().unwrap_or(i64::MAX))
-                        .unwrap_or(chrono::Duration::zero())
-                )
+                format_age(SignedDuration::from_secs(
+                    i64::try_from(image.age_seconds).unwrap_or(i64::MAX)
+                ))
             ),
             (Health::Starting, _) => "starting".to_owned(),
             (Health::Ok, _) => "ok".to_owned(),
@@ -228,12 +234,12 @@ impl Status {
 }
 
 struct Success {
-    at: DateTime<Tz>,
+    at: ZonedDateTime,
     report: RenderReport,
 }
 
 struct Failure {
-    at: DateTime<Tz>,
+    at: ZonedDateTime,
     error: String,
 }
 
@@ -248,12 +254,12 @@ struct Record {
 /// The render history. Shared between the render loop, which writes it, and the server, which
 /// reads it. Times are passed in, so the logic is the same in tests as in use.
 pub struct StatusBoard {
-    started: DateTime<Tz>,
+    started: ZonedDateTime,
     record: Mutex<Record>,
 }
 
 impl StatusBoard {
-    pub fn new(started: DateTime<Tz>) -> Arc<Self> {
+    pub fn new(started: ZonedDateTime) -> Arc<Self> {
         Arc::new(Self {
             started,
             record: Mutex::default(),
@@ -269,19 +275,30 @@ impl StatusBoard {
     /// The status as of `now`. `rendered_at` is when the image being served was written, if there is one.
     pub fn status(
         &self,
-        now: DateTime<Tz>,
-        rendered_at: Option<DateTime<Tz>>,
+        now: ZonedDateTime,
+        rendered_at: Option<ZonedDateTime>,
         schedule: &Schedule,
         timing: PlanTiming,
     ) -> anyhow::Result<Status> {
         let record = self.record();
-        let uptime = (now - self.started).max(chrono::Duration::zero());
-        let age = |at: DateTime<Tz>| (now - at).num_seconds().max(0).unsigned_abs();
+        let uptime = now.duration_since(&self.started).max(SignedDuration::ZERO);
+        let age = |at: &ZonedDateTime| now.duration_since(at).as_secs().max(0).unsigned_abs();
 
-        let state = match rendered_at {
-            None if uptime.to_std().unwrap_or_default() <= timing.stale_grace => Health::Starting,
+        let state = match rendered_at.clone() {
+            None if std::time::Duration::try_from(uptime).unwrap_or_default()
+                <= timing.stale_grace =>
+            {
+                Health::Starting
+            }
             None => Health::Stale,
-            Some(rendered_at) if is_stale(now, rendered_at, schedule, timing.stale_grace)? => {
+            Some(rendered_at)
+                if is_stale(
+                    now.clone(),
+                    rendered_at.clone(),
+                    schedule,
+                    timing.stale_grace,
+                )? =>
+            {
                 Health::Stale
             }
             Some(_) if record.consecutive_failures > 0 => Health::Failing,
@@ -300,17 +317,17 @@ impl StatusBoard {
             state,
             rendering: record.rendering,
             image: rendered_at.map(|rendered_at| ImageStatus {
-                rendered_at,
-                age_seconds: age(rendered_at),
-                version: version_of(rendered_at),
+                rendered_at: rendered_at.clone(),
+                age_seconds: age(&rendered_at),
+                version: version_of(&rendered_at),
             }),
             last_success: record.last_success.as_ref().map(|s| Moment {
-                at: s.at,
-                age_seconds: age(s.at),
+                at: s.at.clone(),
+                age_seconds: age(&s.at),
             }),
             last_failure: record.last_failure.as_ref().map(|f| FailureStatus {
-                at: f.at,
-                age_seconds: age(f.at),
+                at: f.at.clone(),
+                age_seconds: age(&f.at),
                 error: f.error.clone(),
             }),
             consecutive_failures: record.consecutive_failures,
@@ -328,7 +345,7 @@ impl StatusBoard {
             members: Vec::new(),
             next_render: schedule.next_after(now).ok(),
             schedule: schedule.describe(),
-            uptime_seconds: uptime.num_seconds().unsigned_abs(),
+            uptime_seconds: uptime.as_secs().unsigned_abs(),
             version: env!("CARGO_PKG_VERSION"),
         })
     }
@@ -339,7 +356,7 @@ impl RenderObserver for StatusBoard {
         self.record().rendering = true;
     }
 
-    fn render_succeeded(&self, at: DateTime<Tz>, report: &RenderReport) {
+    fn render_succeeded(&self, at: ZonedDateTime, report: &RenderReport) {
         let mut record = self.record();
         record.rendering = false;
         record.consecutive_failures = 0;
@@ -349,7 +366,7 @@ impl RenderObserver for StatusBoard {
         });
     }
 
-    fn render_failed(&self, at: DateTime<Tz>, error: &anyhow::Error) {
+    fn render_failed(&self, at: ZonedDateTime, error: &anyhow::Error) {
         let mut record = self.record();
         record.rendering = false;
         record.consecutive_failures = record.consecutive_failures.saturating_add(1);
@@ -371,11 +388,10 @@ fn one_line(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
     use std::time::Duration;
 
     use anyhow::anyhow;
-    use chrono::TimeZone;
 
     use super::*;
     use crate::domain::models::render_report::SourceState;
@@ -386,15 +402,19 @@ mod tests {
         stale_grace: Duration::from_secs(300),
     };
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: i8, m: i8, s: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, h, m, s)
     }
 
     fn schedule() -> Schedule {
         Schedule::parse_cron("*/10 * * * *").unwrap()
     }
 
-    fn health(board: &StatusBoard, now: DateTime<Tz>, rendered_at: Option<DateTime<Tz>>) -> Health {
+    fn health(
+        board: &StatusBoard,
+        now: ZonedDateTime,
+        rendered_at: Option<ZonedDateTime>,
+    ) -> Health {
         board
             .status(now, rendered_at, &schedule(), TIMING)
             .unwrap()
@@ -507,7 +527,7 @@ mod tests {
         assert_eq!(status.image.as_ref().unwrap().age_seconds, 240);
         assert_eq!(
             status.image.as_ref().unwrap().version,
-            version_of(at(12, 0, 5))
+            version_of(&at(12, 0, 5))
         );
         assert_eq!(status.last_success.as_ref().unwrap().age_seconds, 240);
         assert_eq!(status.next_render, Some(at(12, 10, 0)));
@@ -551,12 +571,12 @@ mod tests {
         use crate::domain::models::pairing::PublicKey;
         let device = DeviceId::parse("kitchen").unwrap();
         let key = PublicKey::from_der(vec![1; 91]);
-        Pairing::new(device, key, state, instant_of(at(8, 0, 0)))
+        Pairing::new(device, key, state, at(8, 0, 0).timestamp())
     }
 
     #[test]
     fn a_member_shows_when_its_certificate_ends() {
-        let ends = instant_of(at(12, 0, 0)) + from_days(3);
+        let ends = at(12, 0, 0).timestamp() + from_days(3);
         let member = MemberStatus::of(
             &pairing(PairingState::Enrolled {
                 serial: "01".to_owned(),
@@ -568,13 +588,13 @@ mod tests {
         assert_eq!(member.name, "kitchen");
         assert_eq!(member.state, "member");
         assert_eq!(member.certificate_expires_in_seconds, Some(3 * 86_400));
-        assert_eq!(instant_of(member.certificate_not_after.unwrap()), ends);
+        assert_eq!(member.certificate_not_after.unwrap().timestamp(), ends);
         assert!(!member.certificate_expired);
     }
 
     #[test]
     fn a_certificate_that_has_run_out_is_shown_as_expired_with_a_negative_time_left() {
-        let ended = instant_of(at(12, 0, 0)) - from_days(2);
+        let ended = at(12, 0, 0).timestamp() - from_days(2);
         let member = MemberStatus::of(
             &pairing(PairingState::Enrolled {
                 serial: "01".to_owned(),
@@ -595,7 +615,7 @@ mod tests {
             MemberStatus::of(
                 &pairing(PairingState::Enrolled {
                     serial: "01".to_owned(),
-                    not_after: instant_of(at(12, 0, 0)) + from_days(days_left),
+                    not_after: at(12, 0, 0).timestamp() + from_days(days_left),
                 }),
                 at(12, 0, 0),
                 LIFETIME,
@@ -626,7 +646,7 @@ mod tests {
         };
         let mut member = pairing(PairingState::Enrolled {
             serial: "01".to_owned(),
-            not_after: instant_of(at(12, 0, 0)) + from_days(60),
+            not_after: at(12, 0, 0).timestamp() + from_days(60),
         });
         assert_eq!(
             MemberStatus::of(&member, at(12, 0, 0), LIFETIME).profile,
@@ -636,7 +656,7 @@ mod tests {
         member.replacement = Some(Replacement {
             key: PublicKey::from_der(vec![3; 91]),
             approved: false,
-            requested_at: instant_of(at(10, 0, 0)),
+            requested_at: at(10, 0, 0).timestamp(),
             profile: Some(profile("Waiting Model")),
         });
         let status = MemberStatus::of(&member, at(12, 0, 0), LIFETIME);
@@ -680,12 +700,12 @@ mod tests {
         assert!(!MemberStatus::of(&changing, at(12, 0, 0), LIFETIME).changing_keys);
         changing.rollover = Some(Rollover {
             key: PublicKey::from_der(vec![2; 91]),
-            since: instant_of(at(9, 0, 0)),
+            since: at(9, 0, 0).timestamp(),
         });
         changing.replacement = Some(Replacement {
             key: PublicKey::from_der(vec![3; 91]),
             approved: false,
-            requested_at: instant_of(at(10, 0, 0)),
+            requested_at: at(10, 0, 0).timestamp(),
             profile: None,
         });
         let status = MemberStatus::of(&changing, at(12, 0, 0), LIFETIME);

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono_tz::Tz;
 use httpmock::prelude::*;
 use speculoos::prelude::*;
 
@@ -13,6 +12,7 @@ use crate::domain::models::source_error::SourceError;
 use crate::domain::models::weather::{WeatherCondition, WeatherInformation};
 use crate::domain::services::credential_source::{CredentialSource, FixedCredentials};
 use crate::domain::services::weather_service::WeatherService;
+use jiff::tz::TimeZone;
 
 fn fixed_key() -> Arc<dyn CredentialSource> {
     Arc::new(FixedCredentials::none().with(CredentialName::OpenWeather, "apikey"))
@@ -53,7 +53,7 @@ async fn a_key_set_after_the_service_was_made_is_used_from_the_next_request() {
             .header("content-type", "application/json")
             .body(SAMPLE);
     });
-    let credentials = Credentials::new(Arc::new(SystemClock::new(Tz::UTC)), []);
+    let credentials = Credentials::new(Arc::new(SystemClock::new(TimeZone::UTC)), []);
     let under_test = OpenWeatherWeatherServiceAdapter::new(
         server.base_url(),
         credentials.clone(),

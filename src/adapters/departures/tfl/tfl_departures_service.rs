@@ -1,14 +1,12 @@
 use std::collections::HashSet;
 
-use chrono::{DateTime, Duration};
-use chrono_tz::Tz;
-
 use crate::adapters::stop_points::tfl::tfl_stop_point_service::TflStopPointServiceAdapter;
 use crate::domain::models::arrival::Arrival;
 use crate::domain::models::departures::{DepartureService, DepartureStatus, Departures, countdown};
 use crate::domain::models::source_error::SourceError;
 use crate::domain::services::arrivals_service::ArrivalsService;
 use crate::domain::services::departures_service::DeparturesService;
+use jiff::{SignedDuration, ZonedDateTime};
 
 /// Presents live TfL arrivals at one stop as a departures board.
 #[derive(derive_new::new)]
@@ -23,7 +21,7 @@ impl DeparturesService for TflDeparturesServiceAdapter {
     async fn get_departures(
         &self,
         num_rows: u8,
-        now: DateTime<Tz>,
+        now: ZonedDateTime,
     ) -> Result<Departures, SourceError> {
         let arrivals = self.arrivals.get_arrivals(&self.stop_id).await?;
         let show_line = serves_several_lines(&arrivals);
@@ -33,7 +31,7 @@ impl DeparturesService for TflDeparturesServiceAdapter {
             .unwrap_or_default();
         let services = catchable(arrivals, self.travel_minutes)
             .take(num_rows as usize)
-            .map(|arrival| to_domain_service(arrival, show_line, now))
+            .map(|arrival| to_domain_service(arrival, show_line, now.clone()))
             .collect();
         Ok(Departures::new(station, services))
     }
@@ -76,10 +74,10 @@ fn catchable(arrivals: Vec<Arrival>, travel_minutes: u16) -> impl Iterator<Item 
 
 /// TfL only gives live predictions, so there is no scheduled time to compare
 /// against: `time` is when it is predicted to arrive, and the status is `Live`.
-fn to_domain_service(arrival: Arrival, show_line: bool, now: DateTime<Tz>) -> DepartureService {
+fn to_domain_service(arrival: Arrival, show_line: bool, now: ZonedDateTime) -> DepartureService {
     let seconds = i64::from(arrival.seconds_to_arrival);
-    let time = (now + Duration::seconds(seconds))
-        .format("%H:%M")
+    let time = (now + SignedDuration::from_secs(seconds))
+        .strftime("%H:%M")
         .to_string();
     let destination = if show_line {
         format!("{} {}", arrival.line, arrival.towards)
@@ -97,8 +95,7 @@ fn to_domain_service(arrival: Arrival, show_line: bool, now: DateTime<Tz>) -> De
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
 
     use super::*;
 
@@ -118,8 +115,8 @@ mod tests {
         arrival_on("Piccadilly", seconds)
     }
 
-    fn now() -> DateTime<Tz> {
-        London.with_ymd_and_hms(2024, 1, 10, 13, 6, 0).unwrap()
+    fn now() -> ZonedDateTime {
+        local(&london(), 2024, 1, 10, 13, 6, 0)
     }
 
     #[test]

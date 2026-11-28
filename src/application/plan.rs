@@ -2,14 +2,12 @@
 //! out of date, and when to come back. Worked out from the refresh schedule, so a cron with
 //! quiet hours (e.g. `*/10 6-22 * * *`) sends the display to sleep until morning.
 
-use std::time::Duration;
-
-use chrono::{DateTime, Offset};
-use chrono_tz::Tz;
 use serde::Serialize;
+use std::time::Duration;
 use utoipa::ToSchema;
 
 use crate::domain::models::schedule::Schedule;
+use jiff::ZonedDateTime;
 
 /// The longest a display is told to sleep. It is also the longest the display itself will sleep, so a
 /// longer figure would put the time the server expects it back after the time it really comes, and a
@@ -55,60 +53,63 @@ pub struct Plan {
 
 /// The version of an image rendered at `rendered_at`: its Unix time in seconds, which fits a
 /// 32-bit value until 2106.
-pub fn version_of(rendered_at: DateTime<Tz>) -> u32 {
-    u32::try_from(rendered_at.timestamp()).unwrap_or(u32::MAX)
+pub fn version_of(rendered_at: &ZonedDateTime) -> u32 {
+    u32::try_from(rendered_at.timestamp().as_second()).unwrap_or(u32::MAX)
 }
 
 /// When an image was rendered, as far as its time can be believed: an image stamped later than now was
 /// rendered before the clock was set back, so its real age is unknown and it counts as rendered just now.
 /// Taken at its word, the next render would be due that much later than any that follows, and a display
 /// would be sent to sleep until then.
-fn believable(rendered_at: DateTime<Tz>, now: DateTime<Tz>) -> DateTime<Tz> {
+fn believable(rendered_at: ZonedDateTime, now: ZonedDateTime) -> ZonedDateTime {
     rendered_at.min(now)
 }
 
 /// Whether the render that should follow the one served has come due, so a new one is wanted.
 pub fn render_due(
-    now: DateTime<Tz>,
-    rendered_at: DateTime<Tz>,
+    now: ZonedDateTime,
+    rendered_at: ZonedDateTime,
     schedule: &Schedule,
 ) -> anyhow::Result<bool> {
-    Ok(now >= schedule.next_after(believable(rendered_at, now))?)
+    Ok(now >= schedule.next_after(believable(rendered_at, now.clone()))?)
 }
 
 /// Whether a render that was due after `rendered_at` is more than `grace` late.
 pub fn is_stale(
-    now: DateTime<Tz>,
-    rendered_at: DateTime<Tz>,
+    now: ZonedDateTime,
+    rendered_at: ZonedDateTime,
     schedule: &Schedule,
     grace: Duration,
 ) -> anyhow::Result<bool> {
-    let due = schedule.next_after(believable(rendered_at, now))?;
-    Ok(now >= due && (now - due).to_std().unwrap_or_default() > grace)
+    let due = schedule.next_after(believable(rendered_at, now.clone()))?;
+    Ok(now >= due
+        && std::time::Duration::try_from(now.duration_since(&due)).unwrap_or_default() > grace)
 }
 
 /// `rendered_at` is when the served image was written; `have` is the version the display reports.
 pub fn compute(
-    now: DateTime<Tz>,
-    rendered_at: DateTime<Tz>,
+    now: ZonedDateTime,
+    rendered_at: ZonedDateTime,
     schedule: &Schedule,
     timing: PlanTiming,
     have: Option<u32>,
 ) -> anyhow::Result<Plan> {
-    let version = version_of(rendered_at);
+    let version = version_of(&rendered_at);
     // The render that should have followed the one being served.
-    let due = schedule.next_after(believable(rendered_at, now))?;
+    let due = schedule.next_after(believable(rendered_at.clone(), now.clone()))?;
     let (pending, stale, next) = if now < due {
         (false, false, due)
-    } else if (now - due).to_std().unwrap_or_default() <= timing.stale_grace {
+    } else if std::time::Duration::try_from(now.duration_since(&due)).unwrap_or_default()
+        <= timing.stale_grace
+    {
         // Due or running: look again soon instead of waiting out a whole period.
-        (true, false, now)
+        (true, false, now.clone())
     } else {
         // Not rendered, long after it should have been: report it, and retry at the next slot.
-        (false, true, schedule.next_after(now)?)
+        (false, true, schedule.next_after(now.clone())?)
     };
 
-    let wait = (next - now).num_seconds().max(0) as u64;
+    let wait = next.duration_since(&now).as_secs().max(0) as u64;
     Ok(Plan {
         version,
         changed: have != Some(version),
@@ -117,16 +118,17 @@ pub fn compute(
         next_seconds: wait
             .saturating_add(timing.wake_delay.as_secs())
             .clamp(1, MAX_SLEEP.as_secs()),
-        age_seconds: (now - rendered_at).num_seconds().max(0) as u64,
-        timezone: now.timezone().name().to_owned(),
-        utc_offset_seconds: now.offset().fix().local_minus_utc(),
+        age_seconds: now.duration_since(&rendered_at).as_secs().max(0) as u64,
+        timezone: now.time_zone().iana_name().unwrap_or("UTC").to_owned(),
+        utc_offset_seconds: now.offset().seconds(),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london, zone};
+    use jiff::SignedDuration;
+    use jiff::tz::TimeZone;
 
     use super::*;
 
@@ -135,13 +137,13 @@ mod tests {
         stale_grace: Duration::from_secs(300),
     };
 
-    fn at(day: u32, h: u32, m: u32, s: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, day, h, m, s).unwrap()
+    fn at(day: i8, h: i8, m: i8, s: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, day, h, m, s)
     }
 
-    fn plan(schedule: &str, rendered: DateTime<Tz>, now: DateTime<Tz>) -> Plan {
+    fn plan(schedule: &str, rendered: ZonedDateTime, now: ZonedDateTime) -> Plan {
         let schedule = Schedule::parse_cron(schedule).unwrap();
-        compute(now, rendered, &schedule, TIMING, None).unwrap()
+        compute(now.clone(), rendered.clone(), &schedule, TIMING, None).unwrap()
     }
 
     #[test]
@@ -151,7 +153,14 @@ mod tests {
         let rendered = at(15, 15, 0, 0);
         let now = at(15, 12, 0, 0);
 
-        let plan = compute(now, rendered, &schedule, TIMING, Some(version_of(rendered))).unwrap();
+        let plan = compute(
+            now.clone(),
+            rendered.clone(),
+            &schedule,
+            TIMING,
+            Some(version_of(&rendered)),
+        )
+        .unwrap();
         assert_eq!(plan.age_seconds, 0);
         assert!(!plan.stale && !plan.pending);
         assert_eq!(
@@ -161,54 +170,61 @@ mod tests {
         );
         // It is still the image the display shows, whatever its time says.
         assert!(!plan.changed);
-        assert!(!is_stale(now, rendered, &schedule, TIMING.stale_grace).unwrap());
-        assert!(!render_due(now, rendered, &schedule).unwrap());
+        assert!(!is_stale(now.clone(), rendered.clone(), &schedule, TIMING.stale_grace).unwrap());
+        assert!(!render_due(now.clone(), rendered.clone(), &schedule).unwrap());
         // Its age can't be known, so it isn't called stale either; the render history (`failing`) still says
         // if renders stop, and once the clock passes the image's own time the real age counts again.
-        assert!(is_stale(at(15, 15, 40, 0), rendered, &schedule, TIMING.stale_grace).unwrap());
+        assert!(
+            is_stale(
+                at(15, 15, 40, 0),
+                rendered.clone(),
+                &schedule,
+                TIMING.stale_grace
+            )
+            .unwrap()
+        );
     }
 
     #[test]
     fn the_plan_says_which_zone_the_server_is_in_and_how_far_ahead_of_utc_it_is() {
-        use chrono_tz::{Asia::Colombo, Australia::Lord_Howe, Pacific::Auckland};
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
-        let in_zone = |zone: Tz, month: u32| {
-            let now = zone.with_ymd_and_hms(2026, month, 15, 12, 4, 0).unwrap();
-            let rendered = zone.with_ymd_and_hms(2026, month, 15, 12, 0, 0).unwrap();
-            let plan = compute(now, rendered, &schedule, TIMING, None).unwrap();
+        let in_zone = |zone: TimeZone, month: i8| {
+            let now = local(&zone, 2026, month, 15, 12, 4, 0);
+            let rendered = local(&zone, 2026, month, 15, 12, 0, 0);
+            let plan = compute(now.clone(), rendered.clone(), &schedule, TIMING, None).unwrap();
             (plan.timezone, plan.utc_offset_seconds)
         };
         // The offset is the one in force at the time, so it moves with daylight saving.
-        assert_eq!(in_zone(London, 1), ("Europe/London".to_owned(), 0));
-        assert_eq!(in_zone(London, 7), ("Europe/London".to_owned(), 3600));
+        assert_eq!(in_zone(london(), 1), ("Europe/London".to_owned(), 0));
+        assert_eq!(in_zone(london(), 7), ("Europe/London".to_owned(), 3600));
         // Whole and half hours, ahead of UTC and behind it.
         assert_eq!(
-            in_zone(Colombo, 7),
+            in_zone(zone("Asia/Colombo"), 7),
             ("Asia/Colombo".to_owned(), 5 * 3600 + 1800)
         );
         assert_eq!(
-            in_zone(Lord_Howe, 1),
+            in_zone(zone("Australia/Lord_Howe"), 1),
             ("Australia/Lord_Howe".to_owned(), 11 * 3600)
         );
         assert_eq!(
-            in_zone(Lord_Howe, 7),
+            in_zone(zone("Australia/Lord_Howe"), 7),
             ("Australia/Lord_Howe".to_owned(), 10 * 3600 + 1800)
         );
         assert_eq!(
-            in_zone(Auckland, 1),
+            in_zone(zone("Pacific/Auckland"), 1),
             ("Pacific/Auckland".to_owned(), 13 * 3600)
         );
         assert_eq!(
-            in_zone(chrono_tz::America::New_York, 1),
+            in_zone(zone("America/New_York"), 1),
             ("America/New_York".to_owned(), -5 * 3600)
         );
     }
 
     #[test]
     fn version_is_the_render_time_and_grows() {
-        let first = version_of(at(15, 12, 0, 8));
-        assert_eq!(i64::from(first), at(15, 12, 0, 8).timestamp());
-        assert_eq!(version_of(at(15, 12, 10, 8)), first + 600);
+        let first = version_of(&at(15, 12, 0, 8));
+        assert_eq!(i64::from(first), at(15, 12, 0, 8).timestamp().as_second());
+        assert_eq!(version_of(&at(15, 12, 10, 8)), first + 600);
     }
 
     #[test]
@@ -216,9 +232,10 @@ mod tests {
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
         let rendered = at(15, 12, 0, 8);
         for seconds in (0..40 * 60).step_by(7) {
-            let now = rendered + chrono::Duration::seconds(seconds);
-            let plan = compute(now, rendered, &schedule, TIMING, None).unwrap();
-            let stale = is_stale(now, rendered, &schedule, TIMING.stale_grace).unwrap();
+            let now = &rendered + SignedDuration::from_secs(seconds);
+            let plan = compute(now.clone(), rendered.clone(), &schedule, TIMING, None).unwrap();
+            let stale =
+                is_stale(now.clone(), rendered.clone(), &schedule, TIMING.stale_grace).unwrap();
             assert_eq!(plan.stale, stale, "{seconds}s after the render");
         }
     }
@@ -227,9 +244,9 @@ mod tests {
     fn a_render_is_due_once_the_next_slot_arrives() {
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
         let rendered = at(15, 12, 0, 8);
-        assert!(!render_due(at(15, 12, 9, 59), rendered, &schedule).unwrap());
-        assert!(render_due(at(15, 12, 10, 0), rendered, &schedule).unwrap());
-        assert!(render_due(at(15, 14, 0, 0), rendered, &schedule).unwrap());
+        assert!(!render_due(at(15, 12, 9, 59), rendered.clone(), &schedule).unwrap());
+        assert!(render_due(at(15, 12, 10, 0), rendered.clone(), &schedule).unwrap());
+        assert!(render_due(at(15, 14, 0, 0), rendered.clone(), &schedule).unwrap());
     }
 
     #[test]
@@ -292,7 +309,7 @@ mod tests {
     #[test]
     fn changed_reflects_the_version_the_display_has() {
         let schedule = Schedule::parse_every("10m").unwrap();
-        let version = version_of(at(15, 12, 0, 0));
+        let version = version_of(&at(15, 12, 0, 0));
         let run = |have| {
             compute(at(15, 12, 4, 0), at(15, 12, 0, 0), &schedule, TIMING, have)
                 .unwrap()

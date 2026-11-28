@@ -168,6 +168,8 @@ pub fn setup_web_screen(
 mod tests {
     use super::*;
     use crate::config::application::LayoutRuleConfig;
+    use jiff::SignedDuration;
+    use jiff::tz::TimeZone;
 
     fn rule(layout: &str) -> LayoutRuleConfig {
         LayoutRuleConfig {
@@ -337,8 +339,8 @@ mod tests {
         use crate::domain::models::schedule::Schedule;
         use crate::domain::services::render_observer::RenderObserver;
 
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(chrono_tz::UTC));
-        let status = StatusBoard::new(clock.now() - chrono::Duration::hours(1));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(TimeZone::UTC));
+        let status = StatusBoard::new(clock.now() - SignedDuration::from_hours(1));
         if drawn {
             status.render_succeeded(clock.now(), &Default::default());
         }

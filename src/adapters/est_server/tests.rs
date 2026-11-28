@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use chrono_tz::Tz;
 use cms::cert::x509::der::Decode;
 use cms::content_info::ContentInfo;
 use cms::signed_data::SignedData;
@@ -34,6 +33,8 @@ use crate::adapters::pairing_store::{FilePairingStore, Missing};
 use crate::application::enrollment::EnrollmentPolicy;
 use crate::domain::models::pairing::{Fingerprint, PairingCode, PublicKey};
 use crate::domain::services::clock::{from_days, utc};
+use jiff::ZonedDateTime;
+use jiff::tz::TimeZone;
 
 pub(crate) struct Harness {
     pub(crate) address: SocketAddr,
@@ -102,7 +103,7 @@ pub(crate) async fn start_full(
     let enrollment = Arc::new(Enrollment::new(
         authority.clone(),
         Arc::new(store),
-        Arc::new(SystemClock::new(Tz::UTC)),
+        Arc::new(SystemClock::new(TimeZone::UTC)),
         EnrollmentPolicy {
             certificate_lifetime: from_days(365),
             retry_after: SignedDuration::from_mins(5),
@@ -1250,8 +1251,8 @@ async fn a_refused_request_is_logged_with_where_it_came_from() {
 struct FixedClock(Timestamp);
 
 impl crate::domain::services::clock::Clock for FixedClock {
-    fn now(&self) -> chrono::DateTime<chrono_tz::Tz> {
-        crate::domain::services::clock::in_zone(self.0, chrono_tz::Tz::UTC)
+    fn now(&self) -> ZonedDateTime {
+        (self.0).to_zoned_datetime(TimeZone::UTC)
     }
 }
 

@@ -13,13 +13,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
-use chrono::Utc;
 
 use handlebars::Handlebars;
 
 use super::{LAYOUTS, registry, render_page, template_name};
 use crate::domain::models::GlanceData;
 use crate::domain::models::layout::{Layout, LayoutName, Layouts};
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 
 /// More than any template needs: a page is a few tens of kilobytes.
 const LARGEST_TEMPLATE: u64 = 512 * 1024;
@@ -179,10 +180,14 @@ impl Templates {
 
 /// Draws `source` with data of each kind it will meet, and says why it can't if it can't.
 fn check(source: &str) -> anyhow::Result<()> {
-    let now = Utc::now().with_timezone(&chrono_tz::UTC);
-    let none = GlanceData::new(None, vec![], crate::domain::models::DateInfo::new(now));
+    let now = Timestamp::now().to_zoned_datetime(TimeZone::UTC);
+    let none = GlanceData::new(
+        None,
+        vec![],
+        crate::domain::models::DateInfo::new(now.clone()),
+    );
     for (what, data) in [
-        ("with everything there", GlanceData::sample(now)),
+        ("with everything there", GlanceData::sample(now.clone())),
         ("with sources down", GlanceData::sample_degraded(now)),
         ("with nothing to show", none),
     ] {
@@ -412,7 +417,7 @@ mod tests {
             .with_directory(directory.path())
             .unwrap();
 
-        let data = GlanceData::sample(Utc::now().with_timezone(&chrono_tz::UTC));
+        let data = GlanceData::sample(Timestamp::now().to_zoned_datetime(TimeZone::UTC));
         let page = |layout: &str| {
             templates
                 .render(&LayoutName::parse(layout).unwrap(), &data)

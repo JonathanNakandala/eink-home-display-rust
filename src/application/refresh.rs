@@ -6,13 +6,11 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
-
-use chrono::DateTime;
-use chrono_tz::Tz;
 use tokio::sync::{Notify, watch};
 
 use crate::domain::models::render_report::RenderReport;
 use crate::domain::services::render_observer::RenderObserver;
+use jiff::ZonedDateTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshOutcome {
@@ -104,11 +102,11 @@ impl RenderObserver for RefreshControl {
         self.shown.send_modify(|count| *count += 1);
     }
 
-    fn render_succeeded(&self, _at: DateTime<Tz>, _report: &RenderReport) {
+    fn render_succeeded(&self, _at: ZonedDateTime, _report: &RenderReport) {
         self.render_finished();
     }
 
-    fn render_failed(&self, _at: DateTime<Tz>, _error: &anyhow::Error) {
+    fn render_failed(&self, _at: ZonedDateTime, _error: &anyhow::Error) {
         self.render_finished();
     }
 }

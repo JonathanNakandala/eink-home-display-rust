@@ -4,23 +4,21 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use chrono::{DateTime, Duration};
-use chrono_tz::Tz;
-
 use crate::domain::models::source_error::SourceError;
+use jiff::{SignedDuration, ZonedDateTime};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fetched<T> {
     /// Just fetched.
     Fresh(T),
     /// The fetch failed; this is from `age` ago, within the limit for it.
-    Stale { value: T, age: Duration },
+    Stale { value: T, age: SignedDuration },
     /// The fetch failed and there is nothing recent enough to show. `reason` is a few words for the display.
     Unavailable { reason: &'static str },
 }
 
 pub struct LastGood<T> {
-    slot: Mutex<Option<(T, DateTime<Tz>)>>,
+    slot: Mutex<Option<(T, ZonedDateTime)>>,
 }
 
 impl<T> Default for LastGood<T> {
@@ -37,8 +35,8 @@ impl<T: Clone> LastGood<T> {
     pub fn resolve(
         &self,
         result: Result<T, SourceError>,
-        now: DateTime<Tz>,
-        max_age: Duration,
+        now: ZonedDateTime,
+        max_age: SignedDuration,
         source: &str,
     ) -> Fetched<T> {
         // The slot is plain data and each update leaves it whole, so a panic elsewhere while the lock was
@@ -65,8 +63,8 @@ impl<T: Clone> LastGood<T> {
                 *slot = None;
                 Fetched::Unavailable { reason }
             }
-            Some((value, fetched_at)) if now - *fetched_at <= max_age => {
-                let age = (now - *fetched_at).max(Duration::zero());
+            Some((value, fetched_at)) if now.duration_since(fetched_at) <= max_age => {
+                let age = now.duration_since(fetched_at).max(SignedDuration::ZERO);
                 report(
                     source,
                     &error,
@@ -80,7 +78,7 @@ impl<T: Clone> LastGood<T> {
             Some((_, fetched_at)) => {
                 let detail = format!(
                     "its last data is {} old, over the limit",
-                    format_age(now - *fetched_at)
+                    format_age(now.duration_since(fetched_at))
                 );
                 report(source, &error, &detail);
                 Fetched::Unavailable { reason }
@@ -104,8 +102,8 @@ fn report(source: &str, error: &SourceError, consequence: &str) {
 }
 
 /// "under 1 min", "8 min", "1 h 20 min".
-pub fn format_age(age: Duration) -> String {
-    let minutes = age.num_minutes();
+pub fn format_age(age: SignedDuration) -> String {
+    let minutes = age.as_mins();
     match minutes {
         ..=0 => "under 1 min".to_owned(),
         1..=59 => format!("{minutes} min"),
@@ -115,16 +113,15 @@ pub fn format_age(age: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::{local, london};
 
     use super::*;
 
-    fn at(h: u32, m: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap()
+    fn at(h: i8, m: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, h, m, 0)
     }
 
-    const LIMIT: Duration = Duration::minutes(15);
+    const LIMIT: SignedDuration = SignedDuration::from_mins(15);
 
     fn down() -> SourceError {
         SourceError::Upstream { status: 503 }
@@ -141,7 +138,7 @@ mod tests {
             last.resolve(Err(down()), at(12, 5), LIMIT, "x"),
             Fetched::Stale {
                 value: 1,
-                age: Duration::minutes(5)
+                age: SignedDuration::from_mins(5)
             }
         );
     }
@@ -203,16 +200,16 @@ mod tests {
             last.resolve(Err(down()), at(12, 20), LIMIT, "x"),
             Fetched::Stale {
                 value: 2,
-                age: Duration::minutes(10)
+                age: SignedDuration::from_mins(10)
             }
         );
     }
 
     #[test]
     fn ages_are_worded_for_a_glance() {
-        assert_eq!(format_age(Duration::seconds(30)), "under 1 min");
-        assert_eq!(format_age(Duration::minutes(8)), "8 min");
-        assert_eq!(format_age(Duration::minutes(80)), "1 h 20 min");
+        assert_eq!(format_age(SignedDuration::from_secs(30)), "under 1 min");
+        assert_eq!(format_age(SignedDuration::from_mins(8)), "8 min");
+        assert_eq!(format_age(SignedDuration::from_mins(80)), "1 h 20 min");
     }
 
     #[test]
@@ -247,7 +244,7 @@ mod tests {
             slot.resolve(Err(SourceError::Timeout), at(12, 15), LIMIT, "t"),
             Fetched::Stale {
                 value: 2,
-                age: Duration::minutes(5)
+                age: SignedDuration::from_mins(5)
             }
         );
     }

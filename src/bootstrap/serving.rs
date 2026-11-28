@@ -520,7 +520,7 @@ pub fn web_routes(
 mod tests {
     use std::path::Path;
 
-    use chrono_tz::Tz;
+    use jiff::tz::TimeZone;
     use tempfile::TempDir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -574,7 +574,7 @@ mod tests {
         init_pki: bool,
         web: Option<Router>,
     ) -> anyhow::Result<Listening> {
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(TimeZone::UTC));
         let credentials = Credentials::new(clock.clone(), []);
         let security = open_security(config, clock, credentials, init_pki).await?;
         start(
@@ -824,7 +824,7 @@ mod tests {
         use crate::application::status::StatusBoard;
         use crate::domain::models::layout::Layout;
 
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(TimeZone::UTC));
         let layouts = Layouts::new(vec![Layout::new("dashboard", "Everything")]).unwrap();
         let handles = Handles {
             layouts,
@@ -939,7 +939,7 @@ mod tests {
         let mut config = config(Transport::Https, pki.path());
         config.web.enabled = true;
         config.web.open = true;
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(TimeZone::UTC));
         let security = open_security(
             &config,
             clock.clone(),
@@ -1027,7 +1027,7 @@ mod tests {
         let mut config = config(Transport::Https, pki.path());
         // On, and needing a token (not open).
         config.web.enabled = true;
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(TimeZone::UTC));
         let security = open_security(
             &config,
             clock.clone(),
@@ -1402,7 +1402,7 @@ mod tests {
 
         let pki = tempfile::tempdir().unwrap();
         let config = config(Transport::Https, pki.path());
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(Tz::UTC));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new(TimeZone::UTC));
         let first = Credentials::new(clock.clone(), []);
         let security = open_security(&config, clock.clone(), first.clone(), true)
             .await

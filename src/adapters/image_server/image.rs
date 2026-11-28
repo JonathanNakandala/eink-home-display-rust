@@ -210,7 +210,7 @@ fn failed(message: &'static str) -> Response {
 mod tests {
     use super::super::testing::{publish, start};
     use super::*;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::london;
 
     #[tokio::test]
     async fn serves_the_published_image_with_its_content_type() {
@@ -598,7 +598,7 @@ mod tests {
         start_with(
             Arc::new(images),
             ImageFormat::Png,
-            Arc::new(SystemClock::new(London)),
+            Arc::new(SystemClock::new(london())),
         )
         .await
         .0
@@ -661,7 +661,7 @@ mod tests {
             let (base, _) = start_with(
                 Arc::new(images),
                 ImageFormat::Bmp,
-                Arc::new(SystemClock::new(London)),
+                Arc::new(SystemClock::new(london())),
             )
             .await;
             let response = fetch(&base, None).await;

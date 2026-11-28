@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use chrono::{DateTime, NaiveDate, TimeZone};
-use chrono_tz::Tz;
 use croner::Cron;
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, ZonedDateTime};
 
 /// Counting a day's runs stops here, so a schedule with a tiny interval can't make it loop for ages.
 const MAX_RUNS_COUNTED: usize = 100_000;
@@ -51,15 +52,17 @@ impl Schedule {
     }
 
     /// The first time strictly after `after` at which a run is due.
-    pub fn next_after(&self, after: DateTime<Tz>) -> anyhow::Result<DateTime<Tz>> {
+    pub fn next_after(&self, after: ZonedDateTime) -> anyhow::Result<ZonedDateTime> {
         match self {
             Self::Cron(crons) => {
                 // One that has nothing left to give (a date that never comes) doesn't stop the others.
                 let mut first_error = None;
-                let mut earliest: Option<DateTime<Tz>> = None;
+                let mut earliest: Option<ZonedDateTime> = None;
                 for cron in crons {
                     match cron.find_next_occurrence(&after, false) {
-                        Ok(next) => earliest = Some(earliest.map_or(next, |best| best.min(next))),
+                        Ok(next) => {
+                            earliest = Some(earliest.map_or(next.clone(), |best| best.min(next)))
+                        }
                         Err(e) => {
                             first_error.get_or_insert(e);
                         }
@@ -70,9 +73,9 @@ impl Schedule {
                     None => anyhow!("No next run time"),
                 })
             }
-            Self::Every(period) => chrono::Duration::from_std(*period)
+            Self::Every(period) => SignedDuration::try_from(*period)
                 .ok()
-                .and_then(|period| after.checked_add_signed(period))
+                .and_then(|period| after.checked_add(period).ok())
                 .ok_or_else(|| anyhow!("The interval {period:?} is too long to schedule")),
         }
     }
@@ -90,16 +93,17 @@ impl Schedule {
 
     /// How many runs fall on `day`, a calendar day in `zone`. Stops counting at a large number, so a tiny interval
     /// gives that number, not the true one.
-    pub fn runs_on(&self, day: NaiveDate, zone: Tz) -> anyhow::Result<usize> {
+    pub fn runs_on(&self, day: Date, zone: &TimeZone) -> anyhow::Result<usize> {
         let start =
             start_of_day(day, zone).with_context(|| format!("Can't tell when {day} starts"))?;
         let end = day
-            .succ_opt()
+            .tomorrow()
+            .map_err(anyhow::Error::from)
             .and_then(|next| start_of_day(next, zone))
             .with_context(|| format!("Can't tell when {day} ends"))?;
         let mut count = 0;
         // Strictly after, so a run at the very start of the day is counted.
-        let mut at = start - chrono::Duration::seconds(1);
+        let mut at = start - SignedDuration::from_secs(1);
         while count < MAX_RUNS_COUNTED {
             at = self.next_after(at)?;
             if at >= end {
@@ -111,12 +115,16 @@ impl Schedule {
     }
 
     /// The next `count` runs after `after`.
-    pub fn upcoming(&self, after: DateTime<Tz>, count: usize) -> anyhow::Result<Vec<DateTime<Tz>>> {
+    pub fn upcoming(
+        &self,
+        after: ZonedDateTime,
+        count: usize,
+    ) -> anyhow::Result<Vec<ZonedDateTime>> {
         let mut at = after;
         (0..count)
             .map(|_| {
-                at = self.next_after(at)?;
-                Ok(at)
+                at = self.next_after(at.clone())?;
+                Ok(at.clone())
             })
             .collect()
     }
@@ -140,23 +148,20 @@ pub fn format_interval(period: Duration) -> String {
 }
 
 /// Midnight at the start of `day`; in a zone where the clocks change at midnight, the first moment that exists.
-fn start_of_day(day: NaiveDate, zone: Tz) -> Option<DateTime<Tz>> {
-    let midnight = day.and_hms_opt(0, 0, 0)?;
-    zone.from_local_datetime(&midnight).earliest().or_else(|| {
-        zone.from_local_datetime(&(midnight + chrono::Duration::hours(1)))
-            .earliest()
-    })
+fn start_of_day(day: Date, zone: &TimeZone) -> anyhow::Result<ZonedDateTime> {
+    Ok(day.to_zoned_datetime(zone.clone())?)
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono_tz::Europe::London;
+    use crate::domain::services::clock::zone as named_zone;
+    use crate::domain::services::clock::{local, london, utc};
+    use jiff::Timestamp;
 
     use super::*;
 
-    fn at(h: u32, m: u32, s: u32) -> DateTime<Tz> {
-        London.with_ymd_and_hms(2026, 6, 15, h, m, s).unwrap()
+    fn at(h: i8, m: i8, s: i8) -> ZonedDateTime {
+        local(&london(), 2026, 6, 15, h, m, s)
     }
 
     #[test]
@@ -213,8 +218,8 @@ mod tests {
         "0 8-21 * * 6,0",
     ];
 
-    fn day(d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(2026, 6, d).unwrap()
+    fn day(d: i8) -> Date {
+        jiff::civil::date(2026, 6, d)
     }
 
     #[test]
@@ -245,15 +250,22 @@ mod tests {
     fn the_week_has_the_runs_it_was_written_for() {
         let schedule = Schedule::parse_crons(WEEK).unwrap();
         // 4 h a minute, 11 h every five minutes, 9 h every fifteen.
-        assert_eq!(schedule.runs_on(day(15), London).unwrap(), 240 + 132 + 36);
         assert_eq!(
-            schedule.runs_on(day(19), London).unwrap(),
+            schedule.runs_on(day(15), &london()).unwrap(),
+            240 + 132 + 36
+        );
+        assert_eq!(
+            schedule.runs_on(day(19), &london()).unwrap(),
             240 + 132 + 36,
             "Friday"
         );
         // Hourly from 08:00 to 21:00, and nothing in the small hours or the evening.
-        assert_eq!(schedule.runs_on(day(20), London).unwrap(), 14, "Saturday");
-        assert_eq!(schedule.runs_on(day(21), London).unwrap(), 14, "Sunday");
+        assert_eq!(
+            schedule.runs_on(day(20), &london()).unwrap(),
+            14,
+            "Saturday"
+        );
+        assert_eq!(schedule.runs_on(day(21), &london()).unwrap(), 14, "Sunday");
     }
 
     #[test]
@@ -261,14 +273,14 @@ mod tests {
         assert_eq!(
             Schedule::parse_cron("*/10 * * * *")
                 .unwrap()
-                .runs_on(day(15), London)
+                .runs_on(day(15), &london())
                 .unwrap(),
             144
         );
         assert_eq!(
             Schedule::parse_every("1h")
                 .unwrap()
-                .runs_on(day(15), London)
+                .runs_on(day(15), &london())
                 .unwrap(),
             24
         );
@@ -276,7 +288,7 @@ mod tests {
         assert_eq!(
             Schedule::parse_every("1ms")
                 .unwrap()
-                .runs_on(day(15), London)
+                .runs_on(day(15), &london())
                 .unwrap(),
             MAX_RUNS_COUNTED
         );
@@ -334,34 +346,31 @@ mod tests {
 
     // ---- Clock changes, in several zones ----
 
-    use chrono::{Offset, Utc};
-    use chrono_tz::{America, Asia, Australia, Europe, Pacific};
-
-    fn offset_seconds(zone: &Tz, at: DateTime<Utc>) -> i32 {
-        at.with_timezone(zone).offset().fix().local_minus_utc()
+    fn offset_seconds(zone: &TimeZone, at: Timestamp) -> i32 {
+        at.to_zoned_datetime(zone.clone()).offset().seconds()
     }
 
     /// The start of the minute at or after `at`: a cron expression has only minutes.
-    fn ceil_to_minute(at: DateTime<Utc>) -> DateTime<Utc> {
-        let seconds = at.timestamp() + i64::from(at.timestamp_subsec_nanos() > 0);
-        DateTime::from_timestamp((seconds + 59).div_euclid(60) * 60, 0).unwrap()
+    fn ceil_to_minute(at: Timestamp) -> Timestamp {
+        let seconds = at.as_second() + i64::from(at.subsec_nanosecond() > 0);
+        Timestamp::from_second((seconds + 59).div_euclid(60) * 60).unwrap()
     }
 
-    fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
+    fn utc5(y: i16, m: i8, d: i8, h: i8, min: i8) -> Timestamp {
+        utc(y, m, d, h, min, 0)
     }
 
     /// The instants in 2026 at which `zone`'s offset changes, to the minute, and by how many seconds.
-    fn changes_in_2026(zone: Tz) -> Vec<(DateTime<Utc>, i32)> {
+    fn changes_in_2026(zone: &TimeZone) -> Vec<(Timestamp, i32)> {
         let mut found = Vec::new();
-        let mut t = utc(2026, 1, 1, 0, 0);
-        while t < utc(2027, 1, 1, 0, 0) {
-            let next = t + chrono::Duration::hours(1);
-            let (a, b) = (offset_seconds(&zone, t), offset_seconds(&zone, next));
+        let mut t = utc5(2026, 1, 1, 0, 0);
+        while t < utc5(2027, 1, 1, 0, 0) {
+            let next = t + SignedDuration::from_hours(1);
+            let (a, b) = (offset_seconds(zone, t), offset_seconds(zone, next));
             if a != b {
                 let mut minute = t;
-                while offset_seconds(&zone, minute) == a {
-                    minute += chrono::Duration::minutes(1);
+                while offset_seconds(zone, minute) == a {
+                    minute += SignedDuration::from_mins(1);
                 }
                 found.push((minute, b - a));
             }
@@ -373,39 +382,44 @@ mod tests {
     /// What a run means: every minute, in UTC, whose local time matches. Slow and plainly right.
     fn reference(
         cron: &Cron,
-        zone: Tz,
-        after: DateTime<Utc>,
-        until: DateTime<Utc>,
-    ) -> Vec<DateTime<Utc>> {
+        zone: &TimeZone,
+        after: Timestamp,
+        until: Timestamp,
+    ) -> Vec<Timestamp> {
         let mut minute = ceil_to_minute(after);
         if minute <= after {
-            minute += chrono::Duration::minutes(1);
+            minute += SignedDuration::from_mins(1);
         }
         let mut found = Vec::new();
         while minute <= until {
-            if cron.is_time_matching(&minute.with_timezone(&zone)).unwrap() {
+            if cron
+                .is_time_matching(&minute.to_zoned_datetime(zone.clone()))
+                .unwrap()
+            {
                 found.push(minute);
             }
-            minute += chrono::Duration::minutes(1);
+            minute += SignedDuration::from_mins(1);
         }
         found
     }
 
-    const ZONES: [Tz; 8] = [
-        Europe::London,
-        America::New_York,
-        Australia::Sydney,
-        Australia::Lord_Howe,
-        America::Santiago,
-        Pacific::Chatham,
-        Asia::Colombo,
-        Asia::Kolkata,
-    ];
+    fn zones() -> [TimeZone; 8] {
+        [
+            london(),
+            named_zone("America/New_York"),
+            named_zone("Australia/Sydney"),
+            named_zone("Australia/Lord_Howe"),
+            named_zone("America/Santiago"),
+            named_zone("Pacific/Chatham"),
+            named_zone("Asia/Colombo"),
+            named_zone("Asia/Kolkata"),
+        ]
+    }
 
     #[test]
     fn a_run_every_so_often_keeps_its_rhythm_through_every_clock_change_in_every_zone() {
         let mut checked_changes = 0;
-        for zone in ZONES {
+        for zone in zones() {
             for expression in [
                 "*/10 * * * *",
                 "*/15 * * * *",
@@ -415,24 +429,24 @@ mod tests {
             ] {
                 let cron: Cron = expression.parse().unwrap();
                 let schedule = Schedule::parse_cron(expression).unwrap();
-                for (change, _) in changes_in_2026(zone) {
+                for (change, _) in changes_in_2026(&zone) {
                     checked_changes += 1;
-                    let from = change - chrono::Duration::hours(30);
-                    let until = change + chrono::Duration::hours(30);
-                    let expected = reference(&cron, zone, from, until);
+                    let from = change - SignedDuration::from_hours(30);
+                    let until = change + SignedDuration::from_hours(30);
+                    let expected = reference(&cron, &zone, from, until);
 
                     let mut got = Vec::new();
-                    let mut at = from.with_timezone(&zone);
+                    let mut at = from.to_zoned_datetime(zone.clone());
                     loop {
-                        let next = schedule.next_after(at).unwrap();
-                        assert!(next > at, "{zone} {expression}: {next} is not after {at}");
-                        if next.with_timezone(&Utc) > until {
+                        let next = schedule.next_after(at.clone()).unwrap();
+                        assert!(next > at, "{zone:?} {expression}: {next} is not after {at}");
+                        if next.timestamp() > until {
                             break;
                         }
-                        got.push(next.with_timezone(&Utc));
+                        got.push(next.timestamp());
                         at = next;
                     }
-                    assert_eq!(got, expected, "{zone} {expression} around {change}");
+                    assert_eq!(got, expected, "{zone:?} {expression} around {change}");
                 }
             }
         }
@@ -447,17 +461,17 @@ mod tests {
     #[test]
     fn from_any_moment_the_next_run_is_the_first_match_after_it() {
         // Starting between slots, on them, and a second either side, around the UK's autumn change.
-        let zone = Europe::London;
+        let zone = london();
         let cron: Cron = "*/10 * * * *".parse().unwrap();
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
-        let change = utc(2026, 10, 25, 1, 0);
+        let change = utc5(2026, 10, 25, 1, 0);
         for offset_seconds in (-4000..4000).step_by(37) {
-            let start = change + chrono::Duration::seconds(offset_seconds);
-            let expected = reference(&cron, zone, start, start + chrono::Duration::hours(2))[0];
+            let start = change + SignedDuration::from_secs(offset_seconds);
+            let expected = reference(&cron, &zone, start, start + SignedDuration::from_hours(2))[0];
             let got = schedule
-                .next_after(start.with_timezone(&zone))
+                .next_after(start.to_zoned_datetime(zone.clone()))
                 .unwrap()
-                .with_timezone(&Utc);
+                .timestamp();
             assert_eq!(got, expected, "from {start}");
         }
     }
@@ -465,46 +479,74 @@ mod tests {
     #[test]
     fn the_uk_autumn_change_has_no_gap() {
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
-        let zone = Europe::London;
+        let zone = london();
         // 00:50 BST on 25 October 2026; the clocks go back at 02:00 BST to 01:00 GMT.
-        let mut at = zone.with_ymd_and_hms(2026, 10, 25, 0, 50, 0).unwrap();
-        let mut previous = at;
+        let mut at = local(&zone, 2026, 10, 25, 0, 50, 0);
+        let mut previous = at.clone();
         for _ in 0..16 {
             at = schedule.next_after(at).unwrap();
-            assert_eq!((at - previous).num_minutes(), 10, "{previous} to {at}");
-            previous = at;
+            assert_eq!(
+                at.duration_since(&previous).as_secs() / 60,
+                10,
+                "{previous} to {at}"
+            );
+            previous = at.clone();
         }
         // It went through 01:50 BST and on into 01:00 GMT, an hour of real time later.
-        assert_eq!(at.format("%H:%M %Z").to_string(), "02:30 GMT");
+        assert_eq!(at.strftime("%H:%M %Z").to_string(), "02:30 GMT");
     }
 
     #[test]
     fn a_day_with_a_clock_change_has_the_runs_its_length_allows() {
-        let runs = |expression: &str, zone: Tz, y, m, d| {
+        let runs = |expression: &str, zone: &TimeZone, y, m, d| {
             Schedule::parse_cron(expression)
                 .unwrap()
-                .runs_on(NaiveDate::from_ymd_opt(y, m, d).unwrap(), zone)
+                .runs_on(jiff::civil::date(y, m, d), zone)
                 .unwrap()
         };
         // 25 hours in the UK on 25 October, 23 on 29 March.
-        assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 10, 25), 150);
-        assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 3, 29), 138);
-        assert_eq!(runs("0 * * * *", Europe::London, 2026, 10, 25), 25);
-        assert_eq!(runs("0 * * * *", Europe::London, 2026, 3, 29), 23);
-        assert_eq!(runs("*/10 * * * *", Europe::London, 2026, 10, 24), 144);
+        assert_eq!(runs("*/10 * * * *", &london(), 2026, 10, 25), 150);
+        assert_eq!(runs("*/10 * * * *", &london(), 2026, 3, 29), 138);
+        assert_eq!(runs("0 * * * *", &london(), 2026, 10, 25), 25);
+        assert_eq!(runs("0 * * * *", &london(), 2026, 3, 29), 23);
+        assert_eq!(runs("*/10 * * * *", &london(), 2026, 10, 24), 144);
         // The southern hemisphere changes the other way round: Sydney goes back on 5 April, forward on 4 October.
-        assert_eq!(runs("*/10 * * * *", Australia::Sydney, 2026, 4, 5), 150);
-        assert_eq!(runs("*/10 * * * *", Australia::Sydney, 2026, 10, 4), 138);
+        assert_eq!(
+            runs("*/10 * * * *", &named_zone("Australia/Sydney"), 2026, 4, 5),
+            150
+        );
+        assert_eq!(
+            runs("*/10 * * * *", &named_zone("Australia/Sydney"), 2026, 10, 4),
+            138
+        );
         // Lord Howe changes by half an hour.
-        assert_eq!(runs("*/10 * * * *", Australia::Lord_Howe, 2026, 4, 5), 147);
-        assert_eq!(runs("*/10 * * * *", Australia::Lord_Howe, 2026, 10, 4), 141);
+        assert_eq!(
+            runs(
+                "*/10 * * * *",
+                &named_zone("Australia/Lord_Howe"),
+                2026,
+                4,
+                5
+            ),
+            147
+        );
+        assert_eq!(
+            runs(
+                "*/10 * * * *",
+                &named_zone("Australia/Lord_Howe"),
+                2026,
+                10,
+                4
+            ),
+            141
+        );
         // Colombo and Kolkata have no change, and an offset of a half hour: every day is the same.
-        for zone in [Asia::Colombo, Asia::Kolkata] {
+        for zone in [named_zone("Asia/Colombo"), named_zone("Asia/Kolkata")] {
             for (m, d) in [(3, 29), (4, 5), (10, 4), (10, 25)] {
                 assert_eq!(
-                    runs("*/10 * * * *", zone, 2026, m, d),
+                    runs("*/10 * * * *", &zone, 2026, m, d),
                     144,
-                    "{zone} {m}-{d}"
+                    "{zone:?} {m}-{d}"
                 );
             }
         }
@@ -515,39 +557,39 @@ mod tests {
     /// brute-force test above). A fixed time that doesn't exist, in the hour that is skipped, runs at the change.
     #[test]
     fn a_fixed_time_runs_once_in_a_repeated_hour_and_one_that_was_skipped_runs_at_the_change() {
-        let zone = Europe::London;
+        let zone = london();
         let daily = Schedule::parse_cron("30 1 * * *").unwrap();
         // Autumn: 01:30 is on the clock twice, and the daily run happens once, the first time.
         let first = daily
-            .next_after(zone.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap())
+            .next_after(local(&zone, 2026, 10, 25, 0, 0, 0))
             .unwrap();
-        assert_eq!(first.format("%d %H:%M %Z").to_string(), "25 01:30 BST");
+        assert_eq!(first.strftime("%d %H:%M %Z").to_string(), "25 01:30 BST");
         assert_eq!(
             daily
-                .next_after(first)
+                .next_after(first.clone())
                 .unwrap()
-                .format("%d %H:%M %Z")
+                .strftime("%d %H:%M %Z")
                 .to_string(),
             "26 01:30 GMT"
         );
         assert_eq!(
             Schedule::parse_cron("30 1 * * *")
                 .unwrap()
-                .runs_on(NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(), zone)
+                .runs_on(jiff::civil::date(2026, 10, 25), &zone)
                 .unwrap(),
             1
         );
         // Spring: 01:30 doesn't exist, and the run happens when the clocks change.
         let spring = daily
-            .next_after(zone.with_ymd_and_hms(2026, 3, 29, 0, 0, 0).unwrap())
+            .next_after(local(&zone, 2026, 3, 29, 0, 0, 0))
             .unwrap();
-        assert_eq!(spring.with_timezone(&Utc), utc(2026, 3, 29, 1, 0));
+        assert_eq!(spring.timestamp(), utc5(2026, 3, 29, 1, 0));
         // And the day after is the normal one.
         assert_eq!(
             daily
-                .next_after(spring)
+                .next_after(spring.clone())
                 .unwrap()
-                .format("%d %H:%M")
+                .strftime("%d %H:%M")
                 .to_string(),
             "30 01:30"
         );
@@ -557,10 +599,10 @@ mod tests {
     fn a_result_is_never_the_moment_it_was_asked_from() {
         // Where the clocks go forward, the answer used to name the instant it started from.
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
-        let zone = Europe::London;
-        let mut at = utc(2026, 3, 29, 0, 30).with_timezone(&zone);
+        let zone = london();
+        let mut at = utc5(2026, 3, 29, 0, 30).to_zoned_datetime(zone.clone());
         for _ in 0..12 {
-            let next = schedule.next_after(at).unwrap();
+            let next = schedule.next_after(at.clone()).unwrap();
             assert!(next > at, "{at} then {next}");
             at = next;
         }
@@ -569,23 +611,23 @@ mod tests {
     #[test]
     fn a_span_with_no_change_in_it_costs_nothing_extra_and_is_unchanged() {
         let schedule = Schedule::parse_cron("*/10 * * * *").unwrap();
-        let zone = Asia::Colombo;
-        let at = zone.with_ymd_and_hms(2026, 6, 15, 8, 3, 20).unwrap();
+        let zone = named_zone("Asia/Colombo");
+        let at = local(&zone, 2026, 6, 15, 8, 3, 20);
         assert_eq!(
             schedule.next_after(at).unwrap(),
-            zone.with_ymd_and_hms(2026, 6, 15, 8, 10, 0).unwrap()
+            local(&zone, 2026, 6, 15, 8, 10, 0)
         );
     }
 
     #[test]
     fn several_expressions_take_the_earliest_across_a_repeated_hour() {
         let schedule = Schedule::parse_crons(["0 1 * * *", "*/30 * * * *"]).unwrap();
-        let zone = Europe::London;
-        let mut at = zone.with_ymd_and_hms(2026, 10, 25, 0, 40, 0).unwrap();
+        let zone = london();
+        let mut at = local(&zone, 2026, 10, 25, 0, 40, 0);
         let mut gaps = Vec::new();
         for _ in 0..5 {
-            let next = schedule.next_after(at).unwrap();
-            gaps.push((next - at).num_minutes());
+            let next = schedule.next_after(at.clone()).unwrap();
+            gaps.push(next.duration_since(&at).as_secs() / 60);
             at = next;
         }
         // 01:00 BST, 01:30 BST, 01:00 GMT, 01:30 GMT, 02:00 GMT.

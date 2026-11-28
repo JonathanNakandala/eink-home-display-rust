@@ -6,25 +6,24 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use chrono::DateTime;
-use chrono_tz::Tz;
 
 use super::{Published, metrics, server_error};
 use crate::application::devices::ConnectionStatus;
 use crate::application::status::{MemberStatus, Status};
 use crate::domain::models::layout::Layout;
+use jiff::ZonedDateTime;
 
 /// When the image of `layout` was written; None before it has been rendered.
 pub(super) async fn image_written_at(
     published: &Published,
     layout: &Layout,
-) -> anyhow::Result<Option<DateTime<Tz>>> {
-    let zone = published.clock.now().timezone();
+) -> anyhow::Result<Option<ZonedDateTime>> {
+    let zone = published.clock.now().time_zone().clone();
     Ok(published
         .images
         .published_at(&layout.name, published.format)
         .await?
-        .map(|at| crate::domain::services::clock::in_zone(at, zone)))
+        .map(|at| at.to_zoned_datetime(zone.clone())))
 }
 
 /// The version `/plan` gives the image of `layout`, if it has been rendered.
@@ -34,7 +33,7 @@ pub(super) async fn version_of_layout(
 ) -> anyhow::Result<Option<u32>> {
     Ok(image_written_at(published, layout)
         .await?
-        .map(crate::application::plan::version_of))
+        .map(|at| crate::application::plan::version_of(&at)))
 }
 
 /// How the service is doing: the render history, the sources' state, and the image's age.
@@ -108,17 +107,18 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
     // The service is as healthy as its default layout: it is the one a display gets without asking.
     let rendered_at = image_written_at(published, published.layouts.default_layout()).await?;
     let now = published.clock.now();
-    let mut status =
-        published
-            .handles
-            .status
-            .status(now, rendered_at, &published.schedule, published.timing)?;
-    status.devices = published.handles.devices.snapshot(now);
+    let mut status = published.handles.status.status(
+        now.clone(),
+        rendered_at,
+        &published.schedule,
+        published.timing,
+    )?;
+    status.devices = published.handles.devices.snapshot(now.clone());
     if let Some(handshakes) = &published.handles.handshakes {
         for device in &mut status.devices {
             device.connection = handshakes
                 .device(&device.name)
-                .map(|seen| ConnectionStatus::of(&seen, now.timezone()));
+                .map(|seen| ConnectionStatus::of(&seen, now.time_zone().clone()));
         }
     }
     if let Some(enrollment) = &published.handles.members {
@@ -131,7 +131,7 @@ async fn current_status(published: &Published) -> anyhow::Result<Status> {
             .await?
             .iter()
             .map(|pairing| {
-                MemberStatus::of(pairing, now, enrollment.certificate_lifetime())
+                MemberStatus::of(pairing, now.clone(), enrollment.certificate_lifetime())
                     .with_layout(chosen.get(&pairing.device))
             })
             .collect();
@@ -179,6 +179,8 @@ pub(super) async fn metrics(State(published): State<Arc<Published>>) -> Response
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::services::clock::london;
+    use jiff::Timestamp;
     use std::sync::Arc;
 
     use super::super::testing::{publish, set_age, start, start_full, start_with_status};
@@ -186,7 +188,6 @@ mod tests {
     use crate::adapters::published_images::DirectoryImages;
     use crate::domain::models::display::ImageFormat;
     use crate::domain::services::render_observer::RenderObserver;
-    use chrono_tz::Europe::London;
 
     #[tokio::test]
     async fn healthz_answers_without_an_image() {
@@ -228,7 +229,7 @@ mod tests {
 
         publish(tmp.path(), ImageFormat::Bmp, b"b").await.unwrap();
         status.render_succeeded(
-            chrono::Utc::now().with_timezone(&London),
+            Timestamp::now().to_zoned_datetime(london()),
             &Default::default(),
         );
         assert_eq!(healthz(&base).await, (200, "ok".to_owned()));
@@ -242,7 +243,7 @@ mod tests {
         let (base, status) = start_with_status(tmp.path().to_path_buf(), ImageFormat::Bmp).await;
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         status.render_succeeded(
-            chrono::Utc::now().with_timezone(&London),
+            Timestamp::now().to_zoned_datetime(london()),
             &RenderReport {
                 sources: vec![SourceReport {
                     name: "weather".into(),
@@ -286,7 +287,7 @@ mod tests {
         publish(tmp.path(), ImageFormat::Bmp, b"a").await.unwrap();
         status.render_started();
         status.render_failed(
-            chrono::Utc::now().with_timezone(&London),
+            Timestamp::now().to_zoned_datetime(london()),
             &anyhow::anyhow!("Chrome did not start"),
         );
         let after = reqwest::get(format!("{base}/status")).await.unwrap();
@@ -372,7 +373,7 @@ mod tests {
         let (base, _) = start_full(
             Arc::new(DirectoryImages::new(tmp.path().to_path_buf())),
             ImageFormat::Bmp,
-            Arc::new(SystemClock::new(London)),
+            Arc::new(SystemClock::new(london())),
             Some(enrollment),
         )
         .await;
